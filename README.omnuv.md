@@ -1,6 +1,6 @@
 # Omnuv Connect
 
-A desktop client for [Omnuv](https://github.com/rolandomar/omnuv): sign in, see
+A desktop client for [Omnuv](https://github.com/rsafehelm/omnuv): sign in, see
 your machines, click one to connect. It streams a machine that runs a streaming
 recipe, opens a terminal on an ordinary one, and manages the private network
 underneath without asking you to think about it.
