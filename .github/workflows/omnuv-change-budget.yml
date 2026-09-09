@@ -31,7 +31,13 @@ jobs:
           # Everything we add lives under these paths.
           ADDED='^(app/omnuv/|app/gui/OmnuvView.qml|CHANGES.omnuv.md|README.omnuv.md|.github/workflows/omnuv-)'
           # And these upstream files, and only these, may be edited.
-          EDITED='^(app/gui/main.qml|app/app.pro|app/Info.plist|app/version.txt|app/deploy/.*|app/res/.*)$'
+          #
+          # .github/dependabot.yml is the first entry added after the fork, and
+          # the reason is worth keeping: it is upstream's, it updates submodules
+          # daily, and this fork pins its submodules to the upstream commit it
+          # is based on. Left alone it opens a pull request every day proposing
+          # to break that pin. Removed here rather than fought.
+          EDITED='^(app/gui/main.qml|app/app.pro|app/Info.plist|app/version.txt|app/deploy/.*|app/res/.*|.github/dependabot.yml)$'
 
           base=$(git merge-base HEAD upstream/master)
           echo "base: $base"
