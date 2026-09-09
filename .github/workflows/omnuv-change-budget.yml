@@ -1,0 +1,49 @@
+# The rule that keeps this fork alive, checked rather than remembered.
+#
+# A fork that edits a hundred upstream files cannot follow upstream, and a fork
+# that cannot follow upstream dies. So our changes go in new files, and only a
+# short list of upstream files may be touched at all. This fails the build when
+# anything else differs, which is the point: the person who breaks the rule in a
+# year will not be the person who wrote it.
+#
+# Raising the budget is allowed. Doing it silently is not: the list lives here,
+# in a diff someone reviews.
+name: change budget
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  budget:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Compare against the upstream base
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/moonlight-stream/moonlight-qt
+          git fetch -q --no-tags upstream master
+
+          # Everything we add lives under these paths.
+          ADDED='^(app/omnuv/|app/gui/OmnuvView.qml|CHANGES.omnuv.md|README.omnuv.md|.github/workflows/omnuv-)'
+          # And these upstream files, and only these, may be edited.
+          EDITED='^(app/gui/main.qml|app/app.pro|app/Info.plist|app/version.txt|app/deploy/.*|app/res/.*)$'
+
+          base=$(git merge-base HEAD upstream/master)
+          echo "base: $base"
+          over=$(git diff --name-only "$base"..HEAD | grep -vE "$ADDED" | grep -vE "$EDITED" || true)
+
+          if [ -n "$over" ]; then
+            echo
+            echo "These upstream files were changed, and are not in the budget:"
+            echo "$over" | sed 's/^/  /'
+            echo
+            echo "Either put the change in a new file under app/omnuv/, or send it"
+            echo "upstream, or widen the list in this workflow with a reason."
+            exit 1
+          fi
+          echo "within budget: $(git diff --name-only "$base"..HEAD | wc -l) file(s) changed"
