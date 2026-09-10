@@ -210,11 +210,13 @@ SOURCES += \
 # upstream stays one directory plus this list.
 SOURCES += \
     omnuv/machinemodel.cpp \
-    omnuv/omnuvsession.cpp
+    omnuv/omnuvsession.cpp \
+    omnuv/tunnel.cpp
 
 HEADERS += \
     omnuv/machinemodel.h \
-    omnuv/omnuvsession.h
+    omnuv/omnuvsession.h \
+    omnuv/tunnel.h
 
 HEADERS += \
     SDL_compat.h \

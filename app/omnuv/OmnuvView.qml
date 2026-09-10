@@ -28,7 +28,11 @@ Item {
     // added. -1 when nothing is waiting.
     property int pendingRow: -1
 
-    StackView.onActivated: Omnuv.refresh()
+    StackView.onActivated: {
+        Omnuv.refresh()
+        Omnuv.tunnel.watch(true)
+    }
+    StackView.onDeactivating: Omnuv.tunnel.watch(false)
 
     // Upstream's own list of hosts. We do not keep our own: whether a host is
     // reachable and whether it is paired are things it already knows.
@@ -310,6 +314,36 @@ Item {
         anchors.margins: 20
         spacing: 12
         visible: Omnuv.signedIn
+
+        // Whether this device is on the project network at all. Shown before
+        // the machines, because "Connect does nothing" is nearly always this.
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 44
+            visible: !Omnuv.tunnel.connected
+            radius: 6
+            color: "#3a3226"
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 12
+                anchors.rightMargin: 12
+                spacing: 12
+
+                Label {
+                    Layout.fillWidth: true
+                    text: Omnuv.tunnel.state
+                    wrapMode: Text.WordWrap
+                    elide: Label.ElideRight
+                }
+
+                Button {
+                    text: Omnuv.tunnel.busy ? qsTr("Joining…") : qsTr("Join this device")
+                    enabled: Omnuv.tunnel.available && !Omnuv.tunnel.busy && Omnuv.signedIn
+                    onClicked: Omnuv.tunnel.join()
+                }
+            }
+        }
 
         RowLayout {
             Layout.fillWidth: true

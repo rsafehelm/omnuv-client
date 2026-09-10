@@ -24,7 +24,8 @@ static const int kRefreshMs = 15 * 1000;
 
 OmnuvSession::OmnuvSession(QObject* parent)
     : QObject(parent),
-      m_machines(new MachineModel(this))
+      m_machines(new MachineModel(this)),
+      m_tunnel(new OmnuvTunnel(this))
 {
     QSettings settings;
     m_coreUrl = settings.value(QStringLiteral("omnuv/coreUrl")).toString();
@@ -34,6 +35,9 @@ OmnuvSession::OmnuvSession(QObject* parent)
     }
 
     loadToken();
+
+    // The tunnel asks for a key only when the device has never enrolled.
+    connect(m_tunnel, &OmnuvTunnel::needsKey, this, &OmnuvSession::fetchDeviceKey);
 
     m_pollTimer.setSingleShot(false);
     connect(&m_pollTimer, &QTimer::timeout, this, &OmnuvSession::poll);
@@ -323,6 +327,59 @@ bool OmnuvSession::openTerminal(const QString& host, const QString& user)
     }
     return false;
 #endif
+}
+
+// The key half of joining. The tunnel says when it needs one; this fetches it
+// and hands it back. Core is asked for the project's network, then for a
+// device named after this computer, so the entry in a person's device list is
+// one they recognise.
+void OmnuvSession::fetchDeviceKey()
+{
+    if (!signedIn()) {
+        m_tunnel->giveUp(tr("Sign in first, so this device can be added to your network."));
+        return;
+    }
+
+    QNetworkReply* reply = m_net.get(request(QStringLiteral("/v1/networks"), true));
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        reply->deleteLater();
+
+        const QJsonArray networks = QJsonDocument::fromJson(reply->readAll()).array();
+        if (reply->error() != QNetworkReply::NoError || networks.isEmpty()) {
+            m_tunnel->giveUp(tr("Could not find your network."));
+            return;
+        }
+
+        const QString id = networks.first().toObject()[QStringLiteral("id")].toString();
+        const QJsonObject body { { QStringLiteral("name"), QSysInfo::machineHostName() } };
+
+        QNetworkReply* add = m_net.post(
+            request(QStringLiteral("/v1/networks/%1/devices").arg(id), true),
+            QJsonDocument(body).toJson(QJsonDocument::Compact));
+        connect(add, &QNetworkReply::finished, this, [this, add]() {
+            add->deleteLater();
+
+            const QJsonObject o = QJsonDocument::fromJson(add->readAll()).object();
+            const QString key = o[QStringLiteral("setup_key")].toString();
+            if (add->error() != QNetworkReply::NoError || key.isEmpty()) {
+                m_tunnel->giveUp(tr("This device could not be added to your network."));
+                return;
+            }
+
+            // The management address is deployment configuration, and the only
+            // place the API states it is inside the command it hands a person
+            // to paste. Read it from there rather than guessing it from Core's.
+            const QString command = o[QStringLiteral("command")].toString();
+            const QString url = command.section(QStringLiteral("--management-url "), 1, 1)
+                                    .section(QLatin1Char(' '), 0, 0);
+            if (url.isEmpty()) {
+                m_tunnel->giveUp(tr("Your network did not say where to join."));
+                return;
+            }
+
+            m_tunnel->enrol(url, key);
+        });
+    });
 }
 
 // Registered here rather than in main.cpp, which belongs to upstream. This

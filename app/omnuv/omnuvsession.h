@@ -24,6 +24,7 @@
 // Included rather than forward-declared: moc needs the full type to expose
 // MachineModel* as a Q_PROPERTY.
 #include "machinemodel.h"
+#include "tunnel.h"
 
 class OmnuvSession : public QObject
 {
@@ -43,6 +44,7 @@ class OmnuvSession : public QObject
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
 
     Q_PROPERTY(MachineModel* machines READ machines CONSTANT)
+    Q_PROPERTY(OmnuvTunnel* tunnel READ tunnel CONSTANT)
 
 public:
     explicit OmnuvSession(QObject* parent = nullptr);
@@ -55,6 +57,7 @@ public:
     QString verificationUri() const { return m_verificationUri; }
     QString status() const { return m_status; }
     MachineModel* machines() const { return m_machines; }
+    OmnuvTunnel* tunnel() const { return m_tunnel; }
 
     // Ask Core for a code, then wait for a browser to approve it. Safe to call
     // again: an unfinished attempt is abandoned first.
@@ -74,6 +77,8 @@ public:
     // they just have to paste one line.
     Q_INVOKABLE bool openTerminal(const QString& host, const QString& user);
 
+
+
 signals:
     void coreUrlChanged();
     void signedInChanged();
@@ -82,6 +87,10 @@ signals:
     void statusChanged();
 
 private:
+    // Answers the tunnel's needsKey(): asks Core for a one-time enrolment key
+    // for this device, then hands it back.
+    void fetchDeviceKey();
+
     void poll();
     void collect();
     void setStatus(const QString& text);
@@ -101,6 +110,7 @@ private:
 
     QNetworkAccessManager m_net;
     MachineModel* m_machines;
+    OmnuvTunnel* m_tunnel;
     QTimer m_pollTimer;
     QTimer m_refreshTimer;
 
