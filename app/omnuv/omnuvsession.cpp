@@ -9,7 +9,11 @@
 #include <QJsonObject>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QDesktopServices>
+#include <QProcess>
 #include <QSettings>
+#include <QStandardPaths>
+#include <QUrl>
 #include <QSysInfo>
 #include <QtQml>
 
@@ -276,6 +280,49 @@ void OmnuvSession::refresh()
         // this line to tell an empty account from a request that never arrived.
         qInfo() << "omnuv: signed in," << machines.count() << "machine(s)";
     });
+}
+
+// An ordinary machine is reached with ssh, and every desktop starts a terminal
+// its own way. Try the ones that exist, take the first that starts, and tell
+// the caller if none did.
+bool OmnuvSession::openTerminal(const QString& host, const QString& user)
+{
+    const QString target = user.isEmpty() ? host : (user + QLatin1Char('@') + host);
+
+#if defined(Q_OS_WIN)
+    // Windows has had OpenSSH since 2018, and `start` gives it its own window.
+    return QProcess::startDetached(QStringLiteral("cmd"),
+                                   { QStringLiteral("/c"), QStringLiteral("start"),
+                                     QStringLiteral("ssh"), target });
+#elif defined(Q_OS_DARWIN)
+    // Terminal.app registers itself for ssh:// URLs, so this is the one
+    // platform where the system already knows the answer.
+    return QDesktopServices::openUrl(QUrl(QStringLiteral("ssh://") + target));
+#else
+    // Debian's alternatives symlink first, since it is whatever the person
+    // actually chose; the rest are the terminals that are usually installed.
+    const QVector<QPair<QString, QStringList>> candidates {
+        { QStringLiteral("x-terminal-emulator"), { QStringLiteral("-e") } },
+        { QStringLiteral("gnome-terminal"),      { QStringLiteral("--") } },
+        { QStringLiteral("konsole"),             { QStringLiteral("-e") } },
+        { QStringLiteral("xfce4-terminal"),      { QStringLiteral("-x") } },
+        { QStringLiteral("kitty"),               {} },
+        { QStringLiteral("alacritty"),           { QStringLiteral("-e") } },
+        { QStringLiteral("xterm"),               { QStringLiteral("-e") } },
+    };
+
+    for (const auto& candidate : candidates) {
+        if (QStandardPaths::findExecutable(candidate.first).isEmpty()) {
+            continue;
+        }
+        QStringList args = candidate.second;
+        args << QStringLiteral("ssh") << target;
+        if (QProcess::startDetached(candidate.first, args)) {
+            return true;
+        }
+    }
+    return false;
+#endif
 }
 
 // Registered here rather than in main.cpp, which belongs to upstream. This

@@ -98,6 +98,16 @@ void MachineModel::clear()
     emit countChanged();
 }
 
+QString MachineModel::nameAt(int row) const
+{
+    return (row >= 0 && row < m_machines.count()) ? m_machines.at(row).name : QString();
+}
+
+QString MachineModel::userAt(int row) const
+{
+    return (row >= 0 && row < m_machines.count()) ? m_machines.at(row).defaultUser : QString();
+}
+
 QString MachineModel::hostAt(int row) const
 {
     return (row >= 0 && row < m_machines.count()) ? m_machines.at(row).host() : QString();

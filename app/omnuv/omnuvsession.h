@@ -68,6 +68,12 @@ public:
     // Fetch the machines. Called on start, after signing in, and on a timer.
     Q_INVOKABLE void refresh();
 
+    // Open a terminal on an ordinary machine. Returns false when no terminal
+    // could be started, which the view turns into a command to copy rather
+    // than into an error — a person with no terminal installed is not stuck,
+    // they just have to paste one line.
+    Q_INVOKABLE bool openTerminal(const QString& host, const QString& user);
+
 signals:
     void coreUrlChanged();
     void signedInChanged();

@@ -63,7 +63,9 @@ public:
     void replace(const QJsonArray& machines);
     void clear();
 
+    Q_INVOKABLE QString nameAt(int row) const;
     Q_INVOKABLE QString hostAt(int row) const;
+    Q_INVOKABLE QString userAt(int row) const;
     Q_INVOKABLE bool streamedAt(int row) const;
     Q_INVOKABLE QString streamAppAt(int row) const;
 
