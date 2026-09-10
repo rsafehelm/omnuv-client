@@ -1,0 +1,10 @@
+<!--
+  Our own resource file, so upstream's qml.qrc stays untouched and out of the
+  change budget. One more file here costs nothing; one more edit there costs a
+  rebase.
+-->
+<RCC>
+    <qresource prefix="/omnuv">
+        <file>OmnuvView.qml</file>
+    </qresource>
+</RCC>

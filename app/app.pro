@@ -206,6 +206,16 @@ SOURCES += \
     backend/systemproperties.cpp \
     wm.cpp
 
+# Omnuv's own code. Everything we add lives under omnuv/, so the diff against
+# upstream stays one directory plus this list.
+SOURCES += \
+    omnuv/machinemodel.cpp \
+    omnuv/omnuvsession.cpp
+
+HEADERS += \
+    omnuv/machinemodel.h \
+    omnuv/omnuvsession.h
+
 HEADERS += \
     SDL_compat.h \
     backend/nvaddress.h \
@@ -451,7 +461,8 @@ wayland {
 
 RESOURCES += \
     resources.qrc \
-    qml.qrc
+    qml.qrc \
+    omnuv/omnuv.qrc
 
 TRANSLATIONS += \
     languages/qml_zh_CN.ts \

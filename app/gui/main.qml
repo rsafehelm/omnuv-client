@@ -115,7 +115,18 @@ ApplicationWindow {
             // Perform our early initialization before constructing
             // the initial view and pushing it to the StackView
             doEarlyInit()
-            push(initialView)
+
+            // Omnuv opens on its own machine list rather than on the host
+            // grid: a person signs in and sees what they rent. Every other
+            // entry point — stream, quit, pair from the command line — is
+            // left exactly as upstream set it, which is why the swap is here
+            // and not in main.cpp.
+            if (initialView === "qrc:/gui/PcView.qml") {
+                push("qrc:/omnuv/OmnuvView.qml")
+            }
+            else {
+                push(initialView)
+            }
         }
 
         onCurrentItemChanged: {
