@@ -130,7 +130,7 @@ Item {
         stackView.push(appView)
     }
 
-    function connect(row) {
+    function connectTo(row) {
         if (!Omnuv.machines.streamedAt(row)) {
             var host = Omnuv.machines.hostAt(row)
             var user = Omnuv.machines.userAt(row)
@@ -395,7 +395,7 @@ Item {
             delegate: ItemDelegate {
                 width: machineList.width
                 height: 84
-                onClicked: if (model.ready) root.connect(index)
+                onClicked: if (model.ready) root.connectTo(index)
 
                 RowLayout {
                     anchors.fill: parent
@@ -434,7 +434,7 @@ Item {
                     Button {
                         text: model.streamed ? qsTr("Play") : qsTr("Terminal")
                         enabled: model.ready
-                        onClicked: root.connect(index)
+                        onClicked: root.connectTo(index)
                     }
                 }
             }

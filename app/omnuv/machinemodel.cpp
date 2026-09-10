@@ -50,6 +50,10 @@ QHash<int, QByteArray> MachineModel::roleNames() const
 }
 
 // The one place the API's shape is read. Everything above works on Machine.
+//
+// A full reset every refresh, rather than a diff. With a handful of machines
+// nobody sees it; with a hundred it would throw away the selection and the
+// scroll position every fifteen seconds, and then it is worth comparing rows.
 void MachineModel::replace(const QJsonArray& machines)
 {
     beginResetModel();
