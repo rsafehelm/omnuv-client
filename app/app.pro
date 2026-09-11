@@ -1,4 +1,11 @@
 QT += core quick network quickcontrols2 svg
+
+# Qt Labs Platform's SystemTrayIcon: its documentation says these types
+# "should link to QtWidgets and use QApplication instead of
+# QGuiApplication", because on platforms with no native tray it falls
+# back to a Qt Widgets implementation. The matching QApplication change
+# is in main.cpp, and is why main.cpp is now in the change budget.
+QT += widgets
 CONFIG += c++17
 
 unix:!macx {

@@ -6,5 +6,6 @@
 <RCC>
     <qresource prefix="/omnuv">
         <file>OmnuvView.qml</file>
+        <file>OmnuvTray.qml</file>
     </qresource>
 </RCC>

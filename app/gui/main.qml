@@ -10,6 +10,9 @@ import StreamingPreferences 1.0
 import SystemProperties 1.0
 import SdlGamepadKeyNavigation 1.0
 
+// Omnuv's own QML lives under its own resource prefix, not beside this file.
+import "qrc:/omnuv"
+
 ApplicationWindow {
     property bool pollingActive: false
 
@@ -21,6 +24,28 @@ ApplicationWindow {
     id: window
     width: 1280
     height: 600
+
+    // Omnuv: the tray, and the one rule that makes this a widget rather than
+    // an application you have to remember to open.
+    OmnuvTray {
+        window: window
+    }
+
+    // Closing the window hides it; Quit in the tray is the only thing that
+    // ends the program, which `setQuitOnLastWindowClosed(false)` in main.cpp
+    // makes safe.
+    //
+    // **No special case for streaming, and that was checked rather than
+    // assumed.** A stream hides this window outright — `StreamSegue.qml` sets
+    // `window.visible = false` and SDL takes the screen — so `onClosing` never
+    // fires while one is running. Every command-line entry point calls
+    // `Qt.quit()` for itself (`CliPair`, `CliStartStreamSegue`,
+    // `CliQuitStreamSegue`, `StreamSegue`), so none of them depended on the
+    // auto-quit this replaces.
+    onClosing: function(close) {
+        close.accepted = false
+        window.hide()
+    }
 
     // This function runs prior to creation of the initial StackView item
     function doEarlyInit() {

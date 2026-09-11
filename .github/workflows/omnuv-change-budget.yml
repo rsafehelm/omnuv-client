@@ -37,7 +37,14 @@ jobs:
           # daily, and this fork pins its submodules to the upstream commit it
           # is based on. Left alone it opens a pull request every day proposing
           # to break that pin. Removed here rather than fought.
-          EDITED='^(app/gui/main.qml|app/app.pro|app/Info.plist|app/version.txt|app/deploy/.*|app/res/.*|.github/dependabot.yml)$'
+          # app/main.cpp is the second entry, added for residency, and it
+          # buys exactly two lines. Qt Labs Platform's SystemTrayIcon needs a
+          # QApplication rather than the QGuiApplication upstream constructs,
+          # and a program that survives its window being closed needs
+          # setQuitOnLastWindowClosed(false). Both are single lines next to
+          # each other; neither has an equivalent that could live in a new
+          # file, because the application object is constructed here.
+          EDITED='^(app/gui/main.qml|app/main.cpp|app/app.pro|app/Info.plist|app/version.txt|app/deploy/.*|app/res/.*|.github/dependabot.yml)$'
 
           base=$(git merge-base HEAD upstream/master)
           echo "base: $base"

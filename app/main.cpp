@@ -1,4 +1,5 @@
 #include <QGuiApplication>
+#include <QApplication>
 #include <QStyleHints>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -753,7 +754,17 @@ int main(int argc, char *argv[])
         SDL_SetHint("SDL_VIDEO_WAYLAND_MODE_SCALING", "aspect");
     }
 
-    QGuiApplication app(argc, argv);
+    // Omnuv: QApplication, not QGuiApplication. Qt Labs Platform's
+    // SystemTrayIcon falls back to a Qt Widgets implementation where the
+    // platform has no native tray, and its documentation requires the widgets
+    // application object. `QT += widgets` is in app.pro beside the same reason.
+    QApplication app(argc, argv);
+
+    // Omnuv: closing the window hides it; only Quit in the tray ends the
+    // program. This one line is the whole of residency — everything else this
+    // application does already worked, it simply had to be opened first, and a
+    // widget is a program that was already running when you needed it.
+    app.setQuitOnLastWindowClosed(false);
 
 #ifdef Q_OS_DARWIN
     // macOS defaults "Keyboard navigation" to text fields and lists only, which
