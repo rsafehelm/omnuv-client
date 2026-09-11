@@ -77,6 +77,27 @@ public:
     // they just have to paste one line.
     Q_INVOKABLE bool openTerminal(const QString& host, const QString& user);
 
+    // Which row of the streaming client's own host list is the machine at this
+    // address, or -1.
+    //
+    // **This exists because the obvious keys are both wrong.** Matching on the
+    // host's *name* fails in the window that matters: right after
+    // `addNewHostManually` the entry exists but has not been polled, so it has
+    // no name yet. Matching on the model's `details` string fails differently
+    // and worse — `ComputerModel::data` builds that from `tr("Online")`,
+    // `tr("Paired")` and friends, so it is localised prose, and a substring
+    // search in it matches 10.200.1.5 against a host at 10.200.1.50.
+    //
+    // `NvComputer::manualAddress` is the address we passed in, held as
+    // structured data and persisted across restarts. It is exact, it is
+    // present from the moment the entry is, and it is not translated.
+    //
+    // The manager arrives as a QObject* because it is a QML singleton owned by
+    // the engine; the row is the model's row because `ComputerModel` assigns
+    // `m_Computers = getComputers()` verbatim and resets from it on every
+    // structural change, so the two orders cannot drift.
+    Q_INVOKABLE int hostRowFor(QObject* computerManager, const QString& address) const;
+
 
 
 signals:

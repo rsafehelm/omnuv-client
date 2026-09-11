@@ -1,6 +1,9 @@
 #include "omnuvsession.h"
 #include "machinemodel.h"
 
+#include "backend/computermanager.h"
+#include "backend/nvcomputer.h"
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -380,6 +383,29 @@ void OmnuvSession::fetchDeviceKey()
             m_tunnel->enrol(url, key);
         });
     });
+}
+
+int OmnuvSession::hostRowFor(QObject* computerManager, const QString& address) const
+{
+    auto manager = qobject_cast<ComputerManager*>(computerManager);
+    if (manager == nullptr || address.isEmpty()) {
+        return -1;
+    }
+
+    // `addNewHostManually` puts the address through
+    // QUrl::fromUserInput("moonlight://" + address) and keeps url.host(), and
+    // QUrl lowercases hosts. So compare the way it stored it, not the way we
+    // typed it, or a machine named GPU-1.internal is never found again.
+    const QString wanted = address.toLower();
+
+    const QVector<NvComputer*> computers = manager->getComputers();
+    for (int row = 0; row < computers.count(); row++) {
+        NvComputer* computer = computers.at(row);
+        if (computer != nullptr && computer->manualAddress.address().toLower() == wanted) {
+            return row;
+        }
+    }
+    return -1;
 }
 
 // Registered here rather than in main.cpp, which belongs to upstream. This

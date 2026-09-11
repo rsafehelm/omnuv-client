@@ -54,20 +54,33 @@ Item {
             readonly property string hostName: model.name
             readonly property bool hostOnline: model.online
             readonly property bool hostPaired: model.paired
+            // **The third state, and it is not a shade of offline.**
+            // `ComputerModel` has carried `StatusUnknownRole` all along and we
+            // were dropping it, which made "I could not reach this to ask"
+            // render exactly like "I asked and it said no". `docs/client-widget.md`
+            // forbids that in its own words: a check that could not run is
+            // `unknown`, not `fail`. Telling a buyer their machine is down when
+            // the truth is that we cannot see it sends them to fix the wrong
+            // thing.
+            readonly property bool hostStatusUnknown: model.statusUnknown
         }
     }
 
-    // Machines are named by their owner and the guest takes that name as its
-    // hostname, which is what the streaming host reports. Matched without
-    // regard to case, because the two ends disagree about it.
-    function hostIndexFor(name) {
-        for (var i = 0; i < hostProbe.count; i++) {
-            var item = hostProbe.itemAt(i)
-            if (item && item.hostName.toLowerCase() === name.toLowerCase()) {
-                return i
-            }
-        }
-        return -1
+    // Found by the exact address we gave it.
+    //
+    // Two earlier keys were wrong in different ways. Matching on the host's
+    // *name* fails in the only window that matters — right after
+    // `addNewHostManually` the entry exists but has not been polled, so it has
+    // no name yet. Matching on the model's `details` string fails worse:
+    // `ComputerModel::data` builds that from `tr("Online")`, `tr("Paired")` and
+    // friends, so it is localised prose, and a substring search in it matches
+    // 10.200.1.5 against a host at 10.200.1.50.
+    //
+    // `Omnuv.hostRowFor` compares `NvComputer::manualAddress` — structured,
+    // exact, persisted, and never translated. See its comment for why the row
+    // it returns is the same row this view indexes.
+    function hostIndexFor(host) {
+        return Omnuv.hostRowFor(ComputerManager, host)
     }
 
     Connections {
@@ -81,9 +94,23 @@ Item {
             root.pendingRow = -1
 
             if (!success) {
-                // Two causes, and this device cannot tell them apart: it is
-                // not on the Client VPN, or the machine is up but nothing is
-                // streaming on it. Say both rather than guess wrong.
+                // **Upstream tells us why, and we used to throw it away.**
+                // `detectedPortBlocking` means this device's own network is
+                // blocking the streaming ports — a problem with the cafe wifi,
+                // not with the machine. Reporting that as "your machine has not
+                // finished starting" sends a person to stare at a console that
+                // is working perfectly.
+                if (detectedPortBlocking) {
+                    message.show(qsTr("This network is blocking the ports streaming needs.\n\n" +
+                                      "%1 is reachable, but this device cannot open a stream to it " +
+                                      "from here. A different network, or a phone hotspot, will.")
+                                 .arg(Omnuv.machines.nameAt(row)))
+                    return
+                }
+
+                // Otherwise there are two causes and this device cannot tell
+                // them apart: it is not on the Client VPN, or the machine is up
+                // but nothing is streaming on it. Say both rather than guess.
                 message.show(qsTr("No streaming host answered at %1.\n\n" +
                                   "Either this device is not on your Client VPN, or the machine " +
                                   "has not finished setting itself up. Its console says which.")
@@ -94,18 +121,56 @@ Item {
         }
     }
 
-    // Everything Connect does, once the host is known to be there.
-    function openHost(row) {
-        var index = hostIndexFor(Omnuv.machines.nameAt(row))
-        if (index < 0) {
-            message.show(qsTr("That machine answered but did not identify itself. Try again in a moment."))
-            return
+    // Both the entry and its state lag the signal that created it: the host is
+    // added, then polled, and only then does it have a name or count as online.
+    // Twice now that lag has looked like a broken machine — first the name was
+    // missing, then `online` was false on a host that had just answered. So
+    // wait for it rather than judging it on the first look.
+    Timer {
+        id: settle
+        property int row: -1
+        property int tries: 0
+        interval: 500
+        repeat: true
+        onTriggered: {
+            var index = root.hostIndexFor(Omnuv.machines.hostAt(row))
+            var item = index >= 0 ? hostProbe.itemAt(index) : null
+            if (item && item.hostOnline) {
+                stop()
+                root.openHost(row)
+            }
+            else if (++tries > 30) {
+                stop()
+                // Three answers, not two. "We asked and it said no" and "we
+                // could not ask" send a person to different places, so they get
+                // different sentences.
+                if (item && item.hostStatusUnknown) {
+                    message.show(qsTr("This device cannot tell whether %1 is up.\n\n" +
+                                      "That is usually the Client VPN rather than the machine: " +
+                                      "nothing answered, so there is nothing to report about it " +
+                                      "either way.")
+                                 .arg(Omnuv.machines.nameAt(row)))
+                }
+                else {
+                    message.show(qsTr("%1 is not answering yet. A machine takes a few minutes to " +
+                                      "finish setting itself up after it starts.")
+                                 .arg(Omnuv.machines.nameAt(row)))
+                }
+            }
         }
+        function watch(r) {
+            row = r
+            tries = 0
+            start()
+        }
+    }
 
-        var item = hostProbe.itemAt(index)
-        if (!item.hostOnline) {
-            message.show(qsTr("%1 is not answering yet. Machines take a minute to finish starting.")
-                         .arg(Omnuv.machines.nameAt(row)))
+    // Everything Connect does, once the host is known to be there and awake.
+    function openHost(row) {
+        var index = hostIndexFor(Omnuv.machines.hostAt(row))
+        var item = index >= 0 ? hostProbe.itemAt(index) : null
+        if (!item || !item.hostOnline) {
+            settle.watch(row)
             return
         }
 
@@ -141,7 +206,7 @@ Item {
             return
         }
 
-        if (hostIndexFor(Omnuv.machines.nameAt(row)) >= 0) {
+        if (hostIndexFor(Omnuv.machines.hostAt(row)) >= 0) {
             openHost(row)
             return
         }
