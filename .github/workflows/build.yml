@@ -48,12 +48,15 @@ jobs:
   # startup (a QML module `windeployqt --qmldir app\gui` never scanned) was
   # invisible to CI, which only ever proved the thing compiled.
   #
-  # `if: false` rather than deleting the job, so the diff against upstream
-  # stays one line and turning it back on is one word. The Linux and Steam
-  # Link jobs are untouched: nothing in this lab builds those.
-  build-windows-macos:
-    if: false
-    needs: setup
-    uses: ./.github/workflows/build-win-mac.yml
+  # The Linux and Steam Link jobs are untouched: nothing in this lab builds
+  # those, so CI remains their only check.
+  # build-windows-macos:
+  #   needs: setup
+  #   uses: ./.github/workflows/build-win-mac.yml
+  #
+  # Commented out rather than deleted, and rather than left as `if: false`, so
+  # that turning it back on is uncommenting four lines and the original is
+  # right here to compare against. `build-win-mac.yml` itself is untouched and
+  # still works — nothing about it was changed, it simply is not called.
     with:
       ci_version: ${{ needs.setup.outputs.ci_version }}
