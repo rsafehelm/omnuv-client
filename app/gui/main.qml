@@ -10,9 +10,6 @@ import StreamingPreferences 1.0
 import SystemProperties 1.0
 import SdlGamepadKeyNavigation 1.0
 
-// Omnuv's own QML lives under its own resource prefix, not beside this file.
-import "qrc:/omnuv"
-
 ApplicationWindow {
     property bool pollingActive: false
 
@@ -25,11 +22,10 @@ ApplicationWindow {
     width: 1280
     height: 600
 
-    // Omnuv: the tray, and the one rule that makes this a widget rather than
-    // an application you have to remember to open.
-    OmnuvTray {
-        window: window
-    }
+    // Omnuv: the tray lives in C++ (app/omnuv/tray.cpp), not here. A QML tray
+    // meant importing Qt.labs.platform, and `windeployqt --qmldir app\gui`
+    // never saw that import, so every Windows build exited at startup with
+    // "module not installed". Nothing in this file could have fixed that.
 
     // Closing the window hides it; Quit in the tray is the only thing that
     // ends the program, which `setQuitOnLastWindowClosed(false)` in main.cpp

@@ -1,5 +1,6 @@
 #include "omnuvsession.h"
 #include "machinemodel.h"
+#include "tray.h"
 
 #include "backend/computermanager.h"
 #include "backend/nvcomputer.h"
@@ -414,7 +415,15 @@ static void registerOmnuvTypes()
 {
     qmlRegisterSingletonType<OmnuvSession>("Omnuv", 1, 0, "Omnuv",
                                            [](QQmlEngine*, QJSEngine*) -> QObject* {
-                                               return new OmnuvSession();
+                                               auto* session = new OmnuvSession();
+                                               // The tray is created here rather than in main.cpp
+                                               // because this is our file and that one is
+                                               // upstream's. By the time the QML engine resolves
+                                               // this singleton the QApplication exists, which is
+                                               // what a QSystemTrayIcon needs; at registration
+                                               // time it does not.
+                                               OmnuvTray::createIfSupported(session, session);
+                                               return session;
                                            });
     qmlRegisterUncreatableType<MachineModel>("Omnuv", 1, 0, "MachineModel",
                                              QStringLiteral("Machines come from Omnuv.machines"));

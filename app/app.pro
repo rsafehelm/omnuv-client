@@ -218,11 +218,13 @@ SOURCES += \
 SOURCES += \
     omnuv/machinemodel.cpp \
     omnuv/omnuvsession.cpp \
+    omnuv/tray.cpp \
     omnuv/tunnel.cpp
 
 HEADERS += \
     omnuv/machinemodel.h \
     omnuv/omnuvsession.h \
+    omnuv/tray.h \
     omnuv/tunnel.h
 
 HEADERS += \

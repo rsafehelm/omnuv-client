@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28">
+  <!--
+    The Omnuv mark, for the tray. Four unequal blocks tiling one rounded
+    square: many owners, one cloud, and the small green block is the buyer's
+    slice. Copied from the console's favicon rather than redrawn, so the tray
+    and the browser tab cannot drift apart.
+
+    The colours are written literally, as they are there, because an icon is
+    rendered outside any page and never sees a CSS variable. The dark-mode
+    accent is the one used: it is the lighter of the two, and a notification
+    area is dark far more often than it is light.
+
+    Do not write a CSS custom property name in this comment. Two hyphens in a
+    row end an XML comment; the file then parses as broken XML and is silently
+    not drawn, which is how the console's favicon shipped broken once already.
+
+    This is our own mark on our own tray icon. The application remains a fork
+    of Moonlight and says so: the window, the executable and the About box all
+    name upstream, and nothing here rebrands their work as ours.
+  -->
+  <rect x="0"  y="0"  width="17" height="17" rx="5"   fill="#7c72f0"/>
+  <rect x="19" y="0"  width="9"  height="17" rx="4"   fill="#7c72f0" opacity="0.55"/>
+  <rect x="0"  y="19" width="17" height="9"  rx="4"   fill="#7c72f0" opacity="0.55"/>
+  <rect x="19" y="19" width="9"  height="9"  rx="3.5" fill="#0e9d6e"/>
+</svg>

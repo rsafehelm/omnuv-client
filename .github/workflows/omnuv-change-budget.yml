@@ -44,7 +44,13 @@ jobs:
           # setQuitOnLastWindowClosed(false). Both are single lines next to
           # each other; neither has an equivalent that could live in a new
           # file, because the application object is constructed here.
-          EDITED='^(app/gui/main.qml|app/main.cpp|app/app.pro|app/Info.plist|app/version.txt|app/deploy/.*|app/res/.*|.github/dependabot.yml)$'
+          # .github/workflows/build.yml is the third entry, and it buys one
+          # line: `if: false` on the Windows/macOS job. Those platforms are
+          # built on the lab rigs now, which have the same pinned toolchains
+          # and can additionally *run* the result — CI only ever proved the
+          # thing compiled, and the bug that made every Windows build exit at
+          # startup was invisible to it.
+          EDITED='^(app/gui/main.qml|app/main.cpp|app/app.pro|app/Info.plist|app/version.txt|app/deploy/.*|app/res/.*|.github/workflows/build.yml|.github/dependabot.yml)$'
 
           base=$(git merge-base HEAD upstream/master)
           echo "base: $base"

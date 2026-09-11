@@ -38,7 +38,21 @@ jobs:
     with:
       ci_version: ${{ needs.setup.outputs.ci_version }}
 
+  # **Disabled: we build Windows and macOS on the lab rigs instead.**
+  #
+  # Both are real machines on Titan with the exact toolchains CI pins — MSVC
+  # 2022 and Qt 6.11.2 msvc2022_64 on one, Command Line Tools and Qt 6.11.2
+  # macos on the other — and a build there takes minutes rather than an
+  # eleven-minute round trip plus a download. More to the point, the rig can
+  # *run* what it builds: the bug that made every Windows build exit at
+  # startup (a QML module `windeployqt --qmldir app\gui` never scanned) was
+  # invisible to CI, which only ever proved the thing compiled.
+  #
+  # `if: false` rather than deleting the job, so the diff against upstream
+  # stays one line and turning it back on is one word. The Linux and Steam
+  # Link jobs are untouched: nothing in this lab builds those.
   build-windows-macos:
+    if: false
     needs: setup
     uses: ./.github/workflows/build-win-mac.yml
     with:
