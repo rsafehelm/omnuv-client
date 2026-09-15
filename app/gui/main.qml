@@ -338,28 +338,6 @@ ApplicationWindow {
         }
 
         RowLayout {
-            // **Not laid out while the bar is collapsed — this is what stopped
-            // the blank window from being replaced by a *frozen* one.** With
-            // the toolbar `height: 0` on our OmnuvView, this RowLayout keeps
-            // `anchors.fill: parent` (a Layout anchored to its parent — an
-            // anti-pattern QtQuick.Layouts tolerates until something feeds its
-            // size back). Under FluentWinUI3 the ToolButton icons bind
-            // `icon.width: background.width`, and in a zero-height bar that
-            // sizing loop runs away: the rig log fills with `QQuickItem::
-            // polish() loop` and `QImageIOHandler: Rejecting image as it
-            // exceeds 256 MB` (an SVG asked to rasterise at thousands of px),
-            // the UI thread pegs at ~130% of a core, and the first real frame
-            // never composites — a white window over a process that reports
-            // running. It did not loop under Material, and it does not loop
-            // when the bar is 60 px on upstream's own views.
-            //
-            // `visible` on *this* RowLayout, because upstream drives
-            // `toolBar.visible` imperatively (StreamSegue, QuitSegue, CliPair)
-            // and a binding there would be destroyed on the first stream — the
-            // same reason the bar is collapsed by `height`, not by `visible`.
-            // Nothing upstream touches this inner item, so the binding is safe,
-            // and an invisible Layout arranges nothing.
-            visible: toolBar.height > 0
             spacing: 10
             anchors.leftMargin: 10
             anchors.rightMargin: 10
