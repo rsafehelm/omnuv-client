@@ -34,6 +34,12 @@ public:
     void setOverlayTextUpdated(OverlayType type);
     void setOverlayState(OverlayType type, bool enabled);
     SDL_Color getOverlayColor(OverlayType type);
+    // Omnuv: the colour was fixed at construction and only readable. The
+    // status slot now carries a quality mark that is amber at one threshold
+    // and red at another (app/omnuv/streamquality.cpp), and there is no other
+    // way to say which without adding a third overlay type -- which would
+    // cost a position case in all six renderers instead of this one setter.
+    void setOverlayColor(OverlayType type, SDL_Color color);
     int getOverlayFontSize(OverlayType type);
     SDL_Surface* getUpdatedOverlaySurface(OverlayType type);
 

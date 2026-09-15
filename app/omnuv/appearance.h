@@ -41,6 +41,19 @@ class OmnuvAppearance : public QObject, public QAbstractNativeEventFilter
     Q_PROPERTY(bool animationsEnabled READ animationsEnabled NOTIFY changed)
     Q_PROPERTY(bool darkAppsTheme READ darkAppsTheme NOTIFY changed)
 
+    // **A third value, and not a duplicate of the second.** Windows has two
+    // theme switches and honours both: `AppsUseLightTheme` decides how an
+    // application draws itself, and `SystemUsesLightTheme` decides the taskbar,
+    // the Start menu and the notification area. A person can and often does
+    // set them differently — light applications on a dark taskbar is the
+    // Windows 11 default the first time somebody turns dark mode half on.
+    //
+    // The tray icon is painted *onto the taskbar*, so it is the only thing in
+    // this application that follows the second one. Everything drawn inside our
+    // own window follows the first. Reading one for the other is how a
+    // monochrome icon ends up dark-on-dark and invisible.
+    Q_PROPERTY(bool darkSystemTheme READ darkSystemTheme NOTIFY changed)
+
 public:
     explicit OmnuvAppearance(QObject* parent = nullptr);
     ~OmnuvAppearance() override;
@@ -64,6 +77,22 @@ public:
 
     bool animationsEnabled() const { return m_animations; }
     bool darkAppsTheme() const { return m_dark; }
+    bool darkSystemTheme() const { return m_darkShell; }
+
+    // The same reading, without an instance, asked now rather than recalled.
+    //
+    // Two reasons it is not `animationsEnabled()` on the live object. The
+    // object refreshes on WM_SETTINGCHANGE, which arrives through Qt's event
+    // loop -- and `app/streaming/session.cpp` suspends Qt for the whole of a
+    // stream, so during the one hour anybody is actually playing, the cached
+    // value is the one read at startup and cannot move. And there is no
+    // instance reachable from the streaming code, which is under SDL's main
+    // thread rather than under the QML object graph.
+    //
+    // It calls the same query the object calls, so there is one definition of
+    // what the setting is and where it comes from. A system call per second is
+    // not a cost worth caching against.
+    static bool animationsEnabledNow();
 
     // Windows broadcasts WM_SETTINGCHANGE to every top-level window when either
     // of these is changed, and this is how a Qt application sees it. Returns
@@ -81,13 +110,18 @@ private:
     void refresh();
 
     // The one greppable line, written at startup and again whenever a value
-    // changes: `motion=on|off theme=dark|light`. The lab rig's report asserts
-    // on it, so its shape is part of the contract with `lab-windows-build.yml`
-    // rather than a debugging aid to be reworded freely.
+    // changes: `motion=on|off theme=dark|light taskbar=dark|light`. The lab
+    // rig's report asserts on it, so its shape is part of the contract with
+    // `lab-windows-build.yml` rather than a debugging aid to be reworded
+    // freely. The third token was **appended** rather than inserted for that
+    // reason: `omnuv-run.ps1` captures `theme=(\S+)`, which stops at the
+    // space, so a token added at the end costs nothing and a token added in
+    // the middle would have moved what that pattern captures.
     void announce() const;
 
     bool m_animations;
     bool m_dark;
+    bool m_darkShell;
 
     // The native window Mica was last requested for, as a WId rather than an
     // HWND so this header stays free of <windows.h>. Zero until the window

@@ -111,6 +111,23 @@ SDL_Color OverlayManager::getOverlayColor(OverlayType type)
     return m_Overlays[type].color;
 }
 
+// Omnuv: see the comment in the header. Re-rasterises only when the colour
+// actually changed and the overlay is up, because notifyOverlayUpdated()
+// renders the text and swaps the surface -- calling it on every sample would
+// be one rasterise a second for a colour nobody changed.
+void OverlayManager::setOverlayColor(OverlayType type, SDL_Color color)
+{
+    if (SDL_memcmp(&m_Overlays[type].color, &color, sizeof(color)) == 0) {
+        return;
+    }
+
+    m_Overlays[type].color = color;
+
+    if (m_Overlays[type].enabled) {
+        notifyOverlayUpdated(type);
+    }
+}
+
 void OverlayManager::setOverlayRenderer(IOverlayRenderer* renderer)
 {
     m_Renderer = renderer;

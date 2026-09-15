@@ -1,13 +1,20 @@
 #pragma once
 
+#include <QDateTime>
+#include <QIcon>
+#include <QList>
 #include <QObject>
+#include <QString>
 #include <QSystemTrayIcon>
+
+#include "traystate.h"
 
 class QMenu;
 class QAction;
 class QTimer;
 class OmnuvSession;
 class OmnuvAutostart;
+class OmnuvProbe;
 
 // The tray, which is the whole of being a widget.
 //
@@ -36,6 +43,37 @@ class OmnuvAutostart;
 // instead of a labs one whose contract is explicitly provisional. It needs
 // QApplication rather than QGuiApplication — which is the same change the tray
 // already required, so the change budget grows by nothing.
+//
+// ---------------------------------------------------------------------------
+//
+// **The menu is the dashboard now, and the rule it used to carry is gone on
+// purpose.** This header said, until today, that a tray menu is not a
+// dashboard, and gave a reason worth repeating: machine rows here would be a
+// second place where the machine list is *interpreted*, and the client
+// displays while Core decides.
+//
+// The reason survives. The rule does not, and the two came apart:
+//
+//   * The sentence was written for W1's five-item menu and the queue marks it
+//     "superseded text" where it appears; the design it belongs to
+//     (`docs/client-widget.md`'s `Qt.labs.platform` tray) is the same design
+//     this file's own header reverses two paragraphs above. It is not a
+//     standing decision that I3 overrode — it is older text about a shipped
+//     scope.
+//
+//   * D1 and `windows_impl.md` I3 are the later and more specific word, and
+//     what they ask for is not interpretation. A row is a name Core sent, the
+//     status word Core chose, and a dot keyed on that word by the *same*
+//     grouping `MachineCard.qml` already uses — pinned against it in
+//     `.github/workflows/omnuv-change-budget.yml`, so there is exactly one
+//     grouping and the build fails if a second appears.
+//
+// What is still refused, because that is the half that was load-bearing: no
+// vocabulary of this application's own, nothing derived from a field Core did
+// not send, no row that says *why* beyond `last_error` and `waiting_on`
+// verbatim, and no aggregate — "2 of 3 sites up" is provider data wearing a
+// count. A buyer sees their own machines and their own device, and nothing
+// else exists as far as this menu is concerned.
 class OmnuvTray : public QObject
 {
     Q_OBJECT
@@ -63,21 +101,70 @@ private slots:
     void activated(QSystemTrayIcon::ActivationReason reason);
     void toggleAutostart(bool on);
 
+    // Take the local readings again. On its own timer rather than on the
+    // window's: see `kLocalPollMs` in the implementation for why the window's
+    // was not enough.
+    void probeLocal();
+
+    // One frame of the connecting ring.
+    void spin();
+
 private:
     explicit OmnuvTray(OmnuvSession* session, QObject* parent);
 
-    // One line of state, and it is not clickable. A tray menu is not a
-    // dashboard: putting machine rows here would be a second place where the
-    // machine list is interpreted, and the rule is that the client displays
-    // and Core decides.
+    // Everything the icon is allowed to look at, gathered from the live
+    // objects. The decision itself is `omnuv::iconFor` in `traystate.h`, which
+    // has no Qt in it so that the exit check can run it.
+    omnuv::Readings readings() const;
+
+    // The headline: one line, Omnuv's own state, never a machine's.
     QString stateLine() const;
 
+    void rebuildMachines();
+    // `replacement`, when non-empty, is a word that stands in for pass / fail
+    // / unknown — for the one row state that is none of the three.
+    void setRow(QAction* row, const QString& label, omnuv::Reading reading,
+                const QDateTime& takenAt, const QString& replacement);
+    void applyIcon();
+
+    // A monochrome glyph for one state, at every size the shell asks for.
+    QIcon glyph(omnuv::TrayIcon state, int frame) const;
+
+    // Send one, and say that we sent it — including what the shell was
+    // willing to show at the time, because a toast that never appeared and a
+    // change that never happened are the same silence in a log that only
+    // records the change.
+    void toast(const char* kind, const QString& title, const QString& body);
+
     OmnuvSession* m_session;
+    OmnuvProbe* m_probe;
     QSystemTrayIcon* m_icon;
     QMenu* m_menu;
     QAction* m_state;
+    QAction* m_machinesHeader;
+    QAction* m_deviceAnchor;   // machine rows are inserted before this
+    QAction* m_rowInternet;
+    QAction* m_rowOmnuv;
+    QAction* m_rowNetwork;
     QAction* m_autostart;
     OmnuvAutostart* m_auto;
+
+    QList<QAction*> m_machineRows;
+
+    // Re-reads the local probes whether or not any window is open.
+    QTimer* m_localPoll;
+
+    // Only alive while the icon is the connecting one, and never under
+    // reduced motion.
+    QTimer* m_spinner;
+    int m_frame;
+
+    // What is currently painted, so an unchanged state does not repaint — a
+    // tray icon is set through the shell, and setting it is not free.
+    omnuv::TrayIcon m_painted;
+    bool m_paintedDark;
+    int m_paintedFrame;
+    bool m_everPainted;
 
     // Only alive while the answer is still "not yet": `checkRegistered`
     // stops it on the first verdict, so exactly one line is ever written.

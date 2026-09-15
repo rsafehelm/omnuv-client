@@ -26,9 +26,51 @@ static QDateTime moment(const QJsonValue& value)
     return QDateTime::fromString(QString(text).remove(fraction), Qt::ISODate);
 }
 
+// The grouping, and the one place it is written. Kept as a chain of explicit
+// comparisons rather than a set lookup so that the words are visible in a diff
+// and a reviewer can hold it beside `MachineCard.qml`'s `statusColour()`,
+// which is what the change-budget check does mechanically.
+//
+// **Every word Core can send is named**, including the three that look like
+// faults and are not. Falling through to `Bad` is correct only for Core's own
+// "Needs attention": a word this list forgot would arrive as an alarm about a
+// machine that is fine.
+Machine::Health Machine::health() const
+{
+    if (status == QStringLiteral("Running")) {
+        return Health::Good;
+    }
+    if (status == QStringLiteral("Starting") || status == QStringLiteral("Restarting")
+        || status == QStringLiteral("Stopping")) {
+        return Health::Moving;
+    }
+    if (status == QStringLiteral("Stopped") || status == QStringLiteral("Deleting")) {
+        return Health::Resting;
+    }
+    return Health::Bad;
+}
+
 MachineModel::MachineModel(QObject* parent)
     : QAbstractListModel(parent)
 {
+}
+
+int MachineModel::movingCount() const
+{
+    int n = 0;
+    for (const Machine& m : m_machines) {
+        if (m.health() == Machine::Health::Moving) { ++n; }
+    }
+    return n;
+}
+
+int MachineModel::unhappyCount() const
+{
+    int n = 0;
+    for (const Machine& m : m_machines) {
+        if (m.health() == Machine::Health::Bad) { ++n; }
+    }
+    return n;
 }
 
 int MachineModel::rowCount(const QModelIndex& parent) const
@@ -104,6 +146,7 @@ void MachineModel::replace(const QJsonArray& machines)
     // steady state. Announcing "gpu-1 is ready" every fifteen seconds for as
     // long as it stays ready is how people turn notifications off.
     QHash<QString, QString> previous = m_lastStatus;
+    QSet<QString> wasWaiting = m_lastWaiting;
 
     beginResetModel();
     m_machines.clear();
@@ -153,13 +196,40 @@ void MachineModel::replace(const QJsonArray& machines)
         m_machines.append(m);
     }
 
+    // What to announce, decided here and emitted after the reset, so that a
+    // handler which reads this model finds it already consistent.
+    struct Change { QString name; QString detail; int kind; };
+    enum { Ready, Attention, Waiting };
+    QList<Change> changes;
+
     m_lastStatus.clear();
-    QStringList becameReady;
+    m_lastWaiting.clear();
     for (const Machine& m : m_machines) {
-        m_lastStatus.insert(m.id, m.status);
         const QString was = previous.value(m.id);
-        if (m.status == QStringLiteral("Running") && was != QStringLiteral("Running")) {
-            becameReady.append(m.name);
+        const bool wasKnown = previous.contains(m.id);
+        m_lastStatus.insert(m.id, m.status);
+
+        const bool running = m.status == QStringLiteral("Running");
+        const bool attention = m.health() == Machine::Health::Bad;
+
+        if (running && was != QStringLiteral("Running")) {
+            changes.append({ m.name, QString(), Ready });
+        }
+        // Only *from* Running, so a machine that has been unhappy since before
+        // this client started is not announced, and one that is unhappy at
+        // every poll is announced once.
+        else if (attention && wasKnown && was == QStringLiteral("Running")) {
+            changes.append({ m.name, m.lastError, Attention });
+        }
+
+        if (!m.waitingOn.isEmpty()) {
+            m_lastWaiting.insert(m.id);
+            // A machine that is already running and still reports a wait is
+            // not something to interrupt anybody for; the wait that matters is
+            // the one holding a machine back from existing.
+            if (!running && !wasWaiting.contains(m.id)) {
+                changes.append({ m.name, m.waitingOn, Waiting });
+            }
         }
     }
 
@@ -169,8 +239,12 @@ void MachineModel::replace(const QJsonArray& machines)
     // the application does not need to be told about machines they can already
     // see on the screen in front of them.
     if (m_loadedOnce) {
-        for (const QString& name : becameReady) {
-            emit machineBecameReady(name);
+        for (const Change& c : changes) {
+            switch (c.kind) {
+            case Ready:     emit machineBecameReady(c.name); break;
+            case Attention: emit machineNeedsAttention(c.name, c.detail); break;
+            case Waiting:   emit machineIsWaiting(c.name, c.detail); break;
+            }
         }
     }
     m_loadedOnce = true;
@@ -179,6 +253,17 @@ void MachineModel::replace(const QJsonArray& machines)
 
 void MachineModel::clear()
 {
+    // **Above the early return, and that placement is the point.** Signing out
+    // forgets the machines; it has to forget what they were doing too. Left
+    // behind, `m_lastStatus` would make the first refresh after signing back
+    // in look like a set of transitions and announce every machine at once —
+    // the same defect `m_loadedOnce` exists to prevent, one session later. So
+    // the flag goes with them, and it happens even when the list was already
+    // empty, which is the case a `return` at the top would have skipped.
+    m_lastStatus.clear();
+    m_lastWaiting.clear();
+    m_loadedOnce = false;
+
     if (m_machines.isEmpty()) {
         return;
     }
@@ -192,6 +277,12 @@ void MachineModel::clear()
 QString MachineModel::idAt(int row) const
 {
     return (row >= 0 && row < m_machines.count()) ? m_machines.at(row).id : QString();
+}
+
+Machine::Health MachineModel::healthAt(int row) const
+{
+    return (row >= 0 && row < m_machines.count()) ? m_machines.at(row).health()
+                                                  : Machine::Health::Bad;
 }
 
 QString MachineModel::nameAt(int row) const

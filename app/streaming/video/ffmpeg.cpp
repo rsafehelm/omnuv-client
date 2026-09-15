@@ -2,6 +2,7 @@
 #include "ffmpeg.h"
 #include "utils.h"
 #include "streaming/session.h"
+#include "omnuv/streamquality.h"
 
 #include <h264_stream.h>
 
@@ -2120,17 +2121,22 @@ int FFmpegVideoDecoder::submitDecodeUnit(PDECODE_UNIT du)
 
     // Flip stats windows roughly every second
     if (LiGetMicroseconds() > m_ActiveWndVideoStats.measurementStartUs + 1000000) {
-        // Update overlay stats if it's enabled
-        if (Session::get()->getOverlayManager().isOverlayEnabled(Overlay::OverlayDebug)) {
-            VIDEO_STATS lastTwoWndStats = {};
-            addVideoStats(m_LastWndVideoStats, lastTwoWndStats);
-            addVideoStats(m_ActiveWndVideoStats, lastTwoWndStats);
-
-            stringifyVideoStats(lastTwoWndStats,
-                                Session::get()->getOverlayManager().getOverlayText(Overlay::OverlayDebug),
-                                Session::get()->getOverlayManager().getOverlayMaxTextLength());
-            Session::get()->getOverlayManager().setOverlayTextUpdated(Overlay::OverlayDebug);
-        }
+        // Omnuv: the two-window reading is now computed whether or not the
+        // overlay is on, and handed to app/omnuv/streamquality.cpp, which owns
+        // both overlays from here.
+        //
+        // Unconditional because this is the only place these numbers exist and
+        // three things outside the overlay need them: the quality mark, the
+        // once-a-second log line that `scripts/gaming-rig-e2e` step 7 samples,
+        // and the sentence a dropped stream is explained with. Gating them on
+        // a hotkey nobody pressed meant the harness could only ever read the
+        // whole-session aggregate `logVideoStats` writes at decoder teardown,
+        // which cannot answer "over the last 30 seconds". The cost is two
+        // struct adds and one LiGetEstimatedRttInfo() per second.
+        VIDEO_STATS lastTwoWndStats = {};
+        addVideoStats(m_LastWndVideoStats, lastTwoWndStats);
+        addVideoStats(m_ActiveWndVideoStats, lastTwoWndStats);
+        OmnuvStreamQuality::onStats(lastTwoWndStats);
 
         // Accumulate these values into the global stats
         addVideoStats(m_ActiveWndVideoStats, m_GlobalVideoStats);

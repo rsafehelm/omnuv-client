@@ -82,12 +82,38 @@ bool queryDark()
 #endif
 }
 
+bool queryDarkShell()
+{
+#ifdef Q_OS_WIN
+    // The same key as `queryDark()`, a different value: `SystemUsesLightTheme`,
+    // a DWORD, 0 meaning dark. This is the one the shell paints the taskbar,
+    // the Start menu and the notification area from, and therefore the one a
+    // tray icon has to match — an icon drawn for the *apps* theme is
+    // dark-on-dark and invisible on every machine where the two differ.
+    //
+    // Absent before Windows 10 1903, which is when Microsoft split the setting
+    // in two. The default is 1 — light — because that is what a Windows whose
+    // theme has never been touched draws, and it is also the safer of the two
+    // to be wrong about: a dark glyph on a dark taskbar disappears, while a
+    // light one on a light taskbar is merely faint.
+    QSettings personalize(
+        QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
+        QSettings::NativeFormat);
+    return personalize.value(QStringLiteral("SystemUsesLightTheme"), 1).toInt() == 0;
+#else
+    // No second setting to read. Everywhere else the tray icon and the window
+    // follow the one theme the desktop has.
+    return queryDark();
+#endif
+}
+
 }
 
 OmnuvAppearance::OmnuvAppearance(QObject* parent)
     : QObject(parent),
       m_animations(queryAnimations()),
-      m_dark(queryDark())
+      m_dark(queryDark()),
+      m_darkShell(queryDarkShell())
 {
     announce();
 
@@ -153,25 +179,36 @@ bool OmnuvAppearance::nativeEventFilter(const QByteArray& eventType, void* messa
     return false;
 }
 
+bool OmnuvAppearance::animationsEnabledNow()
+{
+    // The same `queryAnimations()` the instance uses -- one definition of the
+    // setting, asked fresh. See the comment on the declaration for why a
+    // stream cannot use the cached value.
+    return queryAnimations();
+}
+
 void OmnuvAppearance::refresh()
 {
     const bool animations = queryAnimations();
     const bool dark = queryDark();
-    if (animations == m_animations && dark == m_dark) {
+    const bool darkShell = queryDarkShell();
+    if (animations == m_animations && dark == m_dark && darkShell == m_darkShell) {
         return;
     }
 
     m_animations = animations;
     m_dark = dark;
+    m_darkShell = darkShell;
     announce();
     emit changed();
 }
 
 void OmnuvAppearance::announce() const
 {
-    qInfo("Omnuv appearance: motion=%s theme=%s",
+    qInfo("Omnuv appearance: motion=%s theme=%s taskbar=%s",
           m_animations ? "on" : "off",
-          m_dark ? "dark" : "light");
+          m_dark ? "dark" : "light",
+          m_darkShell ? "dark" : "light");
 }
 
 void OmnuvAppearance::applyStyle()

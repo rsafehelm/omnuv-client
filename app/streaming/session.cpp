@@ -1,6 +1,7 @@
 #include "session.h"
 #include "settings/streamingpreferences.h"
 #include "streaming/streamutils.h"
+#include "omnuv/streamquality.h"
 #include "backend/richpresencemanager.h"
 
 #include <Limelight.h>
@@ -126,10 +127,20 @@ void Session::clConnectionTerminated(int errorCode)
     default:
         s_ActiveSession->m_UnexpectedTermination = true;
 
-        // We'll assume large errors are hex values
-        bool hexError = qAbs(errorCode) > 1000;
-        emit s_ActiveSession->displayLaunchError(tr("Connection terminated") + "\n\n" +
-                                                 tr("Error code: %1").arg(errorCode, hexError ? 8 : 0, hexError ? 16 : 10, QChar('0')));
+        // Omnuv: when the picture had already stopped arriving, say that
+        // rather than "Connection terminated". This is the arm a pulled cable
+        // lands in -- ENet gives the peer ten seconds and then reports a bare
+        // -1 (ControlStream.c:1380-1383) -- and a buyer reading "Error code:
+        // -1" learns nothing they can act on. app/omnuv/streamquality.cpp
+        // watched the gap open and knows how long it lasted, so the sentence
+        // is a fact rather than a guess. The code is still appended, and
+        // app/omnuv/OmnuvSegue.qml still folds it under Details.
+        {
+            const QString lost = OmnuvStreamQuality::lostPictureSentence();
+            bool hexError = qAbs(errorCode) > 1000;
+            emit s_ActiveSession->displayLaunchError((lost.isEmpty() ? tr("Connection terminated") : lost) + "\n\n" +
+                                                     tr("Error code: %1").arg(errorCode, hexError ? 8 : 0, hexError ? 16 : 10, QChar('0')));
+        }
         break;
     }
 
@@ -175,27 +186,18 @@ void Session::clConnectionStatusUpdate(int connectionStatus)
                 "Connection status update: %d",
                 connectionStatus);
 
-    if (!s_ActiveSession->m_Preferences->connectionWarnings) {
-        return;
-    }
-
-    if (s_ActiveSession->m_MouseEmulationRefCount > 0) {
-        // Don't display the overlay if mouse emulation is already using it
-        return;
-    }
-
-    switch (connectionStatus)
-    {
-    case CONN_STATUS_POOR:
-        s_ActiveSession->m_OverlayManager.updateOverlayText(Overlay::OverlayStatusUpdate,
-                                                            s_ActiveSession->m_StreamConfig.bitrate > 5000 ?
-                                                                "Slow connection to PC\nReduce your bitrate" : "Poor connection to PC");
-        s_ActiveSession->m_OverlayManager.setOverlayState(Overlay::OverlayStatusUpdate, true);
-        break;
-    case CONN_STATUS_OKAY:
-        s_ActiveSession->m_OverlayManager.setOverlayState(Overlay::OverlayStatusUpdate, false);
-        break;
-    }
+    // Omnuv: this used to write the banner itself. It now hands the host's
+    // verdict to app/omnuv/streamquality.cpp, which owns this overlay slot for
+    // the length of the stream -- two writers of one surface is how a mark and
+    // a banner end up overwriting each other once a second.
+    //
+    // Nothing is lost by the redirect. CONN_STATUS_POOR is frame loss measured
+    // at the host over three-second intervals (ControlStream.c:488-503); it is
+    // taken as a floor on the verdict, so it still forces red. What it could
+    // not do on its own is say *what* is wrong, or say anything at all when
+    // frames stop entirely -- `connectionSawFrame` only runs when a frame
+    // arrives, so a pulled cable makes this callback go quiet rather than red.
+    OmnuvStreamQuality::onHostVerdict(connectionStatus);
 }
 
 void Session::clSetHdrMode(bool enabled)
@@ -1957,6 +1959,13 @@ void Session::exec()
     // Toggle the stats overlay if requested by the user
     m_OverlayManager.setOverlayState(Overlay::OverlayDebug, m_Preferences->showPerformanceOverlay);
 
+    // Omnuv: from here the two overlays are app/omnuv/streamquality.cpp's.
+    // `connectionWarnings` is upstream's own switch for this slot and is
+    // honoured; the negotiated frame rate is what every frame-rate reading is
+    // measured against, which is why it is passed rather than assumed.
+    OmnuvStreamQuality::begin(m_Computer->name, m_StreamConfig.fps,
+                              m_StreamConfig.bitrate, m_Preferences->connectionWarnings);
+
     // Switch to async logging mode when we enter the SDL loop
     StreamUtils::enterAsyncLoggingMode();
 
@@ -1964,6 +1973,15 @@ void Session::exec()
     // because we want to suspend all Qt processing until the stream is over.
     SDL_Event event;
     for (;;) {
+        // Omnuv: the quality mark, the stats panel and the "no picture"
+        // state, once a second. At the top of the loop rather than in the
+        // wait's timeout branch below, because that branch is only reached
+        // when nothing at all happened -- during a stream with a mouse moving
+        // in it, SDL_WaitEventTimeout() returns an event immediately and the
+        // timeout never fires. The call rate-limits itself, so running it at
+        // input rate costs one SDL_GetTicks().
+        OmnuvStreamQuality::tick(m_MouseEmulationRefCount > 0);
+
 #if SDL_VERSION_ATLEAST(2, 0, 18) && !defined(STEAM_LINK)
         // SDL 2.0.18 has a proper wait event implementation that uses platform
         // support to block on events rather than polling on Windows, macOS, X11,
@@ -2308,6 +2326,13 @@ void Session::exec()
     }
 
 DispatchDeferredCleanup:
+    // Omnuv: stop drawing and write the summary. Here rather than in the
+    // termination callback because that callback runs on moonlight-common-c's
+    // control thread and does not run at all when a person quits with
+    // Ctrl+Alt+Shift+Q. It reads a sentence from the same object and changes
+    // nothing, which is why the two do not race.
+    OmnuvStreamQuality::end();
+
     // Switch back to synchronous logging mode
     StreamUtils::exitAsyncLoggingMode();
 

@@ -11,6 +11,7 @@
 #include <QDateTime>
 #include <QHash>
 #include <QList>
+#include <QSet>
 #include <QString>
 
 class QJsonArray;
@@ -75,6 +76,26 @@ struct Machine
     bool observationComplete = false;
 
     bool streamed() const { return !streamApp.isEmpty(); }
+
+    // **Core's seven words, grouped into the four things a dot can mean.**
+    //
+    // This is the same grouping `MachineCard.qml`'s `statusColour()` makes,
+    // and it has to stay the same grouping: a machine whose card is amber and
+    // whose tray row is red is the client telling a person two things about
+    // one machine. `.github/workflows/omnuv-change-budget.yml` pins the two
+    // against each other and fails the build if they drift.
+    //
+    // It is a *grouping*, not an interpretation — every word here is one Core
+    // sends, and nothing is derived from a field Core did not set. That is the
+    // line the tray had to stay on the right side of to be allowed a machine
+    // row at all.
+    //
+    //   Good     Running
+    //   Moving   Starting, Restarting, Stopping — an action, not a fault
+    //   Resting  Stopped, Deleting
+    //   Bad      everything else, which is Core's "Needs attention"
+    enum class Health { Good, Moving, Resting, Bad };
+    Health health() const;
 };
 
 class MachineModel : public QAbstractListModel
@@ -126,18 +147,58 @@ public:
     // instance one.
     QString idAt(int row) const;
 
+    // The grouping for one row. C++-only, like `idAt`: QML has
+    // `MachineCard.qml`'s own switch on the same words and does not need a
+    // second way to ask, and the tray is C++.
+    Machine::Health healthAt(int row) const;
+
     Q_INVOKABLE QString nameAt(int row) const;
     Q_INVOKABLE QString hostAt(int row) const;
     Q_INVOKABLE QString userAt(int row) const;
     Q_INVOKABLE bool streamedAt(int row) const;
     Q_INVOKABLE QString streamAppAt(int row) const;
 
+    // How many machines are in each of the two states the tray icon cares
+    // about, counted from `health()` so that nothing here is a second reading
+    // of Core's vocabulary.
+    int movingCount() const;
+    int unhappyCount() const;
+
 signals:
-    // A machine has finished starting. **The only thing here worth
-    // interrupting somebody for**: they asked for it, they have been
-    // waiting, and now they can use it. A failed poll is not — it means
-    // nothing to a person and it recovers by itself.
+    // **Three transitions, and only transitions.** This list is short on
+    // purpose: a notification for something a person did not ask about, or
+    // that they are already looking at, or that repeats every minute for as
+    // long as a condition holds, is a notification they turn off — and then
+    // the one that mattered is gone too.
+    //
+    // Each of these fires once, on the refresh where the change happened, and
+    // never on the first load, when everything would look new.
+
+    // A machine has finished starting. They asked for it, they have been
+    // waiting, and now they can use it.
     void machineBecameReady(const QString& name);
+
+    // A machine that was running is not any more, and not because anybody
+    // asked: `Running` → `Needs attention`.
+    //
+    // **Only from `Running`, and only to `Needs attention`.** `Running` →
+    // `Stopping` is somebody pressing Stop, and telling a person what they
+    // just did is the definition of noise. `Running` → `Stopped` cannot be
+    // told from that at a sixty-second poll, so it is not announced either —
+    // the client cannot distinguish a machine that was shut down from one
+    // that fell over, and guessing which is exactly the kind of invention
+    // this model does not do.
+    //
+    // `why` is Core's own `last_error`, verbatim, and is empty when Core did
+    // not give one.
+    void machineNeedsAttention(const QString& name, const QString& why);
+
+    // Something is waiting on capacity, in Core's words. Fires when
+    // `operation.waiting_on` appears where there was none — not while it
+    // persists, and not when its text merely changes, which would be the same
+    // wait announcing itself twice.
+    void machineIsWaiting(const QString& name, const QString& waitingOn);
+
     void countChanged();
 
 private:
@@ -147,5 +208,12 @@ private:
     // told from a steady state. Empty until the first load, which is what
     // stops every machine announcing itself when the application starts.
     QHash<QString, QString> m_lastStatus;
+
+    // Which machines were waiting on something as of the last refresh. The
+    // value is not kept, only the fact: a wait whose *reason* changes is the
+    // same wait, and re-announcing it would be the repetition this list of
+    // signals exists to avoid.
+    QSet<QString> m_lastWaiting;
+
     bool m_loadedOnce = false;
 };

@@ -11,6 +11,14 @@ QT += widgets
 # the bearer token belongs on Windows: bound to the user's login, and
 # visible to them in Credential Manager without us providing a button.
 win32: LIBS += -ladvapi32
+
+# The one shell32 call this fork makes: SHQueryUserNotificationState, asked
+# before every notification so that one the shell refused to show is written
+# down rather than inferred from its absence. QSystemTrayIcon cannot report a
+# refusal — see the comment on `shellNotificationState()` in app/omnuv/tray.cpp
+# — and a toast that never appeared looks exactly like a change that never
+# happened.
+win32: LIBS += -lshell32
 CONFIG += c++17
 
 unix:!macx {
@@ -227,7 +235,9 @@ SOURCES += \
     omnuv/machinemodel.cpp \
     omnuv/omnuvsession.cpp \
     omnuv/pairing.cpp \
+    omnuv/probe.cpp \
     omnuv/signin.cpp \
+    omnuv/streamquality.cpp \
     omnuv/tray.cpp \
     omnuv/tunnel.cpp
 
@@ -238,8 +248,11 @@ HEADERS += \
     omnuv/machinemodel.h \
     omnuv/omnuvsession.h \
     omnuv/pairing.h \
+    omnuv/probe.h \
     omnuv/signin.h \
+    omnuv/streamquality.h \
     omnuv/tray.h \
+    omnuv/traystate.h \
     omnuv/tunnel.h
 
 HEADERS += \
