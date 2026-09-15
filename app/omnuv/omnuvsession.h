@@ -29,6 +29,8 @@
 #include "autostart.h"
 #include "tunnel.h"
 
+class OmnuvPairing;
+
 class OmnuvSession : public QObject
 {
     Q_OBJECT
@@ -131,6 +133,21 @@ public:
     // structural change, so the two orders cannot drift.
     Q_INVOKABLE int hostRowFor(QObject* computerManager, const QString& address) const;
 
+    // **Pairing, without anybody typing four digits into anything.**
+    //
+    // Call this straight after ComputerModel::pairComputer() for the same
+    // machine, with the same PIN. It finds the deployment the machine came
+    // from, collects the one-time login that machine minted for its own
+    // streaming host, and hands the PIN over with it. The view shows its
+    // dialog only if this fails.
+    //
+    // The order matters and is the machine's rather than ours: the identifier
+    // a PIN is addressed to does not exist until the client's own pairing
+    // request is waiting. See `pairing.cpp`.
+    //
+    // Exactly one of pairingSucceeded() or pairingFailed() follows, always.
+    Q_INVOKABLE void deliverPin(int row, const QString& pin);
+
 
 
 signals:
@@ -140,10 +157,26 @@ signals:
     void pendingChanged();
     void statusChanged();
 
+    // The machine took the code. Whether the pairing then completed is
+    // ComputerModel::pairingCompleted's answer; this only says the delivery
+    // arrived.
+    void pairingSucceeded();
+
+    // `why` is one sentence for the person, already in their words. `detail`
+    // is the machine-shaped remainder the view folds away behind a disclosure
+    // — a status, an API message — and never shows on its own.
+    void pairingFailed(const QString& why, const QString& detail);
+
 private:
     // Answers the tunnel's needsKey(): asks Core for a one-time enrolment key
     // for this device, then hands it back.
     void fetchDeviceKey();
+
+    // The second half of deliverPin(): collect the one-time streaming login
+    // for a deployment and spend it. Separate because `waiting` is a normal
+    // answer that is asked again, not a failure.
+    void collectStreamLogin(int row, const QString& deploymentId,
+                            const QString& pin, int triesLeft);
 
     void poll();
     void collect();
@@ -169,6 +202,7 @@ private:
     OmnuvTunnel* m_tunnel;
     OmnuvAutostart* m_autostart;
     OmnuvAppearance* m_appearance;
+    OmnuvPairing* m_pairing;
     QTimer m_pollTimer;
     QTimer m_refreshTimer;
 

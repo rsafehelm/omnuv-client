@@ -5,7 +5,10 @@
 -->
 <RCC>
     <qresource prefix="/omnuv">
+        <file>MachineCard.qml</file>
+        <file>OmnuvSegue.qml</file>
         <file>OmnuvView.qml</file>
+        <file>StreamSettingsSheet.qml</file>
         <file>Theme.qml</file>
         <file>omnuv.svg</file>
     </qresource>

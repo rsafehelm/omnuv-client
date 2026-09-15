@@ -2,6 +2,29 @@
 
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QRegularExpression>
+
+// One RFC 3339 timestamp from Core, as a moment.
+//
+// The fractional seconds are removed before parsing rather than trusted to a
+// parser: Core formats with the `time` crate's rfc3339, which emits whatever
+// subsecond precision the column holds — microseconds, from Postgres — and
+// how many digits `Qt::ISODate` tolerates is not a thing to discover on a
+// buyer's screen. Nothing on a card is measured finer than a second, so the
+// digits are dropped rather than rounded.
+//
+// An absent or unparseable value returns an invalid QDateTime, which the model
+// reports as "no observation" rather than as a date. That distinction is the
+// whole point of the field.
+static QDateTime moment(const QJsonValue& value)
+{
+    const QString text = value.toString();
+    if (text.isEmpty()) {
+        return QDateTime();
+    }
+    static const QRegularExpression fraction(QStringLiteral("\\.\\d+"));
+    return QDateTime::fromString(QString(text).remove(fraction), Qt::ISODate);
+}
 
 MachineModel::MachineModel(QObject* parent)
     : QAbstractListModel(parent)
@@ -29,6 +52,15 @@ QVariant MachineModel::data(const QModelIndex& index, int role) const
     case HostRole:      return m.host;
     case UserRole:      return m.defaultUser;
     case SummaryRole:   return m.summary;
+    case PrivateIpRole: return m.privateIp;
+    case LastErrorRole: return m.lastError;
+    case OperatingRole: return m.operating;
+    case OperationSinceRole:   return m.operationSince;
+    case OperationAttemptRole: return m.operationAttempt;
+    case WaitingOnRole:        return m.waitingOn;
+    case ObservedRole:            return m.observed;
+    case ObservedAtRole:          return m.observedAt;
+    case ObservationCompleteRole: return m.observationComplete;
     // Running *and* reachable. A machine Core has not yet given a private name
     // has no address to connect to, and a Connect button that opens nothing is
     // worse than one that is plainly disabled.
@@ -48,6 +80,15 @@ QHash<int, QByteArray> MachineModel::roleNames() const
         { HostRole,      "host" },
         { UserRole,      "user" },
         { SummaryRole,   "summary" },
+        { PrivateIpRole, "privateIp" },
+        { LastErrorRole, "lastError" },
+        { OperatingRole,            "operating" },
+        { OperationSinceRole,       "since" },
+        { OperationAttemptRole,     "attempt" },
+        { WaitingOnRole,            "waitingOn" },
+        { ObservedRole,             "observed" },
+        { ObservedAtRole,           "observedAt" },
+        { ObservationCompleteRole,  "observationComplete" },
         { ReadyRole,     "ready" },
     };
 }
@@ -78,6 +119,23 @@ void MachineModel::replace(const QJsonArray& machines)
         m.streamApp = o["stream_app"].toString();
         m.defaultUser = o["default_user"].toString();
         m.host = o["private_name"].toString();
+        m.privateIp = o["private_ip"].toString();
+        m.lastError = o["last_error"].toString();
+
+        // Both objects are omitted entirely when Core has nothing to say, so
+        // the test is on the object and not on a field inside it. Core builds
+        // `operation` all-or-nothing — id, action and since together or no
+        // object — so one presence test is the whole guard.
+        const QJsonObject operation = o["operation"].toObject();
+        m.operating = !operation.isEmpty();
+        m.operationSince = moment(operation["since"]);
+        m.operationAttempt = operation["attempt"].toInt(1);
+        m.waitingOn = operation["waiting_on"].toString();
+
+        const QJsonObject observation = o["observation"].toObject();
+        m.observed = !observation.isEmpty();
+        m.observedAt = moment(observation["collected_at"]);
+        m.observationComplete = observation["complete"].toBool();
 
         // Enough to tell two machines apart at a glance, in the units the
         // console uses. GiB rather than MiB: nobody rents 16384 of anything.
@@ -129,6 +187,11 @@ void MachineModel::clear()
     m_machines.clear();
     endResetModel();
     emit countChanged();
+}
+
+QString MachineModel::idAt(int row) const
+{
+    return (row >= 0 && row < m_machines.count()) ? m_machines.at(row).id : QString();
 }
 
 QString MachineModel::nameAt(int row) const

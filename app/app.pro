@@ -226,6 +226,7 @@ SOURCES += \
     omnuv/credentials.cpp \
     omnuv/machinemodel.cpp \
     omnuv/omnuvsession.cpp \
+    omnuv/pairing.cpp \
     omnuv/signin.cpp \
     omnuv/tray.cpp \
     omnuv/tunnel.cpp
@@ -236,6 +237,7 @@ HEADERS += \
     omnuv/credentials.h \
     omnuv/machinemodel.h \
     omnuv/omnuvsession.h \
+    omnuv/pairing.h \
     omnuv/signin.h \
     omnuv/tray.h \
     omnuv/tunnel.h

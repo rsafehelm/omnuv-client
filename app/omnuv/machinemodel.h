@@ -8,6 +8,7 @@
 #pragma once
 
 #include <QAbstractListModel>
+#include <QDateTime>
 #include <QHash>
 #include <QList>
 #include <QString>
@@ -39,6 +40,40 @@ struct Machine
     // assigned, which is also when there is nothing to connect to.
     QString host;
 
+    // The address on the project network. Not used to connect — `host` is —
+    // but it is the one field that says an address was ever *assigned*, which
+    // is what the launch ladder's network step is drawn from.
+    QString privateIp;
+
+    // Core's own sentence about what went wrong, when something did. Empty
+    // otherwise, and never composed here: a badge reading "Needs attention"
+    // with nothing beside it is the same defect as a numeric code, so the card
+    // shows this verbatim or says nothing at all.
+    QString lastError;
+
+    // What Core has in flight for this machine, when it has anything — the
+    // `operation` object of the buyer API's instance view. `operating` is the
+    // object's presence rather than a guess from the status word: Core sends
+    // all of id/action/since or none of them, so one test covers the lot.
+    //
+    // `deadlineAt` is deliberately absent. Core's own comment on it says a
+    // deadline expiring means re-observe and never conclude, and a client that
+    // held it would eventually draw a countdown, which is a client inventing
+    // an outcome. Nothing here can use it honestly, so nothing here has it.
+    bool operating = false;
+    QDateTime operationSince;
+    int operationAttempt = 1;
+    QString waitingOn;
+
+    // When the *provider* last swept, and whether that sweep finished. Absent
+    // when Core sent no observation — which happens when the agent has not
+    // reported one or its sweep did not cover machines. Absent is not "just
+    // now": a card with no observation says nothing rather than dating a claim
+    // nobody made.
+    bool observed = false;
+    QDateTime observedAt;
+    bool observationComplete = false;
+
     bool streamed() const { return !streamApp.isEmpty(); }
 };
 
@@ -57,6 +92,15 @@ public:
         HostRole,
         UserRole,
         SummaryRole,
+        PrivateIpRole,
+        LastErrorRole,
+        OperatingRole,
+        OperationSinceRole,
+        OperationAttemptRole,
+        WaitingOnRole,
+        ObservedRole,
+        ObservedAtRole,
+        ObservationCompleteRole,
         // True when this machine can be connected to right now. A stopped or
         // starting machine is shown, and shown as unreachable, rather than
         // hidden — somebody who cannot find their machine assumes it is lost.
@@ -72,6 +116,15 @@ public:
     // Replaces the list with what the API just returned.
     void replace(const QJsonArray& machines);
     void clear();
+
+    // Core's identifier for the machine, which is a join key and never
+    // anything a person reads. Deliberately not Q_INVOKABLE and deliberately
+    // not a role: this file's own rule is that the id is parsed and not
+    // exposed, and the one caller is C++ — OmnuvSession, matching a machine
+    // against the deployment it came from, because the buyer API's instance
+    // view carries no deployment id and its deployment view carries the
+    // instance one.
+    QString idAt(int row) const;
 
     Q_INVOKABLE QString nameAt(int row) const;
     Q_INVOKABLE QString hostAt(int row) const;

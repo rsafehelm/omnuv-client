@@ -156,6 +156,68 @@ QtObject {
                                     ? systemPalette.accent
                                     : systemPalette.highlight
 
+    // ---- Spacing --------------------------------------------------------
+    //
+    // Windows lays out on a 4px grid — "Layout" in the Windows 11 design
+    // guidance says every gap and every padding is a multiple of 4 — and names
+    // the steps by what separates rather than by how big they are. These four
+    // are that grid, stopped where this application actually needs it: a
+    // fifth step would be a number nobody had a use for.
+    //
+    // They exist because a margin typed into a view is the same defect as a
+    // radius typed into a view: it is nobody's number, it disagrees with the
+    // one three files away, and nothing can tell you which of the two is
+    // wrong.
+    readonly property int spacingTight: 4   // inside one thing: a dot and its word
+    readonly property int spacing: 8        // between related things in a row
+    readonly property int spacingLoose: 12  // between groups inside a surface
+    readonly property int padding: 16       // a surface's own inset
+
+    // ---- Surface and status colour --------------------------------------
+    //
+    // The header above says colour does not come from here, and that stays
+    // true for everything the style can draw: a button, a field, a list
+    // backplate are the style's to colour and this file must not second-guess
+    // them.
+    //
+    // Two things the style cannot draw, and so they are here rather than
+    // scattered through the views:
+    //
+    //   a card       WinUI has a card and Qt Quick Controls does not, so the
+    //                surface is ours to paint. These are Microsoft's own
+    //                CardBackgroundFillColorDefault and CardStrokeColorDefault,
+    //                which are deliberately *translucent* — they are designed
+    //                to sit on Mica and let it through, which is what D0 put
+    //                behind the window.
+    //
+    //   a status     Windows publishes no "this machine is unhealthy" colour
+    //                for a control, because a control does not have one. It
+    //                does publish the four system fill colours an InfoBar and
+    //                an InfoBadge are tinted with, and a machine's state is
+    //                the same kind of fact, so those are what a status dot is
+    //                painted with.
+    //
+    // Verified at the source rather than remembered: fetched
+    // microsoft/microsoft-ui-xaml, controls/dev/CommonStyles/
+    // Common_themeresources_any.xaml on main, whose ThemeDictionaries are
+    // keyed "Default" (dark), "Light" and "HighContrast". SystemFillColor*
+    // are at lines 76-79 and 280-283 there, Card* at 46/56 and 250/260.
+    // The values below are those, transcribed, in "#AARRGGBB" where Microsoft
+    // gave an alpha — which is a form QML's `color` accepts.
+    //
+    // **High contrast is why the word is never optional.** In that dictionary
+    // Microsoft sets all four system fill colours to the same #FF0000, on
+    // purpose: under high contrast, colour stops carrying meaning and the text
+    // beside it is the only thing left. Every consumer of these draws the
+    // state's word too.
+    readonly property color fillCard: Omnuv.appearance.darkAppsTheme ? "#0DFFFFFF" : "#B3FFFFFF"
+    readonly property color strokeCard: Omnuv.appearance.darkAppsTheme ? "#19000000" : "#0F000000"
+
+    readonly property color fillSuccess: Omnuv.appearance.darkAppsTheme ? "#6CCB5F" : "#0F7B0F"
+    readonly property color fillCaution: Omnuv.appearance.darkAppsTheme ? "#FCE100" : "#9D5D00"
+    readonly property color fillCritical: Omnuv.appearance.darkAppsTheme ? "#FF99A4" : "#C42B1C"
+    readonly property color fillNeutral: Omnuv.appearance.darkAppsTheme ? "#8BFFFFFF" : "#72000000"
+
     // ---- Icons ----------------------------------------------------------
     //
     // Segoe Fluent Icons, by name, so that a view says `Theme.icon.refresh`.

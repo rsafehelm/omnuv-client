@@ -21,6 +21,10 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          # moonlight-common-c is where the connection stages are defined, and
+          # the last step below reads them. Three small submodules; the one
+          # that matters is 1.7 MB.
+          submodules: recursive
 
       - name: Compare against the upstream base
         run: |
@@ -179,3 +183,191 @@ jobs:
           test "$(grep -cE 'property int duration' app/omnuv/Theme.qml)" -ge 4
 
           echo "icons are named; $(grep -cE 'property int duration' app/omnuv/Theme.qml) durations collapse"
+
+      # **Every connection stage has a sentence a buyer can read, and the list
+      # comes from upstream rather than from this file.**
+      #
+      # `app/omnuv/OmnuvSegue.qml` switches on moonlight-common-c's stage names
+      # to decide what a person is told while a stream starts and what they are
+      # told when it does not. Those names are `stageNames[]` in
+      # `moonlight-common-c/src/Connection.c`; `Limelight.h` calls them stable,
+      # which is what makes switching on them legitimate, and stable is not the
+      # same as closed. A release that adds a thirteenth would fall through to a
+      # sentence naming no cause — correct, and worse than the one somebody
+      # would have written had they known.
+      #
+      # So the check is against upstream's own array, in the submodule, and it
+      # fails on the commit that bumps it rather than on the first failure a
+      # buyer sees.
+      - name: Every connection stage has a sentence
+        run: |
+          set -euo pipefail
+          src=moonlight-common-c/moonlight-common-c/src/Connection.c
+          names=$(sed -n '/^static const char\* stageNames\[/,/^};/p' "$src" \
+                  | grep -oE '"[^"]+"' | tr -d '"')
+
+          # Prove the extraction can still see. A `sed` range that has rotted
+          # returns nothing, and nothing is exactly what "no stage is missing"
+          # looks like — the calm an empty answer produces. There are twelve
+          # today and `STAGE_MAX` is 12; fewer than ten means the pattern broke,
+          # not that upstream deleted the stream.
+          test "$(echo "$names" | wc -l)" -ge 10
+
+          missing=""
+          while IFS= read -r n; do
+            grep -qF "case \"$n\":" app/omnuv/OmnuvSegue.qml || missing="$missing  $n"$'\n'
+          done <<< "$names"
+
+          if [ -n "${missing//[[:space:]]/}" ]; then
+            echo "These connection stages have no sentence in app/omnuv/OmnuvSegue.qml:"
+            printf '%s' "$missing"
+            echo
+            echo "Read what the stage actually does in Connection.c and write a sentence"
+            echo "for it. A plain one is fine; an invented cause is not."
+            exit 1
+          fi
+          echo "all $(echo "$names" | wc -l) connection stages have a sentence"
+
+      # And the numbers stay folded away. Upstream reports a failed stage as
+      # `Starting %1 failed: Error %2` in a `main.qml` dialog whose id is
+      # `streamSegueErrorDialog`; our segue never opens it, which is the whole
+      # reason our segue exists. A reference to it from our code would put the
+      # code back in front of a buyer without changing a line that looks like
+      # it does.
+      - name: A buyer is never shown an error code
+        run: |
+          set -euo pipefail
+          # A *use* — the name followed by a property access or an assignment —
+          # and not on a comment line. Both filters are needed and the first
+          # run of this check proved it: the segue explains in its own comment
+          # why it never opens that dialog, and a bare grep matched the
+          # explanation and failed against code that was correct. A check whose
+          # first finding is its own prose is the one shape CLAUDE.md names for
+          # source-level checks, and it is not a reason to reword the comment.
+          if grep -rnE 'streamSegueErrorDialog[[:space:]]*[.=]' app/omnuv \
+             | grep -vE ':[[:space:]]*(//|\*)'; then
+            echo
+            echo "app/omnuv/ opens upstream's stream error dialog, which prints a numeric"
+            echo "code. Put the failure in OmnuvSegue's panel instead: a sentence, the"
+            echo "actions that apply, and the code under Details."
+            exit 1
+          fi
+          # Prove the check can still see, both halves of it: the dialog it is
+          # looking for exists, and the pattern still matches a real use of it
+          # where one is supposed to be.
+          grep -q 'id: streamSegueErrorDialog' app/gui/main.qml
+          grep -qE 'streamSegueErrorDialog[[:space:]]*[.=]' app/gui/StreamSegue.qml
+          echo "no path from app/omnuv/ to upstream's error dialog"
+
+      # **The streaming login never reaches a log, and never reaches a disk.**
+      #
+      # A machine mints that login once and Core hands it over once — the
+      # password is cleared in the same statement that returns it — so there is
+      # no second copy to compare against and no way to notice a leak after the
+      # fact. It exists for the few hundred milliseconds between one Core reply
+      # and one request to the machine, and the only places it could escape are
+      # a log line and a settings write. Both are one keystroke away from a
+      # developer debugging something at two in the morning, which is what this
+      # step is for.
+      #
+      # The log file is the reason it matters more here than for the sign-in
+      # token: `app/main.cpp` installs a message handler that writes every
+      # qDebug/qInfo/qWarning to a file people paste into support threads.
+      - name: The stream credential never reaches a log or a setting
+        run: |
+          set -euo pipefail
+
+          # A logging call, or a persistence call, on the same line as the
+          # words this credential travels under.
+          LEAK='(qDebug|qInfo|qWarning|qCritical|qFatal|setValue|OmnuvCredentials::store)[^;]*(password|stream-credentials|Basic )'
+
+          if grep -rnE "$LEAK" app/omnuv --include='*.cpp' --include='*.h'; then
+            echo
+            echo "A streaming login can reach a log file or a setting from here. It is"
+            echo "issued once and cannot be reissued, so a copy of it outlives the thing"
+            echo "it was for. Keep it in the call that spends it."
+            exit 1
+          fi
+
+          # Prove the check can still see. A clean tree and a rotted pattern
+          # return the same nothing, so the pattern has to be shown matching
+          # the thing it is for — against a line written here rather than one
+          # in the tree, because the tree is supposed never to contain one.
+          probe=$(mktemp --suffix=.cpp)
+          printf 'qInfo() << "login" << password;\n' > "$probe"
+          grep -qE "$LEAK" "$probe"
+          rm -f "$probe"
+          echo "no path from a stream credential to a log or a setting"
+
+      # **The launch ladder says the same four things the web console says, in
+      # the same words, from the same fields.**
+      #
+      # A buyer watching a machine start sees it in two places: the browser and
+      # this application. Two vocabularies for one launch is the thing v0.2
+      # refuses outright — "Private network · not observed" has to mean exactly
+      # one thing, and a person who learns it in one place has to have learned
+      # it in the other.
+      #
+      # The console lives in a private repository this workflow cannot reach, so
+      # this cannot be a comparison; it is a pin. The four steps, the fields
+      # each one is drawn from, and the state each combination produces are
+      # written out below exactly as `console-buyer`'s `ladder()` has them, and
+      # a change to any of them fails here. That is the point: the next person
+      # to alter this ladder has to alter this list in the same diff, where a
+      # reviewer can see that the console moved too.
+      #
+      # Whitespace is squeezed before comparing, so reformatting is free and
+      # only the vocabulary is pinned.
+      - name: The launch ladder matches the console's
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import re, sys, pathlib
+
+          src = pathlib.Path("app/omnuv/MachineCard.qml").read_text()
+          body = re.search(r"function ladder\(\) \{(.*?)\n    \}", src, re.S)
+          if not body:
+              sys.exit("could not find ladder() in app/omnuv/MachineCard.qml")
+
+          def squeeze(text):
+              return re.sub(r"\s+", " ", text).strip()
+
+          # The evidence, and then the four steps. Left column is where it is
+          # written; right column is what console-buyer/.../instances says.
+          pinned = [
+              # what confirms a step, never a constant
+              'readonly property bool running: model.status === "Running"',
+              'readonly property bool booted: running || model.status === "Starting"',
+              'readonly property bool addressed: model.privateIp !== ""',
+              'readonly property bool failed: model.status === "Needs attention"',
+              # the four steps, in order, with their states
+              '{ label: qsTr("Requested and placed"), state: "done", note: "" },',
+              'label: qsTr("Booting"),',
+              'state: failed ? "failed" : running ? "done" : booted ? "active" : "unknown",',
+              'note: (!running && booted) ? model.waitingOn : ""',
+              'label: qsTr("Private network"),',
+              'state: addressed ? "done" : running ? "unknown" : "pending",',
+              'label: qsTr("Running"),',
+              'state: running ? "done" : failed ? "failed" : "pending",',
+          ]
+
+          flat = squeeze(src)
+          missing = [p for p in pinned if squeeze(p) not in flat]
+          if missing:
+              print("The launch ladder no longer matches the console's:")
+              for m in missing:
+                  print("  " + m)
+              print()
+              print("If this was deliberate, change console-buyer's ladder() in the same")
+              print("change and update the list in this workflow. If it was not, a buyer")
+              print("is about to be told two different things about one machine.")
+              sys.exit(1)
+
+          # Prove the check can still see. A pattern that has rotted matches
+          # nothing, and nothing is exactly what a clean tree looks like.
+          for word in ("done", "active", "pending", "unknown", "failed"):
+              if '"%s"' % word not in body.group(1):
+                  sys.exit("ladder() never produces the state %r; the check is reading the wrong thing" % word)
+
+          print("the ladder pins %d expressions and produces all five states" % len(pinned))
+          PY

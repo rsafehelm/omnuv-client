@@ -4,6 +4,7 @@
 #include "appearance.h"
 #include "autostart.h"
 #include "credentials.h"
+#include "pairing.h"
 
 #include "backend/computermanager.h"
 #include "backend/nvcomputer.h"
@@ -41,6 +42,20 @@
 static const int kRefreshVisibleMs = 60 * 1000;
 static const int kRefreshHiddenMs = 60 * 1000;
 
+// How long to keep asking Core for a machine's one-time streaming login before
+// telling the person it is still setting itself up.
+//
+// `waiting` is the honest answer while the machine's recipe is still running:
+// the guest writes the login on the last line of its install, the provider's
+// agent reads it on its next status report, and Core has it a moment after
+// that. So the wait is one agent poll, not one install — a minute is generous
+// and, unlike a longer one, it ends while the person is still watching.
+//
+// Asking again costs nothing. Core spends the credential in the statement that
+// returns it, and a `waiting` read has no credential to spend.
+static const int kLoginTries = 12;
+static const int kLoginIntervalMs = 5 * 1000;
+
 OmnuvSession::OmnuvSession(QObject* parent)
     : QObject(parent),
       m_machines(new MachineModel(this)),
@@ -50,7 +65,10 @@ OmnuvSession::OmnuvSession(QObject* parent)
       // the system's two settings, and written its one line to the log,
       // before anything asks. Nothing in QML has to mention it for that to
       // be true.
-      m_appearance(new OmnuvAppearance(this))
+      m_appearance(new OmnuvAppearance(this)),
+      // Shares the session's network access manager: one connection pool, one
+      // proxy policy, and the machine's certificate decision is per-request.
+      m_pairing(new OmnuvPairing(&m_net, this))
 {
     QSettings settings;
     m_coreUrl = settings.value(QStringLiteral("omnuv/coreUrl")).toString();
@@ -63,6 +81,19 @@ OmnuvSession::OmnuvSession(QObject* parent)
 
     // The tunnel asks for a key only when the device has never enrolled.
     connect(m_tunnel, &OmnuvTunnel::needsKey, this, &OmnuvSession::fetchDeviceKey);
+
+    // Every ending of a pairing attempt arrives on one pair of signals,
+    // whether it ended at Core or at the machine. The view has one place to
+    // listen and one dialog to open.
+    connect(m_pairing, &OmnuvPairing::delivered, this, [this]() {
+        setStatus(QString());
+        emit pairingSucceeded();
+    });
+    connect(m_pairing, &OmnuvPairing::failed, this,
+            [this](const QString& why, const QString& detail) {
+        setStatus(QString());
+        emit pairingFailed(why, detail);
+    });
 
     m_pollTimer.setSingleShot(false);
     connect(&m_pollTimer, &QTimer::timeout, this, &OmnuvSession::poll);
@@ -386,6 +417,175 @@ void OmnuvSession::fetchDeviceKey()
 
             m_tunnel->enrol(url, key);
         });
+    });
+}
+
+// **A pairing nobody types.**
+//
+// Moonlight's PIN has always been a number a person reads off one screen and
+// types into another, because the client had no way to prove to the machine
+// that it was entitled to pair. A machine the marketplace deployed does: its
+// recipe mints a single-use login for its own streaming host, writes it where
+// only root can read it, and the provider's agent carries it up to Core on the
+// ordinary status report. The owner collects it once, here, and spends it on
+// the machine — so the number still exists and nobody ever sees it.
+//
+// Three things this function must get right, and each is a decision rather
+// than a detail:
+//
+// **The order.** ComputerModel::pairComputer() has already been called by the
+// time this runs, and that is not an accident of sequencing — the identifier a
+// PIN is addressed to does not exist until the client's own pairing request is
+// waiting on the machine. See `pairing.cpp`.
+//
+// **The credential is spent on read.** Core nulls the password in the same
+// statement that returns it, so there is exactly one chance per deployment.
+// Everything that can fail cheaply is therefore done first: the deployment is
+// found before the login is asked for, and the login is asked for only when
+// there is a pairing in flight to spend it on.
+//
+// **`waiting` is not a failure.** It is the normal answer while the machine is
+// still installing, and drawing it as an error would send a person to fix a
+// machine that is working.
+void OmnuvSession::deliverPin(int row, const QString& pin)
+{
+    const QString name = m_machines->nameAt(row);
+    const QString instanceId = m_machines->idAt(row);
+
+    if (!signedIn() || instanceId.isEmpty() || m_machines->hostAt(row).isEmpty()) {
+        m_pairing->giveUp(tr("This device is not signed in to Omnuv, so it cannot collect the "
+                             "login %1 published for itself.").arg(name));
+        return;
+    }
+
+    setStatus(tr("Pairing with %1…").arg(name));
+
+    // No `?project=` — deliberately the same omission as refresh(), so the
+    // deployments and the machines come from the same project Core picks by
+    // default. A deployment in another project belongs to a machine that is
+    // not in the list this row came from.
+    QNetworkReply* reply = m_net.get(request(QStringLiteral("/v1/deployments"), true));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, row, pin, name, instanceId]() {
+        reply->deleteLater();
+
+        if (reply->error() != QNetworkReply::NoError) {
+            m_pairing->giveUp(tr("Omnuv could not be reached to collect %1's login.").arg(name),
+                              reply->errorString());
+            return;
+        }
+
+        // The buyer API's machine list carries no deployment, and its
+        // deployment list carries the machine — so the join is on this side,
+        // on the identifier both of them do carry.
+        QString deploymentId;
+        const QJsonArray deployments = QJsonDocument::fromJson(reply->readAll()).array();
+        for (const QJsonValue& value : deployments) {
+            const QJsonObject d = value.toObject();
+            if (d[QStringLiteral("instance_id")].toString() == instanceId) {
+                deploymentId = d[QStringLiteral("id")].toString();
+                break;
+            }
+        }
+
+        if (deploymentId.isEmpty()) {
+            m_pairing->giveUp(tr("%1 was not set up from an Omnuv recipe, so it has no login to "
+                                 "hand over. Pair it by hand this once.").arg(name),
+                              tr("No deployment lists this machine."));
+            return;
+        }
+
+        collectStreamLogin(row, deploymentId, pin, kLoginTries);
+    });
+}
+
+void OmnuvSession::collectStreamLogin(int row, const QString& deploymentId,
+                                      const QString& pin, int triesLeft)
+{
+    const QString name = m_machines->nameAt(row);
+    const QString host = m_machines->hostAt(row);
+
+    QNetworkReply* reply = m_net.get(
+        request(QStringLiteral("/v1/deployments/%1/stream-credentials").arg(deploymentId), true));
+
+    connect(reply, &QNetworkReply::finished, this,
+            [this, reply, row, deploymentId, pin, triesLeft, name, host]() {
+        reply->deleteLater();
+
+        const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (code != 200) {
+            m_pairing->giveUp(
+                code == 404
+                    ? tr("Omnuv no longer has a record of %1's setup, so there is no login to "
+                         "collect.").arg(name)
+                    : tr("Omnuv would not hand over %1's login.").arg(name),
+                tr("GET stream-credentials returned %1.")
+                    .arg(code == 0 ? reply->errorString() : QString::number(code)));
+            return;
+        }
+
+        const QJsonObject o = QJsonDocument::fromJson(reply->readAll()).object();
+        const QString status = o[QStringLiteral("status")].toString();
+        const QString user = o[QStringLiteral("user")].toString();
+
+        // Branch on Core's word, never on the sentence around it. These three
+        // are the whole vocabulary of that endpoint.
+        if (status == QStringLiteral("waiting")) {
+            // The machine has not published its login yet, which is what a
+            // machine still installing looks like. Ask again; say so meanwhile.
+            if (triesLeft > 1) {
+                setStatus(tr("%1 is still setting itself up…").arg(name));
+                QTimer::singleShot(kLoginIntervalMs, this,
+                                   [this, row, deploymentId, pin, triesLeft]() {
+                    collectStreamLogin(row, deploymentId, pin, triesLeft - 1);
+                });
+                return;
+            }
+            m_pairing->giveUp(tr("%1 has not finished setting itself up, so it has not published "
+                                 "the login this device needs. Try again in a few minutes, or "
+                                 "pair by hand.").arg(name),
+                              tr("stream-credentials answered waiting %1 times.").arg(kLoginTries));
+            return;
+        }
+
+        if (status == QStringLiteral("delivered")) {
+            // Collected once already, by this device or another, and Core
+            // cannot reissue it: the password was cleared in the statement
+            // that returned it. Say what is actually left to do.
+            m_pairing->giveUp(
+                user.isEmpty()
+                    ? tr("%1's one-time login has already been collected, and it cannot be "
+                         "issued again. Pair from the device that collected it, or deploy the "
+                         "machine again to get a fresh one.").arg(name)
+                    : tr("%1's one-time login has already been collected, and it cannot be "
+                         "issued again. Pair from the device that collected it, or deploy the "
+                         "machine again. Its login name is %2.").arg(name, user),
+                tr("stream-credentials answered delivered. The machine still holds its own copy "
+                   "in /etc/onv/recipe-stream-credential."));
+            return;
+        }
+
+        // `ready`. The password exists in this reply and nowhere else, now and
+        // for good: it is not written to settings, not put in the credential
+        // store, not logged, and not held on any object. It goes from here
+        // into the one request that spends it.
+        const QString password = o[QStringLiteral("password")].toString();
+        if (status != QStringLiteral("ready") || user.isEmpty() || password.isEmpty()) {
+            m_pairing->giveUp(tr("Omnuv answered about %1's login in a way this device did not "
+                                 "understand.").arg(name),
+                              tr("stream-credentials answered \"%1\".").arg(status));
+            return;
+        }
+
+        setStatus(tr("Pairing with %1…").arg(name));
+        m_pairing->deliver(host, pin,
+                           // The name the machine will list this device under,
+                           // and the same one it was enrolled on the network
+                           // with, so one device reads as one device.
+                           QSysInfo::machineHostName(),
+                           // Which of the requests waiting on that machine is
+                           // ours: the address it saw us arrive from.
+                           m_tunnel->address(),
+                           user, password);
     });
 }
 
