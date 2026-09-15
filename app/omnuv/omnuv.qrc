@@ -5,6 +5,7 @@
 -->
 <RCC>
     <qresource prefix="/omnuv">
+        <file>qmldir</file>
         <file>MachineCard.qml</file>
         <file>OmnuvCliSegue.qml</file>
         <file>OmnuvSegue.qml</file>
