@@ -179,6 +179,21 @@ public:
             }
         });
 
+        // **A request that concluded without a code is the answer, not a
+        // reason to keep waiting.** `signIn()` makes one request and retries
+        // nothing: `busy` falls exactly once, and if no code arrived with it —
+        // unreachable, or a deployment that offered none — the sixty-second
+        // deadline would only repeat what the session already said, a minute
+        // later. On the rig that minute was a third of every cycle. Deferred
+        // one turn of the loop so the status the session sets in the same call
+        // has been printed by the handler above before this exits.
+        connect(m_session, &OmnuvSession::busyChanged, this, [this]() {
+            if (m_session->busy() || m_printed || !m_session->userCode().isEmpty()) {
+                return;
+            }
+            QTimer::singleShot(0, this, [this]() { finish(2); });
+        });
+
         connect(m_session, &OmnuvSession::signedInChanged, this, [this]() {
             if (m_session->signedIn()) {
                 fact("signed-in", QStringLiteral("yes"));
