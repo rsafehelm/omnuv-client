@@ -52,6 +52,17 @@ jobs:
           # and one arm of the switch that already dispatches every other
           # action — for the same reason: that switch is here, and everything
           # the arm calls is in app/omnuv/signin.cpp.
+          # It bought three more on 15 Sep for the `stream` verb: one changed
+          # string literal and two context properties, in the arm that already
+          # constructs that action's launcher. The rig measured what
+          # `Moonlight.exe stream <host> "<app>"` actually drew and answered
+          # `SEGUE=absent` — upstream's Material ErrorMessageDialog, upstream's
+          # words — and that command is what `omnuv-connect --stream` and every
+          # `omnuv://stream` link run, so it was the buyer-facing surface for
+          # everyone outside the widget. It could not live in a new file: the
+          # switch that chooses an initial view is here, and so is the parse
+          # that produces the two positional arguments the view needs. The view
+          # itself is app/omnuv/OmnuvCliSegue.qml.
           # And three more on 15 Sep for the style: an include, and
           # QQuickStyle::setStyle("Material") replaced by a call into
           # app/omnuv/appearance.cpp that picks FluentWinUI3 on Windows and
@@ -258,6 +269,84 @@ jobs:
           grep -q 'id: streamSegueErrorDialog' app/gui/main.qml
           grep -qE 'streamSegueErrorDialog[[:space:]]*[.=]' app/gui/StreamSegue.qml
           echo "no path from app/omnuv/ to upstream's error dialog"
+
+      # **And the command line reaches the segue a buyer sees.**
+      #
+      # The step above proves our code never opens upstream's numeric-code
+      # dialog. It says nothing about whether our code is *reached*, and on
+      # 15 Sep 2026 the Windows rig measured that it was not: `Moonlight.exe
+      # stream <host> "<app>"` went to upstream's `CliStartStreamSegue` and its
+      # Material `ErrorMessageDialog`, and the rig reported `SEGUE=absent`.
+      #
+      # That is the command `omnuv-connect --stream` runs, the command every
+      # `omnuv://stream` link from the console runs, and the command the
+      # gaming-rig end-to-end streams with — so the one automated proof of the
+      # streaming experience was exercising upstream's surface, and a parity
+      # matrix fed by it would have read *same* on a row where the two paths
+      # genuinely differed. A check that only forbids is half a check; this is
+      # the half that requires.
+      - name: The command line opens our segue
+        run: |
+          set -euo pipefail
+          if grep -q 'initialView = "qrc:/gui/CliStartStreamSegue.qml"' app/main.cpp; then
+            echo "The stream action opens upstream's segue, which answers a failure with a"
+            echo "Material dialog and a numeric code. Point it at qrc:/omnuv/OmnuvCliSegue.qml."
+            exit 1
+          fi
+          grep -q 'initialView = "qrc:/omnuv/OmnuvCliSegue.qml"' app/main.cpp
+          # Prove the check can still see: the view it names exists, is shipped
+          # in our own resource file, and is the segue rather than a second one.
+          test -f app/omnuv/OmnuvCliSegue.qml
+          grep -q '<file>OmnuvCliSegue.qml</file>' app/omnuv/omnuv.qrc
+          grep -qE '^OmnuvSegue \{' app/omnuv/OmnuvCliSegue.qml
+          echo "the stream action opens app/omnuv/OmnuvCliSegue.qml"
+
+      # **The segue says what it drew, because nothing else can look at it.**
+      #
+      # `deployment/ansible/files/omnuv-run.ps1` in the platform repository
+      # drives a stream against a name under `.invalid` and reads the sentence
+      # out of the client's log, anchored on `Qt Info: Omnuv segue: failed
+      # headline=`. That contract was written down there on the client's behalf
+      # and the client never held up its end: until 15 Sep 2026 the string had
+      # never appeared in this repository, so the rig would have answered
+      # `SEGUE=absent` even after the routing above was fixed.
+      #
+      # `console.info`, not `console.error`: Qt's `writeToConsole` maps `Info`
+      # to `logger.info()` and `Error` to `logger.critical()`
+      # (qtdeclarative/src/qml/qml/qqmlbuiltinfunctions.cpp), and Moonlight's
+      # handler renders those as `Qt Info:` and `Qt Critical:`
+      # (app/main.cpp:216-220). The wrong one is a line the harness cannot see.
+      #
+      # Anchored at the start of the line so this cannot match the segue's own
+      # comment explaining the contract — a source check that finds its own
+      # prose is the one shape CLAUDE.md names, and this file has met it once
+      # already, three steps up.
+      - name: The segue reports the sentence it rendered
+        run: |
+          set -euo pipefail
+          HEAD='^[[:space:]]*console\.info\("Omnuv segue: failed headline='
+          BODY='^[[:space:]]*console\.info\("Omnuv segue: details='
+          for pat in "$HEAD" "$BODY"; do
+            if ! grep -qE "$pat" app/omnuv/OmnuvSegue.qml; then
+              echo "app/omnuv/OmnuvSegue.qml does not report what it drew:"
+              echo "  $pat"
+              echo
+              echo "deployment/ansible/files/omnuv-run.ps1 reads these two lines and has no"
+              echo "other way to know whether the failure panel rendered a sentence, an"
+              echo "error code, or nothing at all."
+              exit 1
+            fi
+          done
+          # Prove both patterns can still see, against a line written here
+          # rather than one in the tree: a rotted pattern and a missing call
+          # return the same nothing.
+          probe=$(mktemp --suffix=.qml)
+          printf '    console.info("Omnuv segue: failed headline=" + oneLine(t))\n' > "$probe"
+          printf '    console.info("Omnuv segue: details=" + oneLine(t))\n' >> "$probe"
+          grep -qE "$HEAD" "$probe"
+          grep -qE "$BODY" "$probe"
+          rm -f "$probe"
+          echo "the segue reports its headline and its details at Info level"
 
       # **The streaming login never reaches a log, and never reaches a disk.**
       #

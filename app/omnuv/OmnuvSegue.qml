@@ -9,11 +9,23 @@
 // apply to it, and the numbers folded away for whoever is asked to help.
 //
 // **A separate file rather than an edit.** `app/gui/StreamSegue.qml` is not in
-// the change budget, and it should not be: the CLI segues
-// (`CliStartStreamSegue`, `CliQuitStreamSegue`) push upstream's and expect
-// upstream's behaviour, dialog included. Ours is pushed only from
-// `OmnuvView.startStream()`. The two share nothing but the seven signals on
-// `Session`, which is the contract that actually matters.
+// the change budget, and it should not be: `CliQuitStreamSegue` pushes it for
+// the `quit` verb and expects upstream's behaviour, dialog included — and the
+// budget check pins that file as the one place upstream's numeric-code dialog
+// is referenced from, so editing it out would fail CI on the step that exists
+// to keep that dialog away from buyers. The two share nothing but the seven
+// signals on `Session`, which is the contract that actually matters.
+//
+// **This file is now on both paths, and that is the point.** It was reached
+// only from `OmnuvView.startStream()` until 15 September 2026, when the
+// Windows rig measured what `Moonlight.exe stream <machine> "<app>"` actually
+// drew and answered `SEGUE=absent`: upstream's `CliStartStreamSegue` and its
+// Material `ErrorMessageDialog`, with upstream's words. That command is what
+// `omnuv-connect --stream` runs, what every `omnuv://stream` link from the
+// console runs, and what the gaming-rig end-to-end streams with — so it was
+// the buyer-facing surface for everyone outside the widget, and the one an
+// automated proof would have called *the same*. `app/omnuv/OmnuvCliSegue.qml`
+// is that verb's view now, and it is this file with a launcher attached.
 //
 // Every signal below is connected because upstream connects it, and the list
 // is read from `app/streaming/session.h:128-144` rather than from memory.
@@ -25,6 +37,7 @@ import QtQuick 2.9
 import QtQuick.Controls 2.2
 import QtQuick.Layouts 1.3
 
+import ComputerManager 1.0
 import SdlGamepadKeyNavigation 1.0
 import Session 1.0
 import SystemProperties 1.0
@@ -42,7 +55,7 @@ Item {
     // describe as frozen. Nothing while the ladder is up: there is no way to
     // interrupt a connection attempt and pretending otherwise would be worse
     // than not offering it.
-    Keys.onEscapePressed: if (segue.failed) stackView.pop()
+    Keys.onEscapePressed: if (segue.failed) segue.leave()
 
     // Set by whoever pushes this. `session` comes from
     // `AppModel::createSessionForApp()`, the one factory QML has — `Session`
@@ -58,6 +71,44 @@ Item {
     // this one is spent: `Session::s_ActiveSessionSemaphore` is released in
     // `DeferredSessionCleanupTask`'s destructor and a `Session` runs once.
     signal retryRequested()
+
+    // ------------------------------------------------------- the command line
+    //
+    // **Set only by `OmnuvCliSegue.qml`**, which is what `Moonlight.exe stream
+    // <machine> "<app>"` opens. When it is set there is no `Session` yet: this
+    // view is the whole program, and a `CliStartStream::Launcher` is still
+    // looking for the machine. Null on the widget's path, where `OmnuvView`
+    // has already built the session it hands over.
+    //
+    // A `Launcher`, kept as `var` because `CliStartStream::Launcher` is not
+    // registered as a QML type — `app/main.cpp` publishes it as a root context
+    // property, which is how upstream's three CLI views reach it too.
+    property var cli: null
+
+    // How far the launcher got, because `Launcher::failed(QString)` says what
+    // went wrong only in prose (`app/cli/startstream.h:34`). 1 while it is
+    // looking for the machine, 2 while it is asking what the machine
+    // publishes, 3 while it is stopping something already running. Read
+    // instead of the message, because matching translated English is a check
+    // that stops matching in the first localised build.
+    property int cliStep: 0
+
+    // True when there is nothing behind this view, so leaving it is leaving
+    // the program. Upstream's `StreamSegue` calls the same thing `quitAfter`
+    // (`app/gui/StreamSegue.qml:15`). It is not optional on the command line:
+    // Omnuv sets `setQuitOnLastWindowClosed(false)` for the tray, so a CLI run
+    // that nobody quits explicitly never exits.
+    property bool quitOnLeave: false
+
+    // The one door out of this screen, so Escape and *Close* cannot disagree.
+    function leave() {
+        if (quitOnLeave) {
+            Qt.quit()
+        }
+        else {
+            stackView.pop()
+        }
+    }
 
     // ---------------------------------------------------------------- stages
     //
@@ -243,6 +294,59 @@ Item {
         failDetails += (failDetails === "" ? "" : "\n") + line
     }
 
+    // **What this screen put in front of a person, on one line, for something
+    // that cannot look at it.**
+    //
+    // `deployment/ansible/files/omnuv-run.ps1` drives a stream against a name
+    // under `.invalid` and reads the result out of the log, because a
+    // screenshot needs OCR to be asserted on and an empty panel photographs
+    // exactly like a black screen. Its contract is two lines:
+    //
+    //     Omnuv segue: failed headline=<the sentence, on one line>
+    //     Omnuv segue: details=<the technical half, on one line>
+    //
+    // Three things about the shape, each of which the harness depends on.
+    //
+    // **`console.info`, not `console.error`.** Qt maps the four console
+    // methods onto logging levels in `writeToConsole`
+    // (`qtdeclarative/src/qml/qml/qqmlbuiltinfunctions.cpp`, branch 6.10):
+    // `Info -> logger.info()`, `Error -> logger.critical()`. Moonlight's own
+    // handler renders those as `Qt Info:` and `Qt Critical:`
+    // (`app/main.cpp:216-220`), and the harness anchors on `Qt Info:`.
+    // `s_SuppressVerboseOutput` would drop it, and is set only for the `list`
+    // action (`app/main.cpp:821-828`), never for `stream`.
+    //
+    // **Emitted where the text is rendered, not where it was decided.** These
+    // are property-change handlers rather than calls at the end of
+    // `stageFailed` and `cliFailed`, because both of those can be followed by
+    // `displayLaunchError` and by `sessionFinished` adding to the panel. A
+    // handler fires on whatever actually ended up bound to the Label.
+    //
+    // **Whitespace collapsed.** `Get-Marker` captures `(.*)`, which does not
+    // cross a newline, and `failDetails` is deliberately multi-line. It takes
+    // the *last* match, which is why `details=` may be written several times
+    // as lines accumulate: the last one is the whole of it.
+    //
+    // This reports and does not grade. Whether what was drawn was a sentence,
+    // and whether it contained a number, are judged by the harness, out of
+    // this file's reach — a client that graded its own output would be a check
+    // that cannot fail.
+    function oneLine(text) {
+        return text.replace(/\s+/g, " ").trim()
+    }
+
+    onFailHeadlineChanged: {
+        if (failHeadline !== "") {
+            console.info("Omnuv segue: failed headline=" + oneLine(failHeadline))
+        }
+    }
+
+    onFailDetailsChanged: {
+        if (failDetails !== "") {
+            console.info("Omnuv segue: details=" + oneLine(failDetails))
+        }
+    }
+
     // Upstream writes one of its sentences and, in exactly one branch, a
     // number: `clConnectionTerminated`'s default case emits
     // `tr("Connection terminated") + "\n\n" + tr("Error code: %1")`
@@ -337,12 +441,17 @@ Item {
         window.visible = true
 
         if (!failed) {
-            stackView.pop()
+            // `leave()` rather than `pop()`: on the command line there is
+            // nothing underneath, and upstream's segue quits here for exactly
+            // that reason (`app/gui/StreamSegue.qml:76-79`).
+            leave()
         }
-        // On a failure this screen stays and becomes the panel. Upstream pops
-        // and opens `streamSegueErrorDialog`, a `main.qml` id; nothing here
-        // touches it, which is what "upstream's dialog is not shown from our
-        // path" means in practice.
+        // On a failure this screen stays and becomes the panel — on both
+        // paths, including the command line, where upstream would have quit
+        // as soon as its dialog was dismissed. Upstream pops and opens
+        // `streamSegueErrorDialog`, a `main.qml` id; nothing here touches it,
+        // which is what "upstream's dialog is not shown from our path" means
+        // in practice.
     }
 
     function sessionReadyForDeletion() {
@@ -357,13 +466,79 @@ Item {
         SdlGamepadKeyNavigation.enable()
     }
 
-    StackView.onActivated: {
-        // Assigned rather than bound, exactly as upstream's five segues do.
-        // `app/gui/main.qml` binds the toolbar's *height* and never its
-        // `visible`, so these writes cost nothing there and keep meaning what
-        // they meant.
-        toolBar.visible = false
+    // ---------------------------------------------- the command line's stages
+    //
+    // `CliStartStream::Launcher` emits five signals and no `Session` until the
+    // fourth of them (`app/cli/startstream.h:31-36`). Everything before that
+    // is a machine being looked for and an application list being read — the
+    // first rung of the same ladder, lit by the same property — and everything
+    // after it is the widget's path exactly.
+    //
+    // Both of the launcher's pre-session stages sit on rung 1, *Finding %1 on
+    // your private network*, because both of them are that. Rung 2 is the RTSP
+    // handshake and reading `/applist` is not it; moving the ladder there to
+    // look busier would be the client inventing a stage no one reports, which
+    // is the thing the ladder exists to stop.
 
+    function cliSearchingComputer() {
+        cliStep = 1
+        rung = 1
+    }
+
+    function cliSearchingApp() {
+        cliStep = 2
+        rung = 1
+    }
+
+    function cliSessionCreated(name, createdSession) {
+        // Upstream's own capitalisation of the application, which it matched
+        // case-insensitively (`getAppIndex()`, `app/cli/startstream.cpp:146`).
+        appName = name
+        session = createdSession
+        beginSession()
+    }
+
+    function cliAppQuitRequired(running) {
+        quitConfirm.running = running
+        quitConfirm.open()
+    }
+
+    // The launcher hands over one composed English sentence and nothing
+    // structured, so *which* failure this is comes from how far it got rather
+    // than from what it said. Its four messages
+    // (`app/cli/startstream.cpp:89, 126, 133, 137`) go under *Details* like
+    // any other fact about the program.
+    function cliFailed(text) {
+        failed = true
+        // Always worth offering: every one of these leaves a machine that may
+        // well be reachable by ssh even though it would not stream.
+        failActions = ["terminal"]
+
+        if (cliStep >= 3) {
+            failHeadline = qsTr("%1 is already streaming to another device, and would not stop.")
+                            .arg(machineName)
+        }
+        else if (cliStep >= 2) {
+            failHeadline = qsTr("%1 answered, but is not offering \u201C%2\u201D to stream.")
+                            .arg(machineName).arg(appName)
+        }
+        else {
+            // Two causes, and the launcher cannot tell them apart either:
+            // `Event::Timedout` in `StateSeekComputer` and the unpaired branch
+            // of `Event::ComputerFound` both arrive here with nothing emitted
+            // in between (`app/cli/startstream.cpp:80-94, 130-134`). Saying
+            // both is what `OmnuvView` does for the same ambiguity rather than
+            // guessing one.
+            failHeadline = qsTr("This device could not start streaming from %1. It either did not " +
+                                "answer on your private network, or it has not been paired with this " +
+                                "device yet — open Omnuv and press Play, which pairs it for you.")
+                            .arg(machineName)
+        }
+
+        addDetail(text)
+    }
+
+    function beginSession() {
         session.stageStarting.connect(stageStarting)
         session.stageFailed.connect(stageFailed)
         session.connectionStarted.connect(connectionStarted)
@@ -374,8 +549,34 @@ Item {
 
         SystemProperties.waitForAsyncLoad()
 
-        revealTimer.start()
         streamLoader.active = true
+    }
+
+    StackView.onActivated: {
+        // Assigned rather than bound, exactly as upstream's five segues do.
+        // `app/gui/main.qml` binds the toolbar's *height* and never its
+        // `visible`, so these writes cost nothing there and keep meaning what
+        // they meant.
+        toolBar.visible = false
+
+        revealTimer.start()
+
+        if (cli) {
+            // Upstream's guard, for upstream's reason: a StackView activates a
+            // view again when something above it is popped, and a `Launcher`
+            // runs once (`app/gui/CliStartStreamSegue.qml:36`).
+            if (!cli.isExecuted()) {
+                cli.searchingComputer.connect(cliSearchingComputer)
+                cli.searchingApp.connect(cliSearchingApp)
+                cli.sessionCreated.connect(cliSessionCreated)
+                cli.failed.connect(cliFailed)
+                cli.appQuitRequired.connect(cliAppQuitRequired)
+                cli.execute(ComputerManager)
+            }
+            return
+        }
+
+        beginSession()
     }
 
     Timer {
@@ -642,6 +843,12 @@ Item {
             }
 
             Button {
+                // Nothing on the command line can start over: a `Launcher` is
+                // single-shot (`isExecuted()`, `app/cli/startstream.cpp:219`)
+                // and there is no machine list underneath to go back to. The
+                // retry there is running the command again, and a button that
+                // cannot do what it says is worse than no button.
+                visible: !segue.cli
                 text: qsTr("Try again")
                 highlighted: true
                 onClicked: segue.retryRequested()
@@ -649,7 +856,8 @@ Item {
 
             Button {
                 text: qsTr("Close")
-                onClicked: stackView.pop()
+                highlighted: segue.cli !== null
+                onClicked: segue.leave()
             }
         }
 
@@ -669,6 +877,45 @@ Item {
             font.pixelSize: Theme.captionSize
             wrapMode: Text.WrapAnywhere
             opacity: 0.7
+        }
+    }
+
+    // ------------------------------------------------- something else is on
+    //
+    // Upstream's command-line segue asks before stopping whatever the machine
+    // is already streaming (`app/gui/CliStartStreamSegue.qml:76-90`), and the
+    // `stream` verb would lose that branch if this file did not carry it. Only
+    // ever opened by `cliAppQuitRequired`, so it never appears on the widget's
+    // path — `OmnuvView.startStream()` has no equivalent and calls straight
+    // through, which is a real gap on that side and not one this file can
+    // close.
+    //
+    // Declining leaves, which on the command line is quitting, because there
+    // is nothing else this process was started to do.
+    Dialog {
+        id: quitConfirm
+        property string running
+
+        anchors.centerIn: parent
+        width: Math.min(segue.width - 96, 460)
+        modal: true
+        standardButtons: Dialog.Yes | Dialog.No
+        title: qsTr("%1 is already streaming").arg(segue.machineName)
+
+        onAccepted: {
+            segue.cliStep = 3
+            segue.cli.quitRunningApp()
+        }
+        onRejected: segue.leave()
+
+        Label {
+            width: parent.width
+            text: qsTr("%1 is running on %2. Stopping it to start \u201C%3\u201D will lose anything " +
+                       "it has not saved.")
+                   .arg(quitConfirm.running).arg(segue.machineName).arg(segue.appName)
+            font.families: Theme.textFamilies
+            font.pixelSize: Theme.bodySize
+            wrapMode: Text.WordWrap
         }
     }
 }

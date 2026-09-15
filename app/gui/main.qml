@@ -36,9 +36,10 @@ ApplicationWindow {
     // assumed.** A stream hides this window outright — `StreamSegue.qml` sets
     // `window.visible = false` and SDL takes the screen — so `onClosing` never
     // fires while one is running. Every command-line entry point calls
-    // `Qt.quit()` for itself (`CliPair`, `CliStartStreamSegue`,
-    // `CliQuitStreamSegue`, `StreamSegue`), so none of them depended on the
-    // auto-quit this replaces.
+    // `Qt.quit()` for itself (`CliPair`, `CliQuitStreamSegue`, `StreamSegue`,
+    // and `OmnuvSegue.leave()` for the `stream` verb since it stopped going to
+    // `CliStartStreamSegue`), so none of them depended on the auto-quit this
+    // replaces.
     onClosing: function(close) {
         close.accepted = false
         window.hide()
@@ -156,10 +157,13 @@ ApplicationWindow {
             doEarlyInit()
 
             // Omnuv opens on its own machine list rather than on the host
-            // grid: a person signs in and sees what they rent. Every other
-            // entry point — stream, quit, pair from the command line — is
-            // left exactly as upstream set it, which is why the swap is here
-            // and not in main.cpp.
+            // grid: a person signs in and sees what they rent. `quit` and
+            // `pair` from the command line are left exactly as upstream set
+            // them, which is why this swap is here and not in main.cpp.
+            //
+            // `stream` is swapped too, but in main.cpp: it needs the two
+            // positional arguments, which are parsed there. See
+            // app/omnuv/OmnuvCliSegue.qml for why it had to move at all.
             if (initialView === "qrc:/gui/PcView.qml") {
                 push("qrc:/omnuv/OmnuvView.qml")
             }

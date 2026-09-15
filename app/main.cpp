@@ -1008,7 +1008,21 @@ int main(int argc, char *argv[])
         break;
     case GlobalCommandLineParser::StreamRequested:
         {
-            initialView = "qrc:/gui/CliStartStreamSegue.qml";
+            // Omnuv: the `stream` verb opens our segue, not upstream's.
+            //
+            // Measured on the Windows rig, 15 Sep 2026: this command answered a
+            // failed stream with upstream's Material ErrorMessageDialog and
+            // upstream's words. It is not a developer's back door —
+            // `omnuv-connect --stream` runs it and so does every omnuv://stream
+            // link the console emits — so that was the buyer-facing surface for
+            // everyone outside the widget. See app/omnuv/OmnuvCliSegue.qml.
+            //
+            // The swap is here rather than in main.qml, where PcView's is,
+            // because the two positional arguments are parsed here and the
+            // segue needs them to name the machine before the launcher has
+            // found it. Re-parsing argv in QML would be one rule with two
+            // implementations.
+            initialView = "qrc:/omnuv/OmnuvCliSegue.qml";
             StreamingPreferences* preferences = StreamingPreferences::get();
             StreamCommandLineParser streamParser;
             streamParser.parse(app.arguments(), preferences);
@@ -1016,6 +1030,8 @@ int main(int argc, char *argv[])
             QString appName = streamParser.getAppName();
             auto launcher   = new CliStartStream::Launcher(host, appName, preferences, &app);
             engine.rootContext()->setContextProperty("launcher", launcher);
+            engine.rootContext()->setContextProperty("streamHost", host);
+            engine.rootContext()->setContextProperty("streamApp", appName);
             break;
         }
     case GlobalCommandLineParser::QuitRequested:
