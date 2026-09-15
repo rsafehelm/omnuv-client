@@ -23,4 +23,20 @@
 # installed module that has to be found on an import path; what is wanted is
 # the implicit import every QML file gets of its own directory, which reads
 # this file and nothing else.
+# **Every type here is declared, not only the singleton.** The first version of
+# this file listed `Theme` alone and swapped one failure for another: a
+# directory that has a `qmldir` *is* that file, so the implicit listing stops
+# and a type absent from it is unavailable however present its `.qml` is.
+# `OmnuvView` kept working because `main.qml` pushes it by URL;
+# `StreamSettingsSheet`, which `OmnuvView` names as a type, did not.
+#
+# So the rule for this directory is: a file added to `omnuv.qrc` is added here
+# in the same change, whether or not anything names it as a type today. The
+# alternative is a trap that springs the first time somebody writes
+# `MachineCard { }` instead of loading it by URL.
 singleton Theme 1.0 Theme.qml
+MachineCard 1.0 MachineCard.qml
+OmnuvCliSegue 1.0 OmnuvCliSegue.qml
+OmnuvSegue 1.0 OmnuvSegue.qml
+OmnuvView 1.0 OmnuvView.qml
+StreamSettingsSheet 1.0 StreamSettingsSheet.qml
