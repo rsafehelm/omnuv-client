@@ -1,4 +1,4 @@
-// Omnuv: what `Moonlight.exe stream <machine> "<app>"` opens.
+// Omnuv: what `OmnuvClient.exe stream <machine> "<app>"` opens.
 //
 // **Measured, not assumed.** On 15 September 2026 the Windows rig drove that
 // exact command against a name under `.invalid` and reported `SEGUE=absent`:

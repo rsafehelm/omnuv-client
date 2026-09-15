@@ -55,7 +55,7 @@ jobs:
           # It bought three more on 15 Sep for the `stream` verb: one changed
           # string literal and two context properties, in the arm that already
           # constructs that action's launcher. The rig measured what
-          # `Moonlight.exe stream <host> "<app>"` actually drew and answered
+          # `OmnuvClient.exe stream <host> "<app>"` actually drew and answered
           # `SEGUE=absent` — upstream's Material ErrorMessageDialog, upstream's
           # words — and that command is what `omnuv-connect --stream` and every
           # `omnuv://stream` link run, so it was the buyer-facing surface for
@@ -318,7 +318,7 @@ jobs:
       #
       # The step above proves our code never opens upstream's numeric-code
       # dialog. It says nothing about whether our code is *reached*, and on
-      # 15 Sep 2026 the Windows rig measured that it was not: `Moonlight.exe
+      # 15 Sep 2026 the Windows rig measured that it was not: `OmnuvClient.exe
       # stream <host> "<app>"` went to upstream's `CliStartStreamSegue` and its
       # Material `ErrorMessageDialog`, and the rig reported `SEGUE=absent`.
       #

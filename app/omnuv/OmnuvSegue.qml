@@ -18,7 +18,7 @@
 //
 // **This file is now on both paths, and that is the point.** It was reached
 // only from `OmnuvView.startStream()` until 15 September 2026, when the
-// Windows rig measured what `Moonlight.exe stream <machine> "<app>"` actually
+// Windows rig measured what `OmnuvClient.exe stream <machine> "<app>"` actually
 // drew and answered `SEGUE=absent`: upstream's `CliStartStreamSegue` and its
 // Material `ErrorMessageDialog`, with upstream's words. That command is what
 // `omnuv-connect --stream` runs, what every `omnuv://stream` link from the
@@ -74,7 +74,7 @@ Item {
 
     // ------------------------------------------------------- the command line
     //
-    // **Set only by `OmnuvCliSegue.qml`**, which is what `Moonlight.exe stream
+    // **Set only by `OmnuvCliSegue.qml`**, which is what `OmnuvClient.exe stream
     // <machine> "<app>"` opens. When it is set there is no `Session` yet: this
     // view is the whole program, and a `CliStartStream::Launcher` is still
     // looking for the machine. Null on the widget's path, where `OmnuvView`

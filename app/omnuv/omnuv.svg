@@ -14,9 +14,14 @@
     row end an XML comment; the file then parses as broken XML and is silently
     not drawn, which is how the console's favicon shipped broken once already.
 
-    This is our own mark on our own tray icon. The application remains a fork
-    of Moonlight and says so: the window, the executable and the About box all
-    name upstream, and nothing here rebrands their work as ours.
+    This is our own mark, and since 15 September it is the application's icon
+    as well as the tray's: `app.pro` generates omnuv.ico and omnuv.icns from
+    this file, and the binary is OmnuvClient. Renaming a modified GPL work is
+    permitted and is the honest thing to do — a fork carrying upstream's name
+    is how a rival copy of the same program came to be installed over ours by
+    the Connect package. Upstream's copyright, licence and credit stay exactly
+    where they are; the About box still names them. Only the name and the mark
+    are ours.
   -->
   <rect x="0"  y="0"  width="17" height="17" rx="5"   fill="#7c72f0"/>
   <rect x="19" y="0"  width="9"  height="17" rx="4"   fill="#7c72f0" opacity="0.55"/>

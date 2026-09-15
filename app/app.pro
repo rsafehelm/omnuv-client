@@ -21,11 +21,23 @@ win32: LIBS += -ladvapi32
 win32: LIBS += -lshell32
 CONFIG += c++17
 
+# Omnuv: the product's own name, on every platform.
+#
+# It was `moonlight`/`Moonlight`, upstream's target name, and that made a
+# rival copy of the same program look like a dependency: the Connect package
+# used to `winget install MoonlightGameStreamingProject.Moonlight`, which put
+# upstream's build on a buyer's machine and let `Start-Stream` resolve *that*
+# from PATH. One name for one program is what stops it.
+#
+# Renaming a modified GPL work is permitted and generally preferred — the
+# licence attaches to the source, not the name, and a fork carrying upstream's
+# name invites exactly the confusion above. Upstream's copyright, licence and
+# credit stay where they are; only the binary's name is ours.
 unix:!macx {
-    TARGET = moonlight
+    TARGET = OmnuvClient
 } else {
     # On macOS, this is the name displayed in the global menu bar
-    TARGET = Moonlight
+    TARGET = OmnuvClient
 }
 
 include(../globaldefs.pri)
@@ -597,13 +609,17 @@ unix:!macx: {
     INSTALLS += target desktop icons appstream
 }
 win32 {
-    RC_ICONS = moonlight.ico
-    QMAKE_TARGET_COMPANY = Moonlight Game Streaming Project
-    QMAKE_TARGET_DESCRIPTION = Moonlight Game Streaming Client
-    QMAKE_TARGET_PRODUCT = Moonlight
+    # Our mark, generated from `app/omnuv/omnuv.svg` — the same four blocks the
+    # tray and the console's favicon use, so the taskbar, the notification area
+    # and the browser tab cannot drift apart. Nine sizes, 16 through 256, with
+    # the 256 PNG-compressed as Windows expects.
+    RC_ICONS = omnuv.ico
+    QMAKE_TARGET_COMPANY = Omnuv
+    QMAKE_TARGET_DESCRIPTION = Omnuv Client
+    QMAKE_TARGET_PRODUCT = Omnuv Client
 
     CONFIG -= embed_manifest_exe
-    QMAKE_LFLAGS += /MANIFEST:embed /MANIFESTINPUT:$${PWD}/Moonlight.exe.manifest
+    QMAKE_LFLAGS += /MANIFEST:embed /MANIFESTINPUT:$${PWD}/OmnuvClient.exe.manifest
 }
 macx {
     # Create Info.plist in object dir with the correct version string
@@ -612,7 +628,7 @@ macx {
 
     QMAKE_INFO_PLIST = $$OUT_PWD/Info.plist
 
-    APP_BUNDLE_RESOURCES.files = moonlight.icns
+    APP_BUNDLE_RESOURCES.files = omnuv.icns
     APP_BUNDLE_RESOURCES.path = Contents/Resources
 
     APP_BUNDLE_PLIST.files = $$OUT_PWD/Info.plist

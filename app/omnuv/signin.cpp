@@ -12,7 +12,7 @@
 // Why this is a sub-command and not a global flag
 // ---------------------------------------------------------------------------
 //
-// `Moonlight.exe --print-code` cannot be made to work without taking upstream's
+// `OmnuvClient.exe --print-code` cannot be made to work without taking upstream's
 // option handling apart. With no positional argument, GlobalCommandLineParser
 // falls straight into handleUnknownOptions(), which calls exit(1) with the help
 // text on any option it has not been told about — so a bare flag of ours is a
