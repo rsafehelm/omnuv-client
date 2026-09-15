@@ -60,6 +60,29 @@ QtObject {
     // italic** — the ramp has neither, and emphasis is Semibold.
     readonly property var textFamilies: ["Segoe UI Variable", "Segoe UI"]
 
+    // **QML's `font` has `family` and no `families`.** The value type exposes
+    // one name (`QQuickFontValueType`: family, styleName, bold, weight, italic,
+    // …), and a binding to `font.families` is refused at compile time —
+    // `Cannot assign to non-existent property "families"` — which takes the
+    // whole file with it, and every file that names that file as a type.
+    // That was the blank window of 15 September: twenty-nine such bindings,
+    // and the first of them was enough.
+    //
+    // So the fallback is chosen here, once, from what this machine actually
+    // has installed, and consumers bind the one string: `font.family:
+    // Theme.textFamily`. The lists above and below stay as the statement of
+    // intent; this is how it is applied.
+    function firstInstalled(candidates) {
+        var installed = Qt.fontFamilies()
+        for (var i = 0; i < candidates.length; i++) {
+            if (installed.indexOf(candidates[i]) >= 0) {
+                return candidates[i]
+            }
+        }
+        return candidates[candidates.length - 1]
+    }
+    readonly property string textFamily: firstInstalled(textFamilies)
+
     // Caption 12/16 Regular. Microsoft's stated floor for legibility is 12px
     // Regular, so nothing in this application goes below it.
     readonly property int captionSize: 12
@@ -239,8 +262,9 @@ QtObject {
     // would. `Segoe MDL2 Assets` does ship with Windows 10 and holds every one
     // of these glyphs at the same code point, so the fallback costs a second
     // family name and no glyph table of its own. Consumers set
-    // `font.families: Theme.iconFamilies`.
+    // `font.family: Theme.iconFamily`, chosen the same way as `textFamily`.
     readonly property var iconFamilies: ["Segoe Fluent Icons", "Segoe MDL2 Assets"]
+    readonly property string iconFamily: firstInstalled(iconFamilies)
 
     readonly property QtObject icon: QtObject {
         readonly property string settings: "\uE713"      // Setting

@@ -663,7 +663,7 @@ Item {
             Layout.fillWidth: true
             Layout.bottomMargin: Theme.spacingLoose
             text: qsTr("Starting %1 on %2").arg(segue.appName).arg(segue.machineName)
-            font.families: Theme.textFamilies
+            font.family: Theme.textFamily
             font.pixelSize: Theme.subtitleSize
             font.weight: Theme.strongWeight
             wrapMode: Text.WordWrap
@@ -687,7 +687,7 @@ Item {
                         anchors.centerIn: parent
                         visible: rungRow.done
                         text: Theme.icon.accept
-                        font.families: Theme.iconFamilies
+                        font.family: Theme.iconFamily
                         font.pixelSize: Theme.captionSize
                         opacity: 0.6
                     }
@@ -721,7 +721,7 @@ Item {
                 Label {
                     Layout.fillWidth: true
                     text: modelData
-                    font.families: Theme.textFamilies
+                    font.family: Theme.textFamily
                     font.pixelSize: Theme.bodySize
                     font.weight: rungRow.current ? Theme.strongWeight : Theme.regularWeight
                     wrapMode: Text.WordWrap
@@ -744,7 +744,7 @@ Item {
                     // the spinner would have been.
                     visible: rungRow.current && !Theme.motion
                     text: qsTr("now")
-                    font.families: Theme.textFamilies
+                    font.family: Theme.textFamily
                     font.pixelSize: Theme.captionSize
                     opacity: 0.6
                 }
@@ -758,7 +758,7 @@ Item {
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 50
         anchors.horizontalCenter: parent.horizontalCenter
-        font.families: Theme.textFamilies
+        font.family: Theme.textFamily
         font.pixelSize: Theme.bodySize
         opacity: 0.6
         wrapMode: Text.Wrap
@@ -783,14 +783,14 @@ Item {
             Label {
                 Layout.alignment: Qt.AlignTop
                 text: Theme.icon.error
-                font.families: Theme.iconFamilies
+                font.family: Theme.iconFamily
                 font.pixelSize: Theme.subtitleSize
             }
 
             Label {
                 Layout.fillWidth: true
                 text: segue.failHeadline
-                font.families: Theme.textFamilies
+                font.family: Theme.textFamily
                 font.pixelSize: Theme.subtitleSize
                 font.weight: Theme.strongWeight
                 lineHeight: Theme.subtitleLineHeight
@@ -803,7 +803,7 @@ Item {
             Layout.fillWidth: true
             visible: text !== ""
             text: segue.failExtra
-            font.families: Theme.textFamilies
+            font.family: Theme.textFamily
             font.pixelSize: Theme.bodySize
             lineHeight: Theme.bodyLineHeight
             lineHeightMode: Text.FixedHeight
@@ -913,7 +913,7 @@ Item {
             text: qsTr("%1 is running on %2. Stopping it to start \u201C%3\u201D will lose anything " +
                        "it has not saved.")
                    .arg(quitConfirm.running).arg(segue.machineName).arg(segue.appName)
-            font.families: Theme.textFamilies
+            font.family: Theme.textFamily
             font.pixelSize: Theme.bodySize
             wrapMode: Text.WordWrap
         }

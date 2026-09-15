@@ -187,7 +187,7 @@ ItemDelegate {
             Label {
                 Layout.fillWidth: true
                 text: model.name
-                font.families: Theme.textFamilies
+                font.family: Theme.textFamily
                 font.pixelSize: Theme.bodySize
                 font.weight: Theme.strongWeight
                 elide: Label.ElideRight
@@ -211,7 +211,7 @@ ItemDelegate {
 
                 Label {
                     text: model.status
-                    font.families: Theme.textFamilies
+                    font.family: Theme.textFamily
                     font.pixelSize: Theme.captionSize
                 }
             }
@@ -221,7 +221,7 @@ ItemDelegate {
         Label {
             Layout.fillWidth: true
             text: model.summary + " · " + model.region
-            font.families: Theme.textFamilies
+            font.family: Theme.textFamily
             font.pixelSize: Theme.captionSize
             opacity: 0.7
             elide: Label.ElideRight
@@ -249,7 +249,7 @@ ItemDelegate {
 
             Label {
                 text: card.observed()
-                font.families: Theme.textFamilies
+                font.family: Theme.textFamily
                 font.pixelSize: Theme.captionSize
                 opacity: 0.5
                 visible: text !== ""
@@ -306,7 +306,7 @@ ItemDelegate {
 
                             Label {
                                 anchors.centerIn: parent
-                                font.families: step.isUnknown ? Theme.textFamilies : Theme.iconFamilies
+                                font.family: step.isUnknown ? Theme.textFamily : Theme.iconFamily
                                 font.pixelSize: Theme.captionSize
                                 // A question mark rather than a dashed ring:
                                 // QML cannot dash a border, and the character
@@ -357,7 +357,7 @@ ItemDelegate {
                         Label {
                             Layout.fillWidth: true
                             text: modelData.label
-                            font.families: Theme.textFamilies
+                            font.family: Theme.textFamily
                             font.pixelSize: Theme.bodySize
                             font.weight: (step.isActive || step.isFailed) ? Theme.strongWeight
                                                                           : Theme.regularWeight
@@ -373,7 +373,7 @@ ItemDelegate {
                             text: modelData.note !== "" ? modelData.note
                                                         : step.isUnknown ? qsTr("not observed") : ""
                             visible: text !== ""
-                            font.families: Theme.textFamilies
+                            font.family: Theme.textFamily
                             font.pixelSize: Theme.captionSize
                             opacity: 0.6
                             wrapMode: Text.WordWrap
@@ -400,7 +400,7 @@ ItemDelegate {
 
                 Label {
                     text: model.operating ? card.elapsed() : ""
-                    font.families: Theme.textFamilies
+                    font.family: Theme.textFamily
                     font.pixelSize: Theme.captionSize
                     opacity: 0.6
                 }
@@ -409,7 +409,7 @@ ItemDelegate {
                     // Attempt 1 is not news; attempt 4 is.
                     text: qsTr("attempt %1").arg(model.attempt)
                     visible: model.attempt > 1
-                    font.families: Theme.textFamilies
+                    font.family: Theme.textFamily
                     font.pixelSize: Theme.captionSize
                     opacity: 0.6
                 }
@@ -427,7 +427,7 @@ ItemDelegate {
             Layout.topMargin: Theme.spacingTight
             visible: model.lastError !== ""
             text: model.lastError
-            font.families: Theme.textFamilies
+            font.family: Theme.textFamily
             font.pixelSize: Theme.captionSize
             color: Theme.fillCritical
             wrapMode: Text.WordWrap
@@ -459,7 +459,7 @@ ItemDelegate {
             ToolButton {
                 id: moreButton
                 text: Theme.icon.more
-                font.families: Theme.iconFamilies
+                font.family: Theme.iconFamily
                 font.pixelSize: Theme.bodySize
                 hoverEnabled: true
                 // Only where there is more. A machine whose one action is a

@@ -146,7 +146,7 @@ Dialog {
         // ---- 1 · Optimise for -------------------------------------------
         Label {
             text: qsTr("Optimise for")
-            font.families: Theme.textFamilies
+            font.family: Theme.textFamily
             font.pixelSize: Theme.bodySize
             font.weight: Theme.strongWeight
         }
@@ -177,7 +177,7 @@ Dialog {
         Label {
             Layout.fillWidth: true
             text: qsTr("A starting point. Everything below stays yours to change, and shows what the choice just did.")
-            font.families: Theme.textFamilies
+            font.family: Theme.textFamily
             font.pixelSize: Theme.captionSize
             opacity: 0.6
             wrapMode: Text.WordWrap
@@ -187,7 +187,7 @@ Dialog {
         Label {
             Layout.topMargin: Theme.spacing
             text: qsTr("Resolution and frame rate")
-            font.families: Theme.textFamilies
+            font.family: Theme.textFamily
             font.pixelSize: Theme.bodySize
             font.weight: Theme.strongWeight
         }
@@ -316,14 +316,14 @@ Dialog {
             Label {
                 Layout.fillWidth: true
                 text: qsTr("Bitrate")
-                font.families: Theme.textFamilies
+                font.family: Theme.textFamily
                 font.pixelSize: Theme.bodySize
                 font.weight: Theme.strongWeight
             }
 
             Label {
                 text: qsTr("%1 Mbps").arg(Math.round(StreamingPreferences.bitrateKbps / 100) / 10)
-                font.families: Theme.textFamilies
+                font.family: Theme.textFamily
                 font.pixelSize: Theme.bodySize
             }
         }
@@ -367,7 +367,7 @@ Dialog {
             Label {
                 Layout.fillWidth: true
                 text: qsTr("Display")
-                font.families: Theme.textFamilies
+                font.family: Theme.textFamily
                 font.pixelSize: Theme.bodySize
                 font.weight: Theme.strongWeight
             }
@@ -418,7 +418,7 @@ Dialog {
 
                 Label {
                     text: qsTr("Smooth motion")
-                    font.families: Theme.textFamilies
+                    font.family: Theme.textFamily
                     font.pixelSize: Theme.bodySize
                     font.weight: Theme.strongWeight
                 }
@@ -428,7 +428,7 @@ Dialog {
                     text: StreamingPreferences.enableVsync
                           ? qsTr("Holds frames that arrive early, so motion is even. Costs a little response.")
                           : qsTr("Needs V-Sync, which is off. It is in Advanced.")
-                    font.families: Theme.textFamilies
+                    font.family: Theme.textFamily
                     font.pixelSize: Theme.captionSize
                     opacity: 0.6
                     wrapMode: Text.WordWrap
@@ -454,7 +454,7 @@ Dialog {
             Label {
                 Layout.fillWidth: true
                 text: qsTr("Audio")
-                font.families: Theme.textFamilies
+                font.family: Theme.textFamily
                 font.pixelSize: Theme.bodySize
                 font.weight: Theme.strongWeight
             }

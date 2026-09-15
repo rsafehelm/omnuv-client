@@ -702,24 +702,13 @@ static void registerOmnuvTypes()
     qmlRegisterType(QUrl(QStringLiteral("qrc:/omnuv/OmnuvView.qml")),
                     "Omnuv", 1, 0, "OmnuvView");
 
-    // **And every other file of ours that anything names as a type**, for the
-    // reason written two comments above: implicit same-directory resolution
-    // does not reach `qrc:/omnuv/`, so a `.qml` here is a file until something
-    // registers it.
-    //
-    // These two were missing, and the cost was the whole interface.
-    // `OmnuvView` names `StreamSettingsSheet`, so `OmnuvView` failed to
-    // compile, so the push of it failed, so the window was blank white — while
-    // the build was green, the process was running, the tray was painting and
-    // the style really was FluentWinUI3. The error named the leaf:
-    //
-    //     qrc:/omnuv/OmnuvView.qml:620:5: Type StreamSettingsSheet unavailable
-    //
-    // The rule this directory now has: a `.qml` added here is registered here
-    // in the same change, unless nothing ever names it as a type.
-    qmlRegisterType(QUrl(QStringLiteral("qrc:/omnuv/StreamSettingsSheet.qml")),
-                    "Omnuv", 1, 0, "StreamSettingsSheet");
-    qmlRegisterType(QUrl(QStringLiteral("qrc:/omnuv/OmnuvSegue.qml")),
-                    "Omnuv", 1, 0, "OmnuvSegue");
+    // Nothing else of ours is registered, and nothing needs to be. A `.qml`
+    // in `qrc:/omnuv/` is a type to every other file in that directory through
+    // QML's implicit directory import, exactly as upstream's `PcView` finds
+    // `NavigableDialog` in `qrc:/gui/`. Two registrations were added here on
+    // 15 September on the belief that implicit resolution did not reach a
+    // `qrc:` directory; the window stayed blank, and the cause was a property
+    // that does not exist (`font.families`, see `Theme.qml`). They were
+    // withdrawn with the belief.
 }
 Q_COREAPP_STARTUP_FUNCTION(registerOmnuvTypes)
