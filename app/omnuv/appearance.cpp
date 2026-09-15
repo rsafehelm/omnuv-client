@@ -213,6 +213,16 @@ void OmnuvAppearance::announce() const
 
 void OmnuvAppearance::applyStyle()
 {
+    // `OMNUV_STYLE` wins on every platform, and it exists for one reason: an
+    // explicit `setStyle` beats `QT_QUICK_CONTROLS_STYLE`, so without it the
+    // Linux loop (`scripts/client-linux`) could only ever draw Material — and
+    // the defects that cost 15 September were FluentWinUI3's sizing under the
+    // software backend, which runs on Linux just as well. A debugging switch,
+    // not a preference: nothing sets it in a shipped configuration.
+    const QString forced = qEnvironmentVariable("OMNUV_STYLE");
+    if (!forced.isEmpty()) {
+        QQuickStyle::setStyle(forced);
+    } else
 #ifdef Q_OS_WIN
     // Qt's own Fluent/WinUI 3 style, which draws Qt Quick Controls the way
     // Windows 11 draws its own: the 4px control corners, the system accent, and
@@ -229,12 +239,16 @@ void OmnuvAppearance::applyStyle()
     // Fusion — `StackView`, which `main.qml` uses, among them. That is
     // documented and accepted: a StackView draws nothing of its own, and the
     // buttons, fields, menus and dialogs inside it are what carry the look.
-    QQuickStyle::setStyle(QStringLiteral("FluentWinUI3"));
+    {
+        QQuickStyle::setStyle(QStringLiteral("FluentWinUI3"));
+    }
 #else
     // Upstream's Material, unchanged, everywhere else. Not a fallback: on a Mac
     // or a Linux desktop FluentWinUI3 would be the foreign look, which is the
     // thing this change exists to stop doing on Windows.
-    QQuickStyle::setStyle(QStringLiteral("Material"));
+    {
+        QQuickStyle::setStyle(QStringLiteral("Material"));
+    }
 #endif
 
     // One greppable line, in the same family as the `motion=`/`theme=` one

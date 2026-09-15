@@ -232,6 +232,7 @@ SOURCES += \
     omnuv/appearance.cpp \
     omnuv/autostart.cpp \
     omnuv/credentials.cpp \
+    omnuv/devqml.cpp \
     omnuv/machinemodel.cpp \
     omnuv/omnuvsession.cpp \
     omnuv/pairing.cpp \
@@ -245,6 +246,7 @@ HEADERS += \
     omnuv/appearance.h \
     omnuv/autostart.h \
     omnuv/credentials.h \
+    omnuv/devqml.h \
     omnuv/machinemodel.h \
     omnuv/omnuvsession.h \
     omnuv/pairing.h \

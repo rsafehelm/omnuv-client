@@ -47,6 +47,7 @@
 #include "cli/commandlineparser.h"
 #include "omnuv/signin.h"
 #include "omnuv/appearance.h"
+#include "omnuv/devqml.h"
 #include "path.h"
 #include "utils.h"
 #include "gui/computermodel.h"
@@ -999,6 +1000,9 @@ int main(int argc, char *argv[])
     }
 
     QQmlApplicationEngine engine;
+    // Omnuv: QML from disk when OMNUV_QML_DIR is set, for development. Before
+    // any load, so the first push already goes through it. See app/omnuv/devqml.h.
+    OmnuvDevQml::install(&engine);
     QString initialView;
     bool hasGUI = true;
 
