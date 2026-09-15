@@ -5,7 +5,9 @@
 
 class QMenu;
 class QAction;
+class QTimer;
 class OmnuvSession;
+class OmnuvAutostart;
 
 // The tray, which is the whole of being a widget.
 //
@@ -39,15 +41,27 @@ class OmnuvTray : public QObject
     Q_OBJECT
 
 public:
-    // Returns nullptr where the platform has no tray at all, rather than
-    // constructing something that silently does nothing.
-    static OmnuvTray* createIfSupported(OmnuvSession* session, QObject* parent = nullptr);
+    // Always constructs, and the object then says for itself whether the
+    // shell took the icon — see `checkRegistered`.
+    //
+    // This used to return nullptr when `isSystemTrayAvailable()` said no,
+    // which threw away the case Qt documents as ordinary: *"if the system
+    // tray is currently unavailable but becomes available later,
+    // QSystemTrayIcon will automatically add an entry in the system tray if
+    // it is visible"*. Deciding once, at construction, meant a program
+    // started at login — before the shell has finished building the
+    // notification area — had no tray for the rest of that session, and said
+    // nothing about it either. The decision is Qt's to make, continuously;
+    // ours is only to report it.
+    static OmnuvTray* create(OmnuvSession* session, QObject* parent = nullptr);
 
 private slots:
     void refresh();
+    void checkRegistered();
     void openWindow();
     void showAbout();
     void activated(QSystemTrayIcon::ActivationReason reason);
+    void toggleAutostart(bool on);
 
 private:
     explicit OmnuvTray(OmnuvSession* session, QObject* parent);
@@ -62,4 +76,11 @@ private:
     QSystemTrayIcon* m_icon;
     QMenu* m_menu;
     QAction* m_state;
+    QAction* m_autostart;
+    OmnuvAutostart* m_auto;
+
+    // Only alive while the answer is still "not yet": `checkRegistered`
+    // stops it on the first verdict, so exactly one line is ever written.
+    QTimer* m_registerWatch;
+    int m_registerWaitsLeft;
 };

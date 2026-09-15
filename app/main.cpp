@@ -45,6 +45,7 @@
 #include "cli/startstream.h"
 #include "cli/pair.h"
 #include "cli/commandlineparser.h"
+#include "omnuv/signin.h"
 #include "path.h"
 #include "utils.h"
 #include "gui/computermodel.h"
@@ -1038,6 +1039,14 @@ int main(int argc, char *argv[])
             listParser.parse(app.arguments());
             auto launcher = new CliListApps::Launcher(listParser.getHost(), listParser, &app);
             launcher->execute(new ComputerManager(StreamingPreferences::get()));
+            hasGUI = false;
+            break;
+        }
+    case GlobalCommandLineParser::SignInRequested:
+        {
+            // Omnuv: no window, like `list`. stdout is this action's product,
+            // so nothing else may write to it — see app/omnuv/signin.cpp.
+            OmnuvSignIn::start(app.arguments(), &app);
             hasGUI = false;
             break;
         }

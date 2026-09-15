@@ -26,10 +26,13 @@ QVariant MachineModel::data(const QModelIndex& index, int role) const
     case StatusRole:    return m.status;
     case StreamAppRole: return m.streamApp;
     case StreamedRole:  return m.streamed();
-    case HostRole:      return m.host();
+    case HostRole:      return m.host;
     case UserRole:      return m.defaultUser;
     case SummaryRole:   return m.summary;
-    case ReadyRole:     return m.status == QStringLiteral("Running");
+    // Running *and* reachable. A machine Core has not yet given a private name
+    // has no address to connect to, and a Connect button that opens nothing is
+    // worse than one that is plainly disabled.
+    case ReadyRole:     return m.status == QStringLiteral("Running") && !m.host.isEmpty();
     default:            return QVariant();
     }
 }
@@ -56,6 +59,11 @@ QHash<int, QByteArray> MachineModel::roleNames() const
 // scroll position every fifteen seconds, and then it is worth comparing rows.
 void MachineModel::replace(const QJsonArray& machines)
 {
+    // Remember what each machine was, so a *transition* can be told from a
+    // steady state. Announcing "gpu-1 is ready" every fifteen seconds for as
+    // long as it stays ready is how people turn notifications off.
+    QHash<QString, QString> previous = m_lastStatus;
+
     beginResetModel();
     m_machines.clear();
 
@@ -69,6 +77,7 @@ void MachineModel::replace(const QJsonArray& machines)
         m.status = o["status"].toString();
         m.streamApp = o["stream_app"].toString();
         m.defaultUser = o["default_user"].toString();
+        m.host = o["private_name"].toString();
 
         // Enough to tell two machines apart at a glance, in the units the
         // console uses. GiB rather than MiB: nobody rents 16384 of anything.
@@ -86,7 +95,27 @@ void MachineModel::replace(const QJsonArray& machines)
         m_machines.append(m);
     }
 
+    m_lastStatus.clear();
+    QStringList becameReady;
+    for (const Machine& m : m_machines) {
+        m_lastStatus.insert(m.id, m.status);
+        const QString was = previous.value(m.id);
+        if (m.status == QStringLiteral("Running") && was != QStringLiteral("Running")) {
+            becameReady.append(m.name);
+        }
+    }
+
     endResetModel();
+
+    // Not on the first load: everything would look new, and a person opening
+    // the application does not need to be told about machines they can already
+    // see on the screen in front of them.
+    if (m_loadedOnce) {
+        for (const QString& name : becameReady) {
+            emit machineBecameReady(name);
+        }
+    }
+    m_loadedOnce = true;
     emit countChanged();
 }
 
@@ -114,7 +143,7 @@ QString MachineModel::userAt(int row) const
 
 QString MachineModel::hostAt(int row) const
 {
-    return (row >= 0 && row < m_machines.count()) ? m_machines.at(row).host() : QString();
+    return (row >= 0 && row < m_machines.count()) ? m_machines.at(row).host : QString();
 }
 
 bool MachineModel::streamedAt(int row) const

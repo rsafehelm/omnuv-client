@@ -37,20 +37,33 @@ jobs:
           # daily, and this fork pins its submodules to the upstream commit it
           # is based on. Left alone it opens a pull request every day proposing
           # to break that pin. Removed here rather than fought.
-          # app/main.cpp is the second entry, added for residency, and it
-          # buys exactly two lines. Qt Labs Platform's SystemTrayIcon needs a
-          # QApplication rather than the QGuiApplication upstream constructs,
-          # and a program that survives its window being closed needs
+          # app/main.cpp is the second entry, added for residency. It bought
+          # two lines then: QSystemTrayIcon needs a QApplication rather than
+          # the QGuiApplication upstream constructs, and a program that
+          # survives its window being closed needs
           # setQuitOnLastWindowClosed(false). Both are single lines next to
           # each other; neither has an equivalent that could live in a new
           # file, because the application object is constructed here.
+          # It bought two more on 15 Sep for the `signin` action — an include
+          # and one arm of the switch that already dispatches every other
+          # action — for the same reason: that switch is here, and everything
+          # the arm calls is in app/omnuv/signin.cpp.
           # .github/workflows/build.yml is the third entry, and it buys one
           # line: `if: false` on the Windows/macOS job. Those platforms are
           # built on the lab rigs now, which have the same pinned toolchains
           # and can additionally *run* the result — CI only ever proved the
           # thing compiled, and the bug that made every Windows build exit at
           # startup was invisible to it.
-          EDITED='^(app/gui/main.qml|app/main.cpp|app/app.pro|app/Info.plist|app/version.txt|app/deploy/.*|app/res/.*|.github/workflows/build.yml|.github/dependabot.yml)$'
+          # app/cli/commandlineparser.(cpp|h) is the fourth entry, and it buys
+          # four lines: one enum value, one arm in the action loop, and one line
+          # of help text, for the `signin` action. It could not live in a new
+          # file. Upstream's parser terminates the process on any option it does
+          # not recognise, so a global `--print-code` flag of ours is a usage
+          # error before our own code runs; only a positional action is
+          # tolerated, and the loop that recognises those is in this file.
+          # Everything the action then does is in app/omnuv/signin.cpp, which is
+          # why this is four lines and not a sub-parser.
+          EDITED='^(app/gui/main.qml|app/main.cpp|app/app.pro|app/cli/commandlineparser.(cpp|h)|app/Info.plist|app/version.txt|app/deploy/.*|app/res/.*|.github/workflows/build.yml|.github/dependabot.yml)$'
 
           base=$(git merge-base HEAD upstream/master)
           echo "base: $base"
@@ -66,3 +79,31 @@ jobs:
             exit 1
           fi
           echo "within budget: $(git diff --name-only "$base"..HEAD | wc -l) file(s) changed"
+
+      # stdout is a machine-readable channel, and a channel with two writers is
+      # not one. `signin` writes key=value lines that a harness parses; every
+      # other line this application produces — logs, progress, complaints — goes
+      # to the log file or to stderr. That holds today by construction, and this
+      # is what keeps it holding after somebody adds a print to debug something.
+      #
+      # Scoped to our own directory: upstream's cli/ prints to stdout
+      # legitimately (`list` is a report), and the point here is only that
+      # Omnuv's code has exactly one place that does.
+      - name: Only signin.cpp writes to stdout
+        run: |
+          set -euo pipefail
+          other=$(grep -rlE '\b(fprintf|fputs|fwrite)[[:space:]]*\([^;]*stdout|\bstd::cout\b|\bputs[[:space:]]*\(' \
+                    app/omnuv --include='*.cpp' --include='*.h' \
+                  | grep -v '^app/omnuv/signin\.cpp$' || true)
+
+          if [ -n "$other" ]; then
+            echo "These files in app/omnuv/ write to stdout, which belongs to signin:"
+            echo "$other" | sed 's/^/  /'
+            exit 1
+          fi
+
+          # And prove the check can still see. A grep whose pattern has rotted
+          # returns nothing, and nothing is exactly what a clean tree returns —
+          # so it has to find the one writer that is supposed to be there.
+          grep -qE '\bfprintf\(stdout' app/omnuv/signin.cpp
+          echo "stdout has one writer: app/omnuv/signin.cpp"

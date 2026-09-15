@@ -1,6 +1,9 @@
 #include "omnuvsession.h"
 #include "machinemodel.h"
 #include "tray.h"
+#include "appearance.h"
+#include "autostart.h"
+#include "credentials.h"
 
 #include "backend/computermanager.h"
 #include "backend/nvcomputer.h"
@@ -24,12 +27,30 @@
 // How often the machine list is refreshed while the window is open. A machine
 // takes minutes to start, so this is about a person watching one come up, not
 // about being current to the second.
-static const int kRefreshMs = 15 * 1000;
+// **One minute, whether or not anybody is watching.**
+//
+// The plan called for 15 s with the window open and 60 s with only the tray,
+// on the reasoning that a person waiting for a machine to come up wants it to
+// feel immediate. The operator chose a single minute instead, and it is the
+// better default: four times less load on Core for every resident client in
+// the fleet, and that number grows with the business while the number of
+// people staring at a window does not.
+//
+// The visible/hidden distinction is kept in the code because it costs nothing
+// and the decision may be revisited — but today both sides are the same.
+static const int kRefreshVisibleMs = 60 * 1000;
+static const int kRefreshHiddenMs = 60 * 1000;
 
 OmnuvSession::OmnuvSession(QObject* parent)
     : QObject(parent),
       m_machines(new MachineModel(this)),
-      m_tunnel(new OmnuvTunnel(this))
+      m_tunnel(new OmnuvTunnel(this)),
+      m_autostart(new OmnuvAutostart(this)),
+      // Built here rather than left to a QML singleton so that it has read
+      // the system's two settings, and written its one line to the log,
+      // before anything asks. Nothing in QML has to mention it for that to
+      // be true.
+      m_appearance(new OmnuvAppearance(this))
 {
     QSettings settings;
     m_coreUrl = settings.value(QStringLiteral("omnuv/coreUrl")).toString();
@@ -46,7 +67,7 @@ OmnuvSession::OmnuvSession(QObject* parent)
     m_pollTimer.setSingleShot(false);
     connect(&m_pollTimer, &QTimer::timeout, this, &OmnuvSession::poll);
 
-    m_refreshTimer.setInterval(kRefreshMs);
+    m_refreshTimer.setInterval(kRefreshVisibleMs);
     connect(&m_refreshTimer, &QTimer::timeout, this, &OmnuvSession::refresh);
 
     // No fetch here: the view asks when it opens, and again when a person
@@ -57,40 +78,20 @@ OmnuvSession::OmnuvSession(QObject* parent)
     }
 }
 
-QString OmnuvSession::tokenPath()
-{
-#ifdef Q_OS_WIN
-    return QDir::homePath() + QStringLiteral("/AppData/Roaming/Omnuv/token");
-#else
-    // Exactly where `omnuv-connect sign-in` writes it, on Linux and macOS
-    // alike. Sharing the file is the point: one sign-in, two front ends.
-    return QDir::homePath() + QStringLiteral("/.config/omnuv/token");
-#endif
-}
 
 void OmnuvSession::loadToken()
 {
-    QFile f(tokenPath());
-    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        return;
-    }
-    m_token = QString::fromUtf8(f.readAll()).trimmed();
+    m_token = OmnuvCredentials::load();
 }
 
 void OmnuvSession::saveToken(const QString& token)
 {
-    const QString path = tokenPath();
-    QDir().mkpath(QFileInfo(path).path());
-
-    QFile f(path);
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+    // Says so when it could not. A client that signs in, fails to remember it,
+    // and says nothing sends the person through the whole browser dance again
+    // at the next launch with no idea why.
+    if (!OmnuvCredentials::store(token)) {
         setStatus(tr("Signed in, but this device could not remember it."));
-        return;
     }
-    // Before anything is written, so the token is never briefly world-readable.
-    f.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-    f.write(token.toUtf8());
-    f.write("\n");
 }
 
 void OmnuvSession::setCoreUrl(const QString& url)
@@ -244,7 +245,9 @@ void OmnuvSession::poll()
 
 void OmnuvSession::signOut()
 {
-    QFile::remove(tokenPath());
+    // Both the credential store and any file an older version left behind.
+    // Signing out must not leave a token anywhere.
+    OmnuvCredentials::clear();
     m_token.clear();
     m_refreshTimer.stop();
     m_machines->clear();
@@ -267,7 +270,7 @@ void OmnuvSession::refresh()
         if (code == 401 || code == 403) {
             // Revoked in the console, or expired. Say so and stop pretending
             // to be signed in, rather than retrying a token that is dead.
-            QFile::remove(tokenPath());
+            OmnuvCredentials::clear();
             m_token.clear();
             m_refreshTimer.stop();
             m_machines->clear();
@@ -409,6 +412,37 @@ int OmnuvSession::hostRowFor(QObject* computerManager, const QString& address) c
     return -1;
 }
 
+bool OmnuvSession::shouldStartHidden()
+{
+    QSettings settings;
+    const bool ranBefore = settings.value(QStringLiteral("omnuv/hasRunBefore"), false).toBool();
+    settings.setValue(QStringLiteral("omnuv/hasRunBefore"), true);
+    settings.sync();
+
+    return ranBefore && m_autostart != nullptr && m_autostart->enabled();
+}
+
+void OmnuvSession::setWindowVisible(bool visible)
+{
+    const int want = visible ? kRefreshVisibleMs : kRefreshHiddenMs;
+    if (m_refreshTimer.interval() == want) {
+        return;
+    }
+    m_refreshTimer.setInterval(want);
+    // Logged because it is otherwise invisible: the rate only shows up as the
+    // gap between two requests, and on a client that is not signed in there
+    // are no requests to measure.
+    qInfo("Omnuv: window %s, polling every %d s",
+          visible ? "shown" : "hidden", want / 1000);
+
+    // Refresh straight away when the window opens rather than making the
+    // person wait out the remainder of a 60-second tick to see current state.
+    // The opposite direction needs nothing: going quiet can wait.
+    if (visible && m_refreshTimer.isActive()) {
+        refresh();
+    }
+}
+
 // Registered here rather than in main.cpp, which belongs to upstream. This
 // runs before the QML engine is built, which is all registration needs.
 static void registerOmnuvTypes()
@@ -422,7 +456,7 @@ static void registerOmnuvTypes()
                                                // this singleton the QApplication exists, which is
                                                // what a QSystemTrayIcon needs; at registration
                                                // time it does not.
-                                               OmnuvTray::createIfSupported(session, session);
+                                               OmnuvTray::create(session, session);
                                                return session;
                                            });
     qmlRegisterUncreatableType<MachineModel>("Omnuv", 1, 0, "MachineModel",

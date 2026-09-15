@@ -161,6 +161,7 @@ GlobalCommandLineParser::ParseResult GlobalCommandLineParser::parse(const QStrin
         "  quit            Quit the currently running app\n"
         "  stream          Start streaming an app\n"
         "  pair            Pair a new host\n"
+        "  signin          Sign this device in to Omnuv\n"
         "\n"
         "See 'moonlight <action> --help' for help of specific action."
     );
@@ -192,6 +193,10 @@ GlobalCommandLineParser::ParseResult GlobalCommandLineParser::parse(const QStrin
                 return PairRequested;
             } else if (action == "list") {
                 return ListRequested;
+            } else if (action == "signin") {
+                // Omnuv. Recognised here, with the rest of it in
+                // app/omnuv/signin.cpp, so the edit to this file is one arm.
+                return SignInRequested;
             }
         }
 

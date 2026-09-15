@@ -8,6 +8,7 @@
 #pragma once
 
 #include <QAbstractListModel>
+#include <QHash>
 #include <QList>
 #include <QString>
 
@@ -25,11 +26,20 @@ struct Machine
     QString defaultUser;
     QString summary;   // "8 vCPU · 16 GiB · RTX 3090"
 
+    // The name it answers to on the project network, as Core gives it. The
+    // only address this application ever uses: a private IP would work today
+    // and stop working the moment a machine moves.
+    //
+    // **Core's, not ours.** This used to be `name.toLower() + ".internal"`,
+    // which is the client deciding a naming rule that belongs to the side that
+    // allocates the address. It happened to agree with Core, and that is the
+    // problem: the day Core prefixes a project, or lowercases differently, or
+    // gives a machine a second name, the client would go on confidently
+    // building an address nothing answers to. Empty until an address is
+    // assigned, which is also when there is nothing to connect to.
+    QString host;
+
     bool streamed() const { return !streamApp.isEmpty(); }
-    // The name it answers to on the project network. The only address this
-    // application ever uses: a private IP would work today and stop working
-    // the moment a machine moves.
-    QString host() const { return name.toLower() + QStringLiteral(".internal"); }
 };
 
 class MachineModel : public QAbstractListModel
@@ -70,8 +80,19 @@ public:
     Q_INVOKABLE QString streamAppAt(int row) const;
 
 signals:
+    // A machine has finished starting. **The only thing here worth
+    // interrupting somebody for**: they asked for it, they have been
+    // waiting, and now they can use it. A failed poll is not — it means
+    // nothing to a person and it recovers by itself.
+    void machineBecameReady(const QString& name);
     void countChanged();
 
 private:
     QList<Machine> m_machines;
+
+    // Status per machine id as of the last refresh, so a transition can be
+    // told from a steady state. Empty until the first load, which is what
+    // stops every machine announcing itself when the application starts.
+    QHash<QString, QString> m_lastStatus;
+    bool m_loadedOnce = false;
 };

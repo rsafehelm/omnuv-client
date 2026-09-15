@@ -14,6 +14,10 @@ public:
         QuitRequested,
         PairRequested,
         ListRequested,
+        // Omnuv: sign this device in from a shell. An action rather than a
+        // global flag because a bare option with no action reaches
+        // handleUnknownOptions() and exits; see app/omnuv/signin.cpp.
+        SignInRequested,
     };
 
     GlobalCommandLineParser();

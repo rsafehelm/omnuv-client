@@ -6,6 +6,11 @@ QT += core quick network quickcontrols2 svg
 # back to a Qt Widgets implementation. The matching QApplication change
 # is in main.cpp, and is why main.cpp is now in the change budget.
 QT += widgets
+
+# Credential Manager (CredWriteW/CredReadW) lives in advapi32. It is where
+# the bearer token belongs on Windows: bound to the user's login, and
+# visible to them in Credential Manager without us providing a button.
+win32: LIBS += -ladvapi32
 CONFIG += c++17
 
 unix:!macx {
@@ -216,14 +221,22 @@ SOURCES += \
 # Omnuv's own code. Everything we add lives under omnuv/, so the diff against
 # upstream stays one directory plus this list.
 SOURCES += \
+    omnuv/appearance.cpp \
+    omnuv/autostart.cpp \
+    omnuv/credentials.cpp \
     omnuv/machinemodel.cpp \
     omnuv/omnuvsession.cpp \
+    omnuv/signin.cpp \
     omnuv/tray.cpp \
     omnuv/tunnel.cpp
 
 HEADERS += \
+    omnuv/appearance.h \
+    omnuv/autostart.h \
+    omnuv/credentials.h \
     omnuv/machinemodel.h \
     omnuv/omnuvsession.h \
+    omnuv/signin.h \
     omnuv/tray.h \
     omnuv/tunnel.h
 

@@ -18,12 +18,15 @@
 
 #include <QNetworkAccessManager>
 #include <QObject>
+
 #include <QString>
 #include <QTimer>
 
 // Included rather than forward-declared: moc needs the full type to expose
 // MachineModel* as a Q_PROPERTY.
 #include "machinemodel.h"
+#include "appearance.h"
+#include "autostart.h"
 #include "tunnel.h"
 
 class OmnuvSession : public QObject
@@ -45,6 +48,11 @@ class OmnuvSession : public QObject
 
     Q_PROPERTY(MachineModel* machines READ machines CONSTANT)
     Q_PROPERTY(OmnuvTunnel* tunnel READ tunnel CONSTANT)
+    Q_PROPERTY(OmnuvAutostart* autostart READ autostart CONSTANT)
+
+    // What the operating system asked every application to look like and to
+    // move like. Read-only here and everywhere: see `appearance.h`.
+    Q_PROPERTY(OmnuvAppearance* appearance READ appearance CONSTANT)
 
 public:
     explicit OmnuvSession(QObject* parent = nullptr);
@@ -58,6 +66,31 @@ public:
     QString status() const { return m_status; }
     MachineModel* machines() const { return m_machines; }
     OmnuvTunnel* tunnel() const { return m_tunnel; }
+    OmnuvAutostart* autostart() const { return m_autostart; }
+    OmnuvAppearance* appearance() const { return m_appearance; }
+
+    // Whether this launch should go straight to the tray instead of opening a
+    // window, and it records that a launch happened.
+    //
+    // **Never on the first run.** A program that installs itself, starts, and
+    // shows nothing is indistinguishable from malware — to a person and to a
+    // scanner. The first launch opens and signs in; only later ones are
+    // allowed to be quiet.
+    //
+    // And only when autostart is on, which is the person having asked for a
+    // background program. With it off, every launch shows a window, because
+    // somebody double-clicking an icon and getting nothing at all is the same
+    // bad experience by a different route.
+    //
+    // (The honest alternative is to tag the autostart entry with a flag and
+    // read it here. Upstream's parser calls `handleUnknownOptions()`, which
+    // terminates the process on any argument it does not know, so that costs
+    // an edit to a file outside the change budget. Not worth it for this.)
+    Q_INVOKABLE bool shouldStartHidden();
+
+    // Called by the window when it is shown or hidden, so the poll rate
+    // follows whether anybody is actually looking.
+    Q_INVOKABLE void setWindowVisible(bool visible);
 
     // Ask Core for a code, then wait for a browser to approve it. Safe to call
     // again: an unfinished attempt is abandoned first.
@@ -122,16 +155,20 @@ private:
     // Where the token lives. The same file the `omnuv-connect` command writes,
     // so signing in once serves both front ends of the same product.
     //
-    // A plain file at mode 0600, not the platform's credential store. That is
-    // the right home eventually and it is three different APIs; this is the
-    // one thing about the client that should be revisited before release.
-    static QString tokenPath();
+    // Where it actually lives is `credentials.h`: Credential Manager on
+    // Windows, a 0600 file where that is not implemented. This used to be a
+    // plain file everywhere, described here as "the one thing about the client
+    // that should be revisited before release" — residency is what made that
+    // urgent, because a widget holds a token across reboots rather than for
+    // the minutes an application is open.
     void loadToken();
     void saveToken(const QString& token);
 
     QNetworkAccessManager m_net;
     MachineModel* m_machines;
     OmnuvTunnel* m_tunnel;
+    OmnuvAutostart* m_autostart;
+    OmnuvAppearance* m_appearance;
     QTimer m_pollTimer;
     QTimer m_refreshTimer;
 

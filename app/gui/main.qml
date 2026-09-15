@@ -9,6 +9,7 @@ import AutoUpdateChecker 1.0
 import StreamingPreferences 1.0
 import SystemProperties 1.0
 import SdlGamepadKeyNavigation 1.0
+import Omnuv 1.0
 
 ApplicationWindow {
     property bool pollingActive: false
@@ -43,6 +44,7 @@ ApplicationWindow {
         window.hide()
     }
 
+
     // This function runs prior to creation of the initial StackView item
     function doEarlyInit() {
         // Override the background color to Material 2 colors for Qt 6.5+
@@ -56,6 +58,14 @@ ApplicationWindow {
     }
 
     Component.onCompleted: {
+        // Omnuv: a later launch with autostart on goes straight to the tray.
+        // The first run never does — a program that installs itself, starts,
+        // and shows nothing is indistinguishable from malware. See
+        // OmnuvSession::shouldStartHidden for the whole rule.
+        if (Omnuv.shouldStartHidden()) {
+            return
+        }
+
         // Show the window according to the user's preferences
         if (SystemProperties.hasDesktopEnvironment) {
             if (StreamingPreferences.uiDisplayMode == StreamingPreferences.UI_MAXIMIZED) {
@@ -203,6 +213,13 @@ ApplicationWindow {
     }
 
     onVisibleChanged: {
+        // Omnuv: poll faster while somebody is watching — 15 s with the window
+        // up, 60 s when only the tray is left. Added inside upstream's handler
+        // rather than as a second one, because QML allows only one handler per
+        // signal and a duplicate fails the build with "Property value set
+        // multiple times".
+        Omnuv.setWindowVisible(visible)
+
         // When we become invisible while streaming is going on,
         // stop polling immediately.
         if (!visible) {
