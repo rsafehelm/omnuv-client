@@ -197,6 +197,10 @@ GlobalCommandLineParser::ParseResult GlobalCommandLineParser::parse(const QStrin
                 // Omnuv. Recognised here, with the rest of it in
                 // app/omnuv/signin.cpp, so the edit to this file is one arm.
                 return SignInRequested;
+            } else if (action == "enrol" || action == "enroll" || action == "join") {
+                // Omnuv, and both spellings plus the plain word, because the
+                // console's links and the installer have used all three.
+                return EnrolRequested;
             }
         }
 

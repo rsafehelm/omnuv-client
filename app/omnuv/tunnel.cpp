@@ -1,100 +1,152 @@
 #include "tunnel.h"
 
-#include <QFileInfo>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QProcess>
+#include <QCoreApplication>
+#include <QDir>
+#include <QLibrary>
+#include <QNetworkInterface>
 #include <QStandardPaths>
+#include <QSysInfo>
 #include <QTimer>
 
-#include <memory>
+namespace {
 
-// The daemon's own command line. Named here once, and nowhere else in the
-// application, so replacing the implementation is one constant.
-static const char* kBinary = "netbird";
+// The states the library reports. They are its numbers, repeated here rather
+// than shared through a header, because the two halves meet at run time by
+// name and nothing else — see the note on `exports()` below.
+enum LibState { Stopped = 0, Starting = 1, Running = 2, Failed = 3 };
 
-// Bringing an enrolled device back up is quick. `up` with nothing to go on can
-// sit forever waiting for a browser sign-in that this application never asked
-// for, so it is killed rather than waited on.
-static const int kResumeMs = 15 * 1000;
-static const int kEnrolMs = 60 * 1000;
+// And the codes `onv_tunnel_start` answers with. Only one of them is a
+// question for the person: 3 means this device has never enrolled, so it has
+// no identity to resume and somebody has to fetch it a one-time key.
+enum StartCode { Accepted = 0, AlreadyUp = 1, Refused = 2, NeverEnrolled = 3 };
+
+// The four exports of `onvtunnel`, resolved once.
+//
+// **Loaded by name, never linked.** The library is NetBird's own client built
+// through cgo with mingw; this binary is built with MSVC. There is no import
+// library to link against and none is wanted — resolving four plain C
+// functions means the only things crossing the two C runtimes are integers and
+// a buffer this side allocates and owns. Anything returning a `char*` would
+// have to be freed by the wrong runtime, which is a real crash.
+struct Exports
+{
+    int (*start)(const char*, const char*, const char*, const char*) = nullptr;
+    int (*stop)() = nullptr;
+    int (*state)() = nullptr;
+    int (*lastError)(char*, int) = nullptr;
+
+    bool ok() const { return start && stop && state && lastError; }
+};
+
+const Exports& exports()
+{
+    static const Exports resolved = [] {
+        Exports e;
+        // Beside the executable, because that is where the installer puts it.
+        // A bare name would search the system and find whatever else is called
+        // this.
+        QLibrary lib(QDir(QCoreApplication::applicationDirPath())
+                         .filePath(QStringLiteral("onvtunnel")));
+        if (!lib.load()) {
+            qWarning("omnuv: the private network is unavailable in this build: %s",
+                     qPrintable(lib.errorString()));
+            return e;
+        }
+        e.start = reinterpret_cast<decltype(e.start)>(lib.resolve("onv_tunnel_start"));
+        e.stop = reinterpret_cast<decltype(e.stop)>(lib.resolve("onv_tunnel_stop"));
+        e.state = reinterpret_cast<decltype(e.state)>(lib.resolve("onv_tunnel_state"));
+        e.lastError = reinterpret_cast<decltype(e.lastError)>(lib.resolve("onv_tunnel_last_error"));
+        if (!e.ok()) {
+            // A library that loaded but is missing an export is a mismatched
+            // build, and it must not read as "no network installed".
+            qWarning("omnuv: the private network library is not the one this build expects");
+            return e;
+        }
+        // **Said out loud, because the absence of a complaint is not a
+        // reading.** A grader that passes a build where this class was never
+        // constructed is the watcher defect, so there is a line to find rather
+        // than a warning to miss.
+        qInfo("omnuv: private network ready (%s)", qPrintable(lib.fileName()));
+        return e;
+    }();
+    return resolved;
+}
+
+// The library's own account of the last failure, in its words. Copied into a
+// buffer this side owns; see the note above.
+QString libraryError()
+{
+    const Exports& e = exports();
+    if (!e.ok()) {
+        return QString();
+    }
+    char buf[512] = { 0 };
+    const int n = e.lastError(buf, int(sizeof(buf)));
+    return n > 0 ? QString::fromUtf8(buf, n) : QString();
+}
+
+// Where the identity lives between launches. **Not optional**: with no path
+// the library keeps its configuration in memory, every launch enrols again,
+// and the buyer's network collects one dead peer per launch.
+QByteArray configDir()
+{
+    const QString dir =
+        QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation))
+            .filePath(QStringLiteral("network"));
+    return QDir::toNativeSeparators(dir).toUtf8();
+}
+
+} // namespace
 
 OmnuvTunnel::OmnuvTunnel(QObject* parent)
     : QObject(parent)
 {
-    m_timer.setInterval(10 * 1000);
+    // Three seconds rather than ten. Reading the state is now an integer
+    // behind a mutex rather than a process to spawn, and a join takes tens of
+    // seconds to resolve — so the view moves while it happens.
+    m_timer.setInterval(3 * 1000);
     connect(&m_timer, &QTimer::timeout, this, &OmnuvTunnel::check);
     check();
 }
 
-QString OmnuvTunnel::binary()
+OmnuvTunnel::~OmnuvTunnel()
 {
-    QString path = QStandardPaths::findExecutable(QString::fromLatin1(kBinary));
-    if (!path.isEmpty()) {
-        return path;
+    // The adapter goes with the process either way; asking politely lets the
+    // library take it down rather than leaving that to the operating system.
+    const Exports& e = exports();
+    if (e.ok()) {
+        e.stop();
     }
-#ifdef Q_OS_DARWIN
-    // Not on a GUI application's PATH, which does not inherit a login shell.
-    for (const QString& candidate : { QStringLiteral("/usr/local/bin/netbird"),
-                                      QStringLiteral("/opt/homebrew/bin/netbird") }) {
-        if (QFileInfo::exists(candidate)) {
-            return candidate;
-        }
-    }
-#endif
-    return QString();
 }
 
-// Every call into the daemon goes through here, and none of them blocks. A
-// synchronous waitForFinished on this thread freezes the window, and the two
-// commands worth running are exactly the slow ones.
-void OmnuvTunnel::start(const QStringList& args, int timeoutMs, Done done)
+// **The library cannot be asked where this device is.** With a real adapter
+// (`NoUserspace`) the embed API exposes no status and no address: its status
+// recorder is unexported, and the Dial/Listen calls that would know are
+// netstack-only and unused here. So the address is read the way any other
+// program on the machine would read it — from the operating system's own view
+// of the interface the tunnel created.
+QString OmnuvTunnel::adapterAddress()
 {
-    const QString path = binary();
-    if (path.isEmpty()) {
-        done(QString(), -1);
-        return;
+#ifdef Q_OS_DARWIN
+    static const QString kAdapter = QStringLiteral("utun100");
+#else
+    static const QString kAdapter = QStringLiteral("wt0");
+#endif
+    const QList<QNetworkInterface> all = QNetworkInterface::allInterfaces();
+    for (const QNetworkInterface& iface : all) {
+        // Windows names an interface by its GUID and keeps the friendly name
+        // separately; Linux and macOS put it in both.
+        if (iface.name() != kAdapter && iface.humanReadableName() != kAdapter) {
+            continue;
+        }
+        const QList<QNetworkAddressEntry> entries = iface.addressEntries();
+        for (const QNetworkAddressEntry& entry : entries) {
+            if (entry.ip().protocol() == QAbstractSocket::IPv4Protocol) {
+                return entry.ip().toString();
+            }
+        }
     }
-
-    auto* p = new QProcess(this);
-    auto* killer = new QTimer(p);
-    killer->setSingleShot(true);
-    killer->setInterval(timeoutMs);
-    connect(killer, &QTimer::timeout, p, [p]() { p->kill(); });
-
-    // finished and errorOccurred can both arrive for one run — a killed
-    // process is the ordinary case. Calling back twice enrolled this device
-    // twice and left a dead entry in the person's device list, so the callback
-    // fires exactly once.
-    auto fired = std::make_shared<bool>(false);
-    auto finish = [p, done, fired](const QString& out, int code) {
-        if (*fired) {
-            return;
-        }
-        *fired = true;
-        p->deleteLater();
-        done(out, code);
-    };
-
-    // **The exit status is not the exit code, and conflating them is how a
-    // killed probe reported a reading.** A process this class killed at its
-    // timeout arrives here through `finished` like any other, with whatever
-    // `exitCode` the platform invented for it — on Linux that is often 0. So
-    // the status is folded in: anything but a clean exit is -1, the same
-    // answer a process that never started gives, and `check()` treats -1 as
-    // "could not look" rather than as an answer.
-    connect(p, &QProcess::finished, this, [p, finish](int code, QProcess::ExitStatus status) {
-        finish(QString::fromUtf8(p->readAllStandardOutput()),
-               status == QProcess::NormalExit ? code : -1);
-    });
-    connect(p, &QProcess::errorOccurred, this, [p, finish](QProcess::ProcessError) {
-        if (p->state() == QProcess::NotRunning) {
-            finish(QString(), -1);
-        }
-    });
-
-    p->start(path, args);
-    killer->start();
+    return QString();
 }
 
 void OmnuvTunnel::set(bool available, omnuv::Reading reading, const QString& state,
@@ -130,53 +182,45 @@ void OmnuvTunnel::setBusy(bool busy)
 
 void OmnuvTunnel::check()
 {
-    if (binary().isEmpty()) {
+    const Exports& e = exports();
+    if (!e.ok()) {
         // Unknown rather than a failure, and the distinction is the whole
-        // reason this enum has three values: nothing is installed, so nothing
-        // has been measured. It is also an action the person has not taken,
-        // and "an action the person has not taken yet is not a failure".
+        // reason this enum has three values: there is nothing here to measure,
+        // so nothing has been measured.
         set(false, omnuv::Reading::Unknown,
-            tr("Install Omnuv Connect on this device to reach your machines by name."),
+            tr("This build cannot reach your Omnuv network. Reinstalling Omnuv fixes it."),
             QString());
         return;
     }
 
-    // --json rather than the human output: the words there are the vendor's
-    // and they change between versions.
-    start({ QStringLiteral("status"), QStringLiteral("--json") }, 8000,
-          [this](const QString& out, int code) {
-              // **Three ways this can fail to be an answer, and all three used
-              // to render as the definite sentence below.** The process was
-              // killed at the timeout; it exited without printing; or it
-              // printed something that is not the document we asked for. None
-              // of those says where this device is — they say we could not
-              // find out, which is a different thing and must look different.
-              const QJsonObject o =
-                  out.isEmpty() ? QJsonObject()
-                                : QJsonDocument::fromJson(out.toUtf8()).object();
+    switch (e.state()) {
+    case Running:
+        // Whatever this device was waiting for, it is no longer waiting.
+        setBusy(false);
+        set(true, omnuv::Reading::Pass, tr("On your Omnuv network"), adapterAddress());
+        return;
 
-              if (code == -1 || o.isEmpty()) {
-                  set(true, omnuv::Reading::Unknown,
-                      tr("Could not read the network service on this device."),
-                      QString());
-                  return;
-              }
+    case Starting:
+        // Not an answer yet, and it must not read as one. Busy is left alone:
+        // it belongs to whoever asked for the join.
+        set(true, omnuv::Reading::Unknown, tr("Joining your Omnuv network…"), QString());
+        return;
 
-              const bool up =
-                  o[QStringLiteral("management")].toObject()[QStringLiteral("connected")].toBool();
+    case Failed: {
+        setBusy(false);
+        const QString why = libraryError();
+        set(true, omnuv::Reading::Fail,
+            why.isEmpty() ? tr("This device could not join your network.") : why, QString());
+        return;
+    }
 
-              // Comes back with a prefix; a person wants the address.
-              const QString address =
-                  o[QStringLiteral("netbirdIp")].toString().section(QLatin1Char('/'), 0, 0);
-
-              if (up) {
-                  set(true, omnuv::Reading::Pass, tr("On your Omnuv network"), address);
-              }
-              else {
-                  set(true, omnuv::Reading::Fail,
-                      tr("This device is not on your network yet."), QString());
-              }
-          });
+    default:
+        // Stopped. Busy is deliberately not cleared here: a device that has
+        // never enrolled sits in this state while somebody fetches it a key,
+        // and clearing it would offer the join button again mid-flight.
+        set(true, omnuv::Reading::Fail, tr("This device is not on your network yet."), QString());
+        return;
+    }
 }
 
 // Two steps that must not be confused. A device that enrolled before already
@@ -186,41 +230,61 @@ void OmnuvTunnel::check()
 // a dead entry in the person's device list every time they opened this.
 void OmnuvTunnel::join()
 {
-    if (m_busy) {
+    const Exports& e = exports();
+    if (m_busy || !e.ok()) {
         return;
     }
     setBusy(true);
 
-    start({ QStringLiteral("up") }, kResumeMs, [this](const QString&, int code) {
-        if (code == 0) {
-            setBusy(false);
-            check();
-            return;
-        }
+    // No management URL and no key: *resume*. The stored configuration holds
+    // both the server this device belongs to and the identity it enrolled
+    // with, and the library refuses rather than inventing either.
+    const QByteArray name = QSysInfo::machineHostName().toUtf8();
+    const QByteArray dir = configDir();
+    const int rc = e.start("", "", name.constData(), dir.constData());
+
+    if (rc == NeverEnrolled) {
         // It has no identity, so it needs a one-time key. Whoever owns the
         // session fetches one and calls enrol; busy stays set until they do.
         emit needsKey();
-    });
+        return;
+    }
+    if (rc != Accepted && rc != AlreadyUp) {
+        fail(tr("This device could not rejoin your network."));
+        return;
+    }
+    check();
 }
 
 void OmnuvTunnel::enrol(const QString& managementUrl, const QString& setupKey)
 {
+    const Exports& e = exports();
+    if (!e.ok()) {
+        return;
+    }
     setBusy(true);
-    start({ QStringLiteral("up"),
-            QStringLiteral("--management-url"), managementUrl,
-            QStringLiteral("--setup-key"), setupKey },
-          kEnrolMs,
-          [this](const QString&, int code) {
-              setBusy(false);
-              if (code != 0) {
-                  set(m_available, omnuv::Reading::Fail,
-                      tr("This device could not join. The network service may need "
-                         "administrator rights."),
-                      QString());
-                  return;
-              }
-              check();
-          });
+
+    const QByteArray url = managementUrl.toUtf8();
+    const QByteArray key = setupKey.toUtf8();
+    const QByteArray name = QSysInfo::machineHostName().toUtf8();
+    const QByteArray dir = configDir();
+    const int rc = e.start(url.constData(), key.constData(), name.constData(), dir.constData());
+
+    if (rc != Accepted && rc != AlreadyUp) {
+        fail(tr("This device could not join your network."));
+        return;
+    }
+    check();
+}
+
+// A refusal the library gave a reason for. Its own sentence wins, because it
+// names the actual obstacle — an unreachable server, a spent key, or the
+// rights an adapter needs — and the generic one names none of those.
+void OmnuvTunnel::fail(const QString& fallback)
+{
+    setBusy(false);
+    const QString why = libraryError();
+    set(true, omnuv::Reading::Fail, why.isEmpty() ? fallback : why, QString());
 }
 
 void OmnuvTunnel::giveUp(const QString& why)

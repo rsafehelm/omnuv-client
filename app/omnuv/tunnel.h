@@ -1,9 +1,11 @@
 // Omnuv: the private network this device joins to reach machines by name.
 //
-// The daemon underneath is a third party's, installed by the Omnuv Connect
-// package rather than bundled inside this application — it needs a system
-// service and administrator rights, which an application bundle should not be
-// asking for. This class drives it and reports one line of state.
+// The implementation underneath is a third party's, and it is *inside this
+// process*: `onvtunnel` is NetBird's own client compiled into a shared library
+// that ships beside the executable, loaded by name at first use. There is no
+// daemon to install, no second process to keep running, and nothing for a
+// person to be told about. This class calls four functions and reports one
+// line of state.
 //
 // Its name never appears on screen. A person joined *their Omnuv network*;
 // which implementation carries the packets is not a thing they chose or should
@@ -14,10 +16,7 @@
 #include <QDateTime>
 #include <QObject>
 #include <QString>
-#include <QStringList>
 #include <QTimer>
-
-#include <functional>
 
 #include "traystate.h"
 
@@ -25,8 +24,9 @@ class OmnuvTunnel : public QObject
 {
     Q_OBJECT
 
-    // False when nothing is installed to drive. The view then says to install
-    // Omnuv Connect rather than showing a button that cannot work.
+    // False when the library is not beside the binary or is not the one this
+    // build expects. The view then says so rather than showing a button that
+    // cannot work.
     Q_PROPERTY(bool available READ available NOTIFY changed)
     Q_PROPERTY(bool connected READ connected NOTIFY changed)
     Q_PROPERTY(bool busy READ busy NOTIFY changed)
@@ -40,6 +40,7 @@ class OmnuvTunnel : public QObject
 
 public:
     explicit OmnuvTunnel(QObject* parent = nullptr);
+    ~OmnuvTunnel() override;
 
     bool available() const { return m_available; }
     bool connected() const { return m_reading == omnuv::Reading::Pass; }
@@ -50,23 +51,23 @@ public:
     // The same fact as `connected()`, with the third answer this class used to
     // throw away.
     //
-    // **`netbird status` failing and this device being off the network were
-    // the same answer until today**, and that is the watcher defect in its
-    // purest form: the process is killed at the timeout, `readAllStandardOutput`
-    // returns nothing, and "nothing" was rendered as the definite sentence
+    // **A status that could not be read and a device that is off the network
+    // were the same answer until today**, and that is the watcher defect in
+    // its purest form: the old implementation killed `netbird status` at a
+    // timeout, read nothing, and rendered "nothing" as the definite sentence
     // "This device is not on your network yet." A probe that could not run
     // reported a reading, and the reading was believed.
     //
-    //   Pass     the daemon answered and says it is on the network
-    //   Fail     the daemon answered and says it is not
-    //   Unknown  nothing installed, or nothing answered, or it did not parse
+    //   Pass     the library says the tunnel is up
+    //   Fail     the library says it is not, and can say why
+    //   Unknown  no library, or a join still in flight — nothing to report
     omnuv::Reading reading() const { return m_reading; }
 
     // When that reading was taken. Invalid before the first one, which renders
     // as nothing rather than as "just now".
     QDateTime takenAt() const { return m_takenAt; }
 
-    // Re-read the daemon's own status. The only source of truth about whether
+    // Re-read the library's own state. The only source of truth about whether
     // this device is on the network.
     Q_INVOKABLE void check();
 
@@ -90,15 +91,17 @@ signals:
     void needsKey();
 
 private:
-    using Done = std::function<void(const QString& output, int exitCode)>;
-
     void set(bool available, omnuv::Reading reading, const QString& state, const QString& address);
     void setBusy(bool busy);
-    static QString binary();
 
-    // Runs one of the daemon's commands without blocking this thread, and
-    // kills it if it outlives its budget.
-    void start(const QStringList& args, int timeoutMs, Done done);
+    // A start the library refused, reported in the library's words when it
+    // gave any.
+    void fail(const QString& fallback);
+
+    // This device's address, read from the operating system rather than from
+    // the library — with a real WireGuard adapter the embed API exposes
+    // neither a status nor an address. See the note in tunnel.cpp.
+    static QString adapterAddress();
 
     QTimer m_timer;
     bool m_available = false;

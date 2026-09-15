@@ -18,6 +18,9 @@ public:
         // global flag because a bare option with no action reaches
         // handleUnknownOptions() and exits; see app/omnuv/signin.cpp.
         SignInRequested,
+        // Omnuv: join this device to its private network from a shell. Same
+        // reasoning as SignInRequested — an action, not a flag.
+        EnrolRequested,
     };
 
     GlobalCommandLineParser();

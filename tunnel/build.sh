@@ -46,8 +46,11 @@ if [ "$targets" = all ] || [ "$targets" = windows ]; then
 fi
 
 if [ "$targets" = all ] || [ "$targets" = linux ]; then
-    run 'CGO_ENABLED=1 go build -buildmode=c-shared -ldflags="-s -w" -o dist/onvtunnel.so .'
-    echo "  linux    dist/onvtunnel.so   $(du -h "$out/onvtunnel.so" | cut -f1)"
+    # `lib` prefix on purpose: the client loads this with QLibrary("onvtunnel"),
+    # which appends the platform's own decoration — `onvtunnel.dll` on Windows,
+    # `libonvtunnel.so` here. One call site, no per-platform file names.
+    run 'CGO_ENABLED=1 go build -buildmode=c-shared -ldflags="-s -w" -o dist/libonvtunnel.so .'
+    echo "  linux    dist/libonvtunnel.so   $(du -h "$out/libonvtunnel.so" | cut -f1)"
 fi
 
 # The header is the contract the C++ side resolves against; it is generated

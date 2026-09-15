@@ -46,6 +46,7 @@
 #include "cli/pair.h"
 #include "cli/commandlineparser.h"
 #include "omnuv/signin.h"
+#include "omnuv/enrolcli.h"
 #include "omnuv/appearance.h"
 #include "omnuv/devqml.h"
 #include "path.h"
@@ -1082,6 +1083,14 @@ int main(int argc, char *argv[])
             // Omnuv: no window, like `list`. stdout is this action's product,
             // so nothing else may write to it — see app/omnuv/signin.cpp.
             OmnuvSignIn::start(app.arguments(), &app);
+            hasGUI = false;
+            break;
+        }
+    case GlobalCommandLineParser::EnrolRequested:
+        {
+            // Omnuv: the same, for the private network. The tunnel is inside
+            // this binary now, so this is the only thing that can join.
+            OmnuvEnrol::start(app.arguments(), &app);
             hasGUI = false;
             break;
         }
