@@ -32,6 +32,9 @@ import "C"
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 	"unsafe"
@@ -68,12 +71,47 @@ func setFailed(err error) {
 	}
 }
 
+// The identity this device already holds, or "".
+//
+// **Why this is read here rather than passed in.** A device that has enrolled
+// before must come back up without creating anything — `tunnel.h` has always
+// drawn that line, and getting it wrong means a fresh peer in the buyer's
+// network on every launch, which is the "one orphan peer per machine that ever
+// booted" entry in the Inconsistencies list. But `validateCredentials` demands
+// one of SetupKey, JWT or PrivateKey *in the options* on every call, and a
+// setup key spends itself, so it cannot be the thing that is replayed. The
+// stored private key is.
+//
+// `profilemanager` is an `internal` package and cannot be imported from
+// outside NetBird, so the config is read as what it is on disk: JSON with an
+// untagged `PrivateKey` field. If they rename it this returns "" and the
+// device asks to be enrolled again rather than silently making a second peer —
+// wrong, but wrong in the direction that is visible.
+func storedIdentity(configPath string) string {
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		return ""
+	}
+	var cfg struct {
+		PrivateKey string
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return ""
+	}
+	return cfg.PrivateKey
+}
+
 //export onv_tunnel_start
 //
 // Accepts the join and returns at once: 0 accepted, 1 already running or
-// starting, 2 the library refused the options. The outcome arrives through
-// onv_tunnel_state.
-func onv_tunnel_start(mgmt, key, name *C.char) C.int {
+// starting, 2 the library refused the options, 3 no key was given and this
+// device holds no identity to resume — it has never enrolled. The outcome of
+// an accepted start arrives through onv_tunnel_state.
+//
+// `key` empty means *resume*: bring an already-enrolled device back up, which
+// must create nothing. A key means *enrol*, which is the only path that makes
+// a peer.
+func onv_tunnel_start(mgmt, key, name, configDir *C.char) C.int {
 	mu.Lock()
 	if state == stateStarting || state == stateRunning {
 		mu.Unlock()
@@ -83,14 +121,39 @@ func onv_tunnel_start(mgmt, key, name *C.char) C.int {
 	lastError = ""
 	mu.Unlock()
 
-	c, err := netbird.New(netbird.Options{
+	dir := C.GoString(configDir)
+	// **Persisted, always.** With an empty ConfigPath the library keeps its
+	// config in memory and nothing survives the process, so every launch would
+	// enrol again and leave the last peer behind in the buyer's network.
+	configPath := filepath.Join(dir, "config.json")
+	statePath := filepath.Join(dir, "state.json")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		setFailed(err)
+		return 2
+	}
+
+	opts := netbird.Options{
 		DeviceName:    C.GoString(name),
-		SetupKey:      C.GoString(key),
 		ManagementURL: C.GoString(mgmt),
+		ConfigPath:    configPath,
+		StatePath:     statePath,
 		// A real WireGuard adapter, so the machine's own sockets — the video
 		// stream among them — travel through the tunnel. See the note above.
 		NoUserspace: true,
-	})
+	}
+	if sk := C.GoString(key); sk != "" {
+		opts.SetupKey = sk
+	} else if pk := storedIdentity(configPath); pk != "" {
+		opts.PrivateKey = pk
+	} else {
+		mu.Lock()
+		state = stateStopped
+		lastError = "this device has not joined a network yet"
+		mu.Unlock()
+		return 3
+	}
+
+	c, err := netbird.New(opts)
 	if err != nil {
 		setFailed(err)
 		return 2
