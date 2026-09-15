@@ -48,6 +48,13 @@ jobs:
           # and one arm of the switch that already dispatches every other
           # action — for the same reason: that switch is here, and everything
           # the arm calls is in app/omnuv/signin.cpp.
+          # And three more on 15 Sep for the style: an include, and
+          # QQuickStyle::setStyle("Material") replaced by a call into
+          # app/omnuv/appearance.cpp that picks FluentWinUI3 on Windows and
+          # Material everywhere else. The same reason again, and this time it
+          # is Qt's rule rather than ours: setStyle() refuses once QtQuick
+          # .Controls has been registered, so it has to run before the engine
+          # loads any QML, and nothing of ours runs earlier than this function.
           # .github/workflows/build.yml is the third entry, and it buys one
           # line: `if: false` on the Windows/macOS job. Those platforms are
           # built on the lab rigs now, which have the same pinned toolchains
@@ -63,7 +70,19 @@ jobs:
           # tolerated, and the loop that recognises those is in this file.
           # Everything the action then does is in app/omnuv/signin.cpp, which is
           # why this is four lines and not a sub-parser.
-          EDITED='^(app/gui/main.qml|app/main.cpp|app/app.pro|app/cli/commandlineparser.(cpp|h)|app/Info.plist|app/version.txt|app/deploy/.*|app/res/.*|.github/workflows/build.yml|.github/dependabot.yml)$'
+          # scripts/build-arch.bat is the fifth entry, and it buys sixteen lines,
+          # twelve of them comment. Upstream ships Material, so it excludes every
+          # other style from windeployqt *and* deletes their QML modules
+          # afterwards -- two separate places, both of which had to stop naming
+          # FluentWinUI3 and Fusion. It could not live in a new file: this is the
+          # only invocation of windeployqt, and the deletions are in the same
+          # script a few lines below it.
+          #
+          # Fusion is kept as well as Fluent, and that is not scope creep:
+          # FluentWinUI3 implements a subset of Qt Quick Controls, and the
+          # unsupported ones fall back to Fusion -- StackView among them, which
+          # main.qml is built on.
+          EDITED='^(app/gui/main.qml|app/main.cpp|app/app.pro|app/cli/commandlineparser.(cpp|h)|app/Info.plist|app/version.txt|app/deploy/.*|app/res/.*|scripts/build-arch.bat|.github/workflows/build.yml|.github/dependabot.yml)$'
 
           base=$(git merge-base HEAD upstream/master)
           echo "base: $base"
@@ -107,3 +126,56 @@ jobs:
           # so it has to find the one writer that is supposed to be there.
           grep -qE '\bfprintf\(stdout' app/omnuv/signin.cpp
           echo "stdout has one writer: app/omnuv/signin.cpp"
+
+      # Two rules `app/omnuv/Theme.qml` exists to hold, checked rather than
+      # remembered, because both fail silently.
+      #
+      # An icon is named or it is not reviewable. A Segoe Fluent Icons glyph is
+      # a private-use character: pasted into a view it is invisible in a diff,
+      # it is not greppable, and one is indistinguishable from the next — so
+      # `Theme.icon.refresh` is not a convenience, it is the only form of it a
+      # person can check. Theme itself writes them as `\uE72C`-style escapes for the
+      # same reason: the escape is text somebody can search for and look up.
+      #
+      # And a duration that forgot to collapse takes an accessibility setting
+      # away from the person who set it. Microsoft's own description of reduced
+      # motion says moving content "can cause seizures in users with
+      # photo-sensitive epilepsy", so a number here that is not gated on
+      # `motion` is a defect rather than a polish item.
+      - name: Icons are named, and durations collapse
+        run: |
+          set -euo pipefail
+
+          # Literal private-use characters, anywhere in our code but Theme.qml —
+          # which has none either, and is excluded only so this stays true if
+          # one is ever deliberately added there.
+          glyphs=$(grep -rlP '[\x{E000}-\x{F8FF}]' app/omnuv \
+                     --include='*.qml' --include='*.cpp' --include='*.h' \
+                   | grep -v '^app/omnuv/Theme\.qml$' || true)
+          # And the escaped form, which is just as unreadable in a view.
+          glyphs="$glyphs$(grep -rlE '\\u[eE][0-9a-fA-F]{3}' app/omnuv \
+                             --include='*.qml' --include='*.cpp' --include='*.h' \
+                           | grep -v '^app/omnuv/Theme\.qml$' || true)"
+
+          if [ -n "${glyphs//[[:space:]]/}" ]; then
+            echo "These files carry an icon code point instead of a Theme.icon name:"
+            echo "$glyphs" | sed 's/^/  /'
+            exit 1
+          fi
+
+          # Prove the check can still see. A pattern that has rotted finds
+          # nothing, and nothing is what a clean tree looks like — so it has to
+          # find the one file that is supposed to have them.
+          test "$(grep -cE '\\u[eE][0-9a-fA-F]{3}' app/omnuv/Theme.qml)" -ge 13
+
+          # Every duration Theme exposes is gated on the reduced-motion setting.
+          ungated=$(grep -nE 'property int duration' app/omnuv/Theme.qml \
+                    | grep -v 'motion ?' || true)
+          if [ -n "$ungated" ]; then
+            echo "These durations do not collapse under reduced motion:"
+            echo "$ungated" | sed 's/^/  /'
+            exit 1
+          fi
+          test "$(grep -cE 'property int duration' app/omnuv/Theme.qml)" -ge 4
+
+          echo "icons are named; $(grep -cE 'property int duration' app/omnuv/Theme.qml) durations collapse"

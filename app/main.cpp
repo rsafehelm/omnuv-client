@@ -46,6 +46,7 @@
 #include "cli/pair.h"
 #include "cli/commandlineparser.h"
 #include "omnuv/signin.h"
+#include "omnuv/appearance.h"
 #include "path.h"
 #include "utils.h"
 #include "gui/computermodel.h"
@@ -975,8 +976,10 @@ int main(int argc, char *argv[])
     // Create the identity manager on the main thread
     IdentityManager::get();
 
-    // We require the Material theme
-    QQuickStyle::setStyle("Material");
+    // Omnuv: FluentWinUI3 on Windows, upstream's Material elsewhere. Here because
+    // the style must be set before any QML imports Qt Quick Controls, and this is
+    // the earliest point our own code runs. See app/omnuv/appearance.h.
+    OmnuvAppearance::applyStyle();
 
     // Our icons are styled for a dark theme, so we do not allow the user to override this
     qputenv("QT_QUICK_CONTROLS_MATERIAL_THEME", "Dark");

@@ -424,6 +424,20 @@ bool OmnuvSession::shouldStartHidden()
 
 void OmnuvSession::setWindowVisible(bool visible)
 {
+    if (visible) {
+        // Mica behind the window, asked for from here because this is the first
+        // moment there is a window to ask about: applying it once after
+        // `engine.load()` would also work until the first time Qt destroyed and
+        // recreated the native window, and then stop, silently. Idempotent per
+        // handle, so the repetition costs a comparison — see
+        // `OmnuvAppearance::applyBackdrop`.
+        //
+        // Above the early return below rather than after it, because that
+        // return fires on the very first call: the refresh timer already starts
+        // at the visible interval.
+        m_appearance->applyBackdrop();
+    }
+
     const int want = visible ? kRefreshVisibleMs : kRefreshHiddenMs;
     if (m_refreshTimer.interval() == want) {
         return;
@@ -461,5 +475,31 @@ static void registerOmnuvTypes()
                                            });
     qmlRegisterUncreatableType<MachineModel>("Omnuv", 1, 0, "MachineModel",
                                              QStringLiteral("Machines come from Omnuv.machines"));
+
+    // Two QML files of ours, registered as types in the same module so that the
+    // `import Omnuv 1.0` most files already carry brings them along.
+    //
+    // This is how a QML file becomes a type in a **qmake** project. There is no
+    // `qmldir` anywhere in this tree and no QML module: `qt_add_qml_module` is
+    // a CMake command, and the alternative — a directory import — would need an
+    // extra import line in every consumer including upstream's `main.qml`. A
+    // URL registration needs none, because the module is already imported.
+    qmlRegisterSingletonType(QUrl(QStringLiteral("qrc:/omnuv/Theme.qml")),
+                             "Omnuv", 1, 0, "Theme");
+
+    // And the view itself, so `main.qml` can ask whether what the StackView is
+    // showing is ours — `stackView.currentItem instanceof OmnuvView` — and keep
+    // upstream's toolbar off our screens without hard-coding a URL or a name in
+    // a string comparison.
+    //
+    // The view is *pushed* by URL (`main.qml`, `push("qrc:/omnuv/OmnuvView.qml")`)
+    // rather than by this type, and that is fine: a composite type is identified
+    // by its URL, so the instance the push creates is an instance of this type.
+    // Upstream relies on exactly that today — `PcView` is pushed as the string
+    // `qrc:/gui/PcView.qml` and matched with `instanceof PcView` — the only
+    // difference being that upstream's name comes from QML's implicit
+    // same-directory resolution, which does not reach us in `qrc:/omnuv/`.
+    qmlRegisterType(QUrl(QStringLiteral("qrc:/omnuv/OmnuvView.qml")),
+                    "Omnuv", 1, 0, "OmnuvView");
 }
 Q_COREAPP_STARTUP_FUNCTION(registerOmnuvTypes)

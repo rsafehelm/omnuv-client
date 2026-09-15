@@ -50,8 +50,16 @@ ApplicationWindow {
         // Override the background color to Material 2 colors for Qt 6.5+
         // in order to improve contrast between GFE's placeholder box art
         // and the background of the app grid.
+        //
+        // Omnuv: the colour is the window's own rather than a forced #303030.
+        // The application follows the light/dark theme the person set on the
+        // desktop, and a hard-coded dark grey is that decision taken away —
+        // which on a light desktop is a dark rectangle nothing else on the
+        // screen agrees with. `palette.window` is whatever the style and the
+        // system between them decided this window should be, so the contrast
+        // this line was added for survives in both themes instead of one.
         if (SystemProperties.usesMaterial3Theme) {
-            Material.background = "#303030"
+            Material.background = palette.window
         }
 
         SdlGamepadKeyNavigation.enable()
@@ -284,7 +292,33 @@ ApplicationWindow {
 
     header: ToolBar {
         id: toolBar
-        height: 60
+
+        // Omnuv: upstream's chrome stays inside upstream's views. This bar
+        // carries the title, the back arrow and the way to Settings for
+        // PcView, AppView, SettingsView and the segue; our own views draw
+        // their own, so showing it above them would be two headers in one
+        // window. Collapsed to nothing on ours, 60 everywhere else.
+        //
+        // **Collapsed by height rather than by `visible`, and that is not a
+        // preference.** Five upstream files assign `toolBar.visible`
+        // imperatively — StreamSegue twice, QuitSegue twice, CliPair,
+        // CliStartStreamSegue, CliQuitStreamSegue — and a JavaScript
+        // assignment destroys a binding on that property permanently. A
+        // `visible:` binding here would therefore survive exactly until the
+        // first stream and then be gone for the life of the process, leaving
+        // this bar above our machine list from the second visit onwards. The
+        // failure would show up nowhere near the change that caused it.
+        // Nothing upstream touches `height`, so there is no binding for anyone
+        // to destroy, and upstream's six writes go on meaning what they meant.
+        height: stackView.currentItem instanceof OmnuvView ? 0 : 60
+
+        // A zero-height bar still has focusable children — NavigableToolButton
+        // sets `activeFocusOnTab` — and a Tab that lands on something nobody
+        // can see is a dead keystroke. Disabling takes the whole bar out of the
+        // focus chain, which is what "hidden" has to mean for a keyboard.
+        enabled: height > 0
+        clip: true
+
         anchors.topMargin: 5
         anchors.bottomMargin: 5
 

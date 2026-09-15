@@ -248,8 +248,13 @@ if not x%QT_PATH:\5.=%==x%QT_PATH% (
 ) else (
     rem Qt 6.8+
     set WINDEPLOYQT_ARGS=--no-system-d3d-compiler --no-system-dxc-compiler --skip-plugin-types qmltooling,generic --no-ffmpeg
-    set WINDEPLOYQT_ARGS=!WINDEPLOYQT_ARGS! --no-quickcontrols2fusion --no-quickcontrols2imagine --no-quickcontrols2universal
-    set WINDEPLOYQT_ARGS=!WINDEPLOYQT_ARGS! --no-quickcontrols2fusionstyleimpl --no-quickcontrols2imaginestyleimpl --no-quickcontrols2universalstyleimpl --no-quickcontrols2windowsstyleimpl --no-quickcontrols2fluentwinui3styleimpl
+    rem Omnuv: Fusion and FluentWinUI3 are kept; upstream excludes both because it
+    rem ships Material. We set FluentWinUI3 on Windows (app/omnuv/appearance.cpp),
+    rem and FluentWinUI3 does not implement every control -- StackView is one, and
+    rem main.qml is built on one -- so Qt falls back to Fusion for those. Excluding
+    rem Fusion would leave the fallback with nothing to fall back to.
+    set WINDEPLOYQT_ARGS=!WINDEPLOYQT_ARGS! --no-quickcontrols2imagine --no-quickcontrols2universal
+    set WINDEPLOYQT_ARGS=!WINDEPLOYQT_ARGS! --no-quickcontrols2imaginestyleimpl --no-quickcontrols2universalstyleimpl --no-quickcontrols2windowsstyleimpl
 )
 
 echo Deploying Qt dependencies
@@ -262,11 +267,18 @@ rmdir /s /q %DEPLOY_FOLDER%\QtQuick\Controls.2\Fusion
 rmdir /s /q %DEPLOY_FOLDER%\QtQuick\Controls.2\Imagine
 rmdir /s /q %DEPLOY_FOLDER%\QtQuick\Controls.2\Universal
 rem Qt 6.8+ directories
-rmdir /s /q %DEPLOY_FOLDER%\qml\QtQuick\Controls\Fusion
+rem Omnuv: Fusion and FluentWinUI3 survive -- see the deploy arguments above.
+rem Deleting them here would undo that silently, and silently is the word: Qt
+rem treats a missing built-in style's module as no error at all. The
+rem `optional import QtQuick.Controls.FluentWinUI3 auto` in the deployed
+rem Controls/qmldir simply loses to the `default import ...Basic auto` beside
+rem it, the window comes up, every control is drawn by Basic, and
+rem QQuickStyle::name() still answers "FluentWinUI3" because it returns the
+rem string that was asked for. The rig asserts STYLEMODULE=present for exactly
+rem this reason.
 rmdir /s /q %DEPLOY_FOLDER%\qml\QtQuick\Controls\Imagine
 rmdir /s /q %DEPLOY_FOLDER%\qml\QtQuick\Controls\Universal
 rmdir /s /q %DEPLOY_FOLDER%\qml\QtQuick\Controls\Windows
-rmdir /s /q %DEPLOY_FOLDER%\qml\QtQuick\Controls\FluentWinUI3
 rmdir /s /q %DEPLOY_FOLDER%\qml\QtQuick\NativeStyle
 rem icuuc.dll ships with all supported OSes (and Qt incorrectly deploys the x64 version on ARM64)
 del %DEPLOY_FOLDER%\icuuc.dll

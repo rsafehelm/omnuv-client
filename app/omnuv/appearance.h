@@ -45,6 +45,23 @@ public:
     explicit OmnuvAppearance(QObject* parent = nullptr);
     ~OmnuvAppearance() override;
 
+    // The Windows 11 look, in two halves, because they happen at two very
+    // different moments and only one of them can wait for this object to exist.
+    //
+    // `applyStyle()` chooses the Qt Quick Controls style. It has to run before
+    // any QML that imports Qt Quick Controls is loaded — `QQuickStyle::setStyle`
+    // checks for the registered module and refuses with a warning once it is
+    // there — so it is static, and it is the one call of ours that `app/main.cpp`
+    // makes, because the application object is constructed there and nothing of
+    // ours runs earlier.
+    //
+    // `applyBackdrop()` asks the Desktop Window Manager for Mica behind the
+    // window. That needs a native window handle, so it waits for one: it is
+    // called each time the window becomes visible, and does nothing on a handle
+    // it has already asked about.
+    static void applyStyle();
+    void applyBackdrop();
+
     bool animationsEnabled() const { return m_animations; }
     bool darkAppsTheme() const { return m_dark; }
 
@@ -71,4 +88,11 @@ private:
 
     bool m_animations;
     bool m_dark;
+
+    // The native window Mica was last requested for, as a WId rather than an
+    // HWND so this header stays free of <windows.h>. Zero until the window
+    // exists. Keyed on the handle rather than on a bool because Qt destroys and
+    // recreates a native window on some flag changes, and a window attribute
+    // dies with the handle it was set on.
+    quintptr m_backdrop = 0;
 };

@@ -386,7 +386,12 @@ Item {
             Layout.fillWidth: true
             Layout.preferredHeight: 44
             visible: !Omnuv.tunnel.connected
-            radius: 6
+            // Windows rounds an in-page backplate at 4, not at whatever looked
+            // right the day it was typed. This is also the first thing to read
+            // `Theme`, which is deliberate: a singleton nothing references is
+            // never constructed, so a registration that did not work would go
+            // unnoticed until the phase that needed it.
+            radius: Theme.radiusControl
             color: "#3a3226"
 
             RowLayout {
