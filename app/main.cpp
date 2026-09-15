@@ -942,7 +942,13 @@ int main(int argc, char *argv[])
 #ifndef Q_OS_DARWIN
     // Set the window icon except on macOS where we want to keep the
     // modified macOS 11 style rounded corner icon.
-    app.setWindowIcon(QIcon(":/res/moonlight.svg"));
+    // Omnuv: our own mark, which is what the title bar, the taskbar and
+    // Alt-Tab actually show. `RC_ICONS` in app.pro sets the icon Explorer
+    // draws on the *file*; this one overrides it for the running window, so
+    // renaming the binary and shipping omnuv.ico was not enough on its own —
+    // the window kept upstream's circle until this line changed too. Same
+    // four blocks as the tray, the installer and the console's favicon.
+    app.setWindowIcon(QIcon(":/omnuv/omnuv.svg"));
 #endif
 
     // This is necessary to show our icon correctly on Wayland
