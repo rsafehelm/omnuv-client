@@ -469,6 +469,15 @@ void OmnuvSession::fetchDeviceKey()
             return;
         }
 
+        // **The project's network, and a project has exactly one.** Since
+        // 16 September that is a database invariant rather than a convention:
+        // a project is created with its network in one transaction (0128's
+        // sibling change) and a trigger refuses to delete one while the
+        // project is alive (0129). `projectQuery()` above scopes the list to
+        // the project this window is showing, so `first` is that project's
+        // network and not whichever network the account happened to list
+        // first — which is what a device joining the *wrong* tenant would
+        // look like.
         const QString id = networks.first().toObject()[QStringLiteral("id")].toString();
         const QJsonObject body { { QStringLiteral("name"), QSysInfo::machineHostName() } };
 
