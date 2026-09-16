@@ -1,10 +1,12 @@
 #include "enrolcli.h"
+#include "omnuvsession.h"
 #include "tunnel.h"
 
 #include <QCommandLineParser>
 #include <QCoreApplication>
 #include <QTimer>
 
+#include <memory>
 #include <stdio.h>
 
 // ---------------------------------------------------------------------------
@@ -114,7 +116,19 @@ void OmnuvEnrol::start(const QStringList& args, QObject* parent)
         ::exit(1);
     }
 
-    auto* tunnel = new OmnuvTunnel(parent);
+    // **A session rather than a bare tunnel, and that is the whole point of
+    // this change.** `OmnuvSession` already answers the tunnel's `needsKey()`
+    // by asking Core for one — `/v1/networks`, then
+    // `/v1/networks/{id}/devices` — with the token this device holds, and
+    // reads the management address out of the command Core hands back rather
+    // than guessing it. That is what the window does when a person presses
+    // *Join*, so it is what a device signed in on this machine should do here.
+    //
+    // Passing a key on the command line still works and still goes straight to
+    // the tunnel: it is the path the installer takes, where nobody has signed
+    // in yet.
+    auto* session = new OmnuvSession(parent);
+    OmnuvTunnel* tunnel = session->tunnel();
 
     QObject::connect(tunnel, &OmnuvTunnel::changed, tunnel, [tunnel]() {
         switch (tunnel->reading()) {
@@ -136,13 +150,27 @@ void OmnuvEnrol::start(const QStringList& args, QObject* parent)
         }
     });
 
-    // A device that has never enrolled, asked to resume. The window answers
-    // this by fetching a key from Core; a shell cannot, so it says what is
-    // missing in the words somebody can act on.
-    QObject::connect(tunnel, &OmnuvTunnel::needsKey, tunnel, []() {
-        verdict(QStringLiteral("state=failed  reason=this device has never joined a network, so "
-                               "it needs a one-time key: enrol <key> --management-url <url>"),
-                1);
+    // **`needsKey` is not connected here on purpose.** The session already
+    // answers it, by fetching one from Core. What this watches instead is the
+    // case where that fetch could not happen or did not work: the session
+    // calls `giveUp()`, which leaves the reading Unknown with a sentence, and
+    // the sentence is the answer — "Sign in first, so this device can be added
+    // to your network" is a different failure from "Could not find your
+    // network", and a harness that flattened both into "no key" would be
+    // reporting its own guess.
+    // The discriminator is the state machine, never the sentence: a join in
+    // flight is *also* Unknown, and the only thing that separates it from a
+    // give-up is that it is still busy. So a run that has been busy and is now
+    // Unknown and idle has been given up on, whatever words came with it.
+    auto wasBusy = std::make_shared<bool>(false);
+    QObject::connect(tunnel, &OmnuvTunnel::changed, tunnel, [tunnel, wasBusy]() {
+        if (tunnel->busy()) {
+            *wasBusy = true;
+            return;
+        }
+        if (*wasBusy && tunnel->reading() == omnuv::Reading::Unknown) {
+            verdict(QStringLiteral("state=failed  reason=%1").arg(tunnel->state()), 1);
+        }
     });
 
     QTimer::singleShot(kDeadlineMs, tunnel, []() {
@@ -151,6 +179,9 @@ void OmnuvEnrol::start(const QStringList& args, QObject* parent)
 
     emitLine(key.isEmpty() ? QStringLiteral("state=joining  mode=resume")
                            : QStringLiteral("state=joining  mode=enrol"));
+    if (key.isEmpty() && session->signedIn()) {
+        emitLine(QStringLiteral("state=joining  signed-in=yes"));
+    }
 
     // **The request first, the polling second.** Both of them set `busy`
     // before they return, and the poll that `watch` takes immediately would

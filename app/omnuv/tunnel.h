@@ -131,6 +131,11 @@ private:
 
     QTimer m_timer;
     bool m_watching = false;
+    // A refused identity asks for a key once per request, never once per poll
+    // — and only when somebody asked to join, so that revoking a device is not
+    // undone by the device itself at its next start. See check().
+    bool m_askedForKey = false;
+    bool m_userAsked = false;
     bool m_available = false;
     omnuv::Reading m_reading = omnuv::Reading::Unknown;
     bool m_busy = false;

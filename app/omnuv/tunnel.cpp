@@ -189,9 +189,13 @@ void OmnuvTunnel::check()
 
     switch (state) {
     case Running: {
-        // Whatever this device was waiting for, it is no longer waiting.
-        setBusy(false);
+        // **The state first, then busy.** `setBusy` emits `changed()`, so
+        // clearing it before the reading is written publishes one moment where
+        // the tunnel is idle and still carrying the *previous* sentence — and
+        // a watcher reading that pair reported "failed: Joining your Omnuv
+        // network", which is two states mixed into one lie.
         set(true, omnuv::Reading::Pass, tr("On your Omnuv network"), adapterAddress());
+        setBusy(false);
         return;
     }
 
@@ -201,11 +205,58 @@ void OmnuvTunnel::check()
         set(true, omnuv::Reading::Unknown, tr("Joining your Omnuv network…"), QString());
         return;
 
-    case Failed:
-        setBusy(false);
+    case Failed: {
+        // **An identity the server refuses is a question, not a retry.** The
+        // daemon marks that one class `unauthorized:` — the peer was revoked,
+        // or the account was rebuilt — and no amount of waiting fixes it. What
+        // fixes it is a fresh key, which whoever owns the session can ask Core
+        // for. Every other failure stays a failure, because asking for a key
+        // on a transient outage would mint a peer per outage.
+        //
+        // Asked once per run: `m_askedForKey` is what stops a poll every three
+        // seconds from becoming a device list full of dead entries.
+        const bool refused = why.startsWith(QLatin1String("unauthorized:"));
+
+        // **A refusal we are about to repair is not a failure yet.** When
+        // somebody asked to join and this device's identity was refused, the
+        // next thing that happens is a fresh key — so reporting `Fail` here
+        // publishes a verdict that is about to be wrong, and anything watching
+        // for one acts on it. `OmnuvClient enrol` did exactly that: it printed
+        // `state=failed` and exited while the session was still fetching the
+        // key that would have worked. Busy stays set, because this device is
+        // still trying.
+        if (refused && m_userAsked && !m_askedForKey) {
+            m_askedForKey = true;
+            set(true, omnuv::Reading::Unknown, tr("Asking for a new key…"), QString());
+            emit needsKey();
+            return;
+        }
+
+        // The state first, then busy — see the Running branch above.
         set(true, omnuv::Reading::Fail,
-            why.isEmpty() ? tr("This device could not join your network.") : why, QString());
+            why.isEmpty() ? tr("This device could not join your network.")
+                          : (refused ? tr("This device is no longer a member of your network.")
+                                     : why),
+            QString());
+        setBusy(false);
+
+        // **Only when somebody asked to join, and that is a revocation
+        // working rather than a limitation.**
+        //
+        // A refused identity means the peer was revoked or the account was
+        // rebuilt. Asking Core for a fresh key repairs the second and *undoes*
+        // the first: an owner revokes a device, and the device quietly re-adds
+        // itself on its next start, for as long as it holds a session token.
+        // Revocation has to stick, so the automatic path — `resume()`, which
+        // runs at startup with nobody watching — reports the refusal and stops
+        // there. A person pressing Join, or `OmnuvClient enrol`, is a request
+        // to be on the network now, and that may fetch a key.
+        //
+        // Once per request, never once per poll: a three-second poll that
+        // asked every time would fill the person's device list with dead
+        // entries.
         return;
+    }
 
     default:
         // Stopped. Busy is deliberately not cleared here: a device that has
@@ -231,6 +282,9 @@ void OmnuvTunnel::resume()
     if (m_busy) {
         return;
     }
+    // Nobody asked for this one: it runs at startup. See the refusal branch in
+    // check() for why that distinction is load-bearing.
+    m_userAsked = false;
     setBusy(true);
     const QString reply = request(QStringLiteral("resume"));
 
@@ -251,6 +305,13 @@ void OmnuvTunnel::resume()
 
 void OmnuvTunnel::join()
 {
+    // **Asked, even when something is already in flight.** The automatic
+    // resume runs in this object's constructor, so a `join()` a moment later —
+    // which is exactly what `OmnuvClient enrol` does — would otherwise return
+    // here and the request would be lost. Recording that a person asked is
+    // what the refusal branch needs; the start itself is already happening.
+    m_userAsked = true;
+    m_askedForKey = false;
     if (m_busy) {
         return;
     }
@@ -272,6 +333,7 @@ void OmnuvTunnel::join()
 
 void OmnuvTunnel::enrol(const QString& managementUrl, const QString& setupKey)
 {
+    m_userAsked = true;
     setBusy(true);
     const QString reply = request(QStringLiteral("enrol %1 %2").arg(managementUrl, setupKey));
 

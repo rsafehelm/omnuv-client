@@ -29,8 +29,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -164,7 +166,7 @@ func (t *tunnel) start(mgmt, key string) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
 		if err := c.Start(ctx); err != nil {
-			t.setFailed(err)
+			t.setFailed(classify(err))
 			return
 		}
 		t.mu.Lock()
@@ -173,6 +175,41 @@ func (t *tunnel) start(mgmt, key string) error {
 		t.mu.Unlock()
 	}()
 	return nil
+}
+
+// **The one failure the caller must be able to act on differently.**
+//
+// An identity this machine holds that the server will not accept is not a
+// retry: the peer was revoked, or the account was rebuilt, and no amount of
+// waiting fixes it. What fixes it is a fresh key — which the caller can ask
+// Core for, if somebody is signed in. Every other failure is a retry, and
+// asking for a key on one of those would mint a peer per outage, which is the
+// orphan this whole design exists to avoid.
+//
+// **It is a text match, and that is a deliberate choice rather than an
+// oversight.** The error arrives as a wrapped gRPC status from inside
+// `client/embed`, and matching the code means depending on how deeply NetBird
+// wraps it — which is a private detail that changes between versions. The
+// sentence is the vendor's too, so this can go stale; when it does, the
+// failure is that the caller is *not* told to fetch a key, which leaves
+// today's behaviour rather than creating anything.
+func classify(err error) error {
+	if err == nil {
+		return nil
+	}
+	text := strings.ToLower(err.Error())
+	for _, phrase := range []string{
+		"invalid setup-key",
+		"no sso information",
+		"unauthenticated",
+		"permissiondenied",
+		"permission denied",
+	} {
+		if strings.Contains(text, phrase) {
+			return fmt.Errorf("unauthorized: %w", err)
+		}
+	}
+	return err
 }
 
 func (t *tunnel) stop() error {

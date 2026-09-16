@@ -272,6 +272,18 @@ void OmnuvSession::poll()
 
         m_token = token;
         saveToken(token);
+
+        // **A device that holds a token remembers the deployment it holds it
+        // for.** The address is otherwise persisted only by `setCoreUrl()` —
+        // which is a person typing it into the window — so a device signed in
+        // from a shell, where the address came from `OMNUV_CORE_URL`, forgot
+        // it the moment that process ended. The next run built its requests
+        // against an empty base, and `QNetworkAccessManager` failed them
+        // locally: nothing reached the network, and the client reported
+        // "Could not find your network" for an address it no longer had.
+        // Found on the rig on 16 September, by an access log that showed the
+        // request had never been made.
+        QSettings().setValue(QStringLiteral("omnuv/coreUrl"), m_coreUrl);
         clearPending();
         emit signedInChanged();
         setStatus(QString());
