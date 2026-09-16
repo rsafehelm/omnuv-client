@@ -780,6 +780,26 @@ Item {
         RowLayout {
             Layout.fillWidth: true
 
+            // **Which project this window is showing.** A person may belong to
+            // several, each with its own private network, its own machines and
+            // its own device — so "my machines" is not a question with one
+            // answer and the window must not pick silently. Hidden at one,
+            // because a chooser with a single choice is furniture.
+            //
+            // The id is the value and the name is the label: two projects may
+            // share a name across organizations, and picking by name would
+            // then pick the wrong network.
+            ComboBox {
+                id: projectPicker
+                visible: Omnuv.projectNames.length > 1
+                Layout.preferredWidth: 200
+                model: Omnuv.projectNames
+                currentIndex: Omnuv.projectIds.indexOf(Omnuv.projectId)
+                onActivated: function (index) {
+                    Omnuv.selectProject(Omnuv.projectIds[index])
+                }
+            }
+
             Label {
                 Layout.fillWidth: true
                 text: Omnuv.status !== "" ? Omnuv.status
