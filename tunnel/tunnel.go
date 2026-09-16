@@ -107,7 +107,14 @@ func (t *tunnel) address() (string, string) {
 	if err != nil {
 		return "", ""
 	}
-	return st.LocalPeerState.IP, st.LocalPeerState.FQDN
+	// **The recorder carries the prefix length; an address field carries an
+	// address.** It reported `10.210.219.11/13` on the rig, which is true and
+	// is not what a caller that wants to connect to something needs — the
+	// window renders it, and the `enrol` action hands it to a harness that
+	// compares it with what the machine says. `/13` is the network's, not this
+	// peer's, and it is already implied by the network.
+	ip, _, _ := strings.Cut(st.LocalPeerState.IP, "/")
+	return ip, st.LocalPeerState.FQDN
 }
 
 // The identity this machine already holds, or "".
