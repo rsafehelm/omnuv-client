@@ -182,6 +182,14 @@ void OmnuvPairCli::start(const QStringList& args, QObject* parent)
     QObject::connect(session->machines(), &MachineModel::countChanged, session,
                      [deliver]() { (*deliver)(); });
 
+    // **The delivery's success is announced, not only its failure.** Without
+    // this the sequence `pairing → paired` looked complete while the PIN had
+    // never been accepted, and the machine — which had an *open* pairing
+    // session and no device — was the only thing that disagreed. A step that
+    // reports one of two outcomes cannot be read as evidence of the other.
+    QObject::connect(session, &OmnuvSession::pairingSucceeded, session,
+                     []() { emitLine(QStringLiteral("state=delivered")); });
+
     // The delivery's own failure is reported and is *not* final: the machine
     // may still accept a PIN somebody types, so the launcher decides the
     // verdict. What this does is make the reason visible, which is the whole
