@@ -48,6 +48,21 @@ class OmnuvSession : public QObject
     // it verbatim; nothing here composes a sentence out of an error code.
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
 
+    // **The projects this person is a member of, and the one in view.**
+    //
+    // A buyer may belong to several, and everything else follows from which is
+    // chosen: which machines are listed, which network a device joins, which
+    // endpoints are theirs. Until this existed the client asked for machines
+    // and networks with no project at all and took whatever came back first —
+    // unambiguous only while a tenant has exactly one, which is luck rather
+    // than design.
+    //
+    // Names and ids in step, for a view that shows one and acts on the other.
+    Q_PROPERTY(QStringList projectNames READ projectNames NOTIFY projectsChanged)
+    Q_PROPERTY(QStringList projectIds READ projectIds NOTIFY projectsChanged)
+    Q_PROPERTY(QString projectId READ projectId WRITE selectProject NOTIFY projectsChanged)
+    Q_PROPERTY(QString projectName READ projectName NOTIFY projectsChanged)
+
     Q_PROPERTY(MachineModel* machines READ machines CONSTANT)
     Q_PROPERTY(OmnuvTunnel* tunnel READ tunnel CONSTANT)
     Q_PROPERTY(OmnuvAutostart* autostart READ autostart CONSTANT)
@@ -66,6 +81,19 @@ public:
     QString userCode() const { return m_userCode; }
     QString verificationUri() const { return m_verificationUri; }
     QString status() const { return m_status; }
+    QStringList projectNames() const { return m_projectNames; }
+    QStringList projectIds() const { return m_projectIds; }
+    QString projectId() const { return m_projectId; }
+    QString projectName() const
+    {
+        const int at = m_projectIds.indexOf(m_projectId);
+        return at >= 0 ? m_projectNames.at(at) : QString();
+    }
+
+    // Chosen by a person, and remembered. Re-reads what belongs to it rather
+    // than leaving the previous project's machines on screen.
+    Q_INVOKABLE void selectProject(const QString& id);
+
     MachineModel* machines() const { return m_machines; }
     OmnuvTunnel* tunnel() const { return m_tunnel; }
     OmnuvAutostart* autostart() const { return m_autostart; }
@@ -151,6 +179,7 @@ public:
 
 
 signals:
+    void projectsChanged();
     void coreUrlChanged();
     void signedInChanged();
     void busyChanged();
@@ -203,6 +232,16 @@ private:
     OmnuvAutostart* m_autostart;
     OmnuvAppearance* m_appearance;
     OmnuvPairing* m_pairing;
+    // Held rather than re-fetched: every request that names a project reads
+    // `m_projectId`, and a list that arrives once per sign-in does not need to
+    // arrive again per call.
+    void fetchIdentity();
+    QString projectQuery() const;
+
+    QStringList m_projectNames;
+    QStringList m_projectIds;
+    QString m_projectId;
+
     QTimer m_pollTimer;
     QTimer m_refreshTimer;
 

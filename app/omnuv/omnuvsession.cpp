@@ -104,9 +104,71 @@ OmnuvSession::OmnuvSession(QObject* parent)
     // No fetch here: the view asks when it opens, and again when a person
     // comes back to it from a stream. Doing both would send two requests every
     // time the application starts.
+    m_projectId = settings.value(QStringLiteral("omnuv/projectId")).toString();
+
     if (signedIn()) {
         m_refreshTimer.start();
+        // **Who this person is, and what they may act on.** Everything the
+        // window shows is scoped to a project, so the list has to arrive
+        // before the first request that names one. It is one call, and it is
+        // the same call the console makes.
+        fetchIdentity();
     }
+}
+
+// `/v1/me` — the user, their organization, and every project they are a member
+// of. The chosen project is kept across launches; a remembered id that is no
+// longer theirs falls back to the first, because a selection that names
+// nothing is worse than a default.
+void OmnuvSession::fetchIdentity()
+{
+    QNetworkReply* reply = m_net.get(request(QStringLiteral("/v1/me"), true));
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        reply->deleteLater();
+        if (reply->error() != QNetworkReply::NoError) {
+            return;
+        }
+        const QJsonObject o = QJsonDocument::fromJson(reply->readAll()).object();
+        const QJsonArray projects = o[QStringLiteral("projects")].toArray();
+
+        m_projectNames.clear();
+        m_projectIds.clear();
+        for (const QJsonValue& v : projects) {
+            const QJsonObject p = v.toObject();
+            m_projectIds << p[QStringLiteral("id")].toString();
+            m_projectNames << p[QStringLiteral("name")].toString();
+        }
+        if (!m_projectIds.contains(m_projectId)) {
+            m_projectId = m_projectIds.value(0);
+            QSettings().setValue(QStringLiteral("omnuv/projectId"), m_projectId);
+        }
+        emit projectsChanged();
+        refresh();
+    });
+}
+
+void OmnuvSession::selectProject(const QString& id)
+{
+    if (id == m_projectId || !m_projectIds.contains(id)) {
+        return;
+    }
+    m_projectId = id;
+    QSettings().setValue(QStringLiteral("omnuv/projectId"), m_projectId);
+    emit projectsChanged();
+    // The machines on screen belong to the project that was chosen a moment
+    // ago; leaving them there would be showing one project's estate under
+    // another's name.
+    m_machines->clear();
+    refresh();
+}
+
+// The query every project-scoped call carries. Empty until the identity has
+// arrived, which Core reads as "my default project" — the same thing it did
+// before this existed, so a first paint is never worse than it was.
+QString OmnuvSession::projectQuery() const
+{
+    return m_projectId.isEmpty() ? QString()
+                                 : QStringLiteral("?project=%1").arg(m_projectId);
 }
 
 
@@ -289,7 +351,7 @@ void OmnuvSession::poll()
         setStatus(QString());
 
         m_refreshTimer.start();
-        refresh();
+        fetchIdentity();
     });
 }
 
@@ -312,7 +374,7 @@ void OmnuvSession::refresh()
         return;
     }
 
-    QNetworkReply* reply = m_net.get(request(QStringLiteral("/v1/instances"), true));
+    QNetworkReply* reply = m_net.get(request(QStringLiteral("/v1/instances") + projectQuery(), true));
     connect(reply, &QNetworkReply::finished, this, [this, reply]() {
         reply->deleteLater();
 
@@ -397,7 +459,7 @@ void OmnuvSession::fetchDeviceKey()
         return;
     }
 
-    QNetworkReply* reply = m_net.get(request(QStringLiteral("/v1/networks"), true));
+    QNetworkReply* reply = m_net.get(request(QStringLiteral("/v1/networks") + projectQuery(), true));
     connect(reply, &QNetworkReply::finished, this, [this, reply]() {
         reply->deleteLater();
 
@@ -483,7 +545,7 @@ void OmnuvSession::deliverPin(int row, const QString& pin)
     // deployments and the machines come from the same project Core picks by
     // default. A deployment in another project belongs to a machine that is
     // not in the list this row came from.
-    QNetworkReply* reply = m_net.get(request(QStringLiteral("/v1/deployments"), true));
+    QNetworkReply* reply = m_net.get(request(QStringLiteral("/v1/deployments") + projectQuery(), true));
     connect(reply, &QNetworkReply::finished, this, [this, reply, row, pin, name, instanceId]() {
         reply->deleteLater();
 
