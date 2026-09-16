@@ -250,6 +250,13 @@ void OmnuvSession::poll()
             return;
         }
         if (code != 200) {
+            // **Named, because "refused or expired" is three different things
+            // and one of them is "we never asked properly".** A poll that dies
+            // on a transport error has an HTTP status of 0, which is not a
+            // refusal by anybody — and telling those apart from the outside
+            // cost a rig cycle and a proxy log on 16 September.
+            qWarning("omnuv: sign-in poll: http=%d error=%d %s", code, int(reply->error()),
+                     qPrintable(reply->errorString()));
             clearPending();
             setStatus(tr("That sign-in was refused or expired. Try again."));
             return;

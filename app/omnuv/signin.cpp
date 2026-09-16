@@ -191,7 +191,26 @@ public:
             if (m_session->busy() || m_printed || !m_session->userCode().isEmpty()) {
                 return;
             }
-            QTimer::singleShot(0, this, [this]() { finish(2); });
+            // **The condition is re-read inside the deferral, and that is the
+            // whole of the bug this line fixes.**
+            //
+            // `setBusy(false)` is the *first* statement of the reply handler,
+            // before the body is parsed — so at the moment this fires there is
+            // never a code yet, the guard above always passes, and the exit is
+            // queued on every single sign-in. One turn of the loop later the
+            // code has arrived and been printed, and the queued lambda ended
+            // the process anyway, because it had already decided.
+            //
+            // So `signin` printed a user code and exited 2 before anyone could
+            // approve it — every time, on every platform, since the action was
+            // written. Nothing caught it because the code *is* printed and the
+            // exit status is the only thing that disagrees.
+            QTimer::singleShot(0, this, [this]() {
+                if (m_printed || !m_session->userCode().isEmpty()) {
+                    return;
+                }
+                finish(2);
+            });
         });
 
         connect(m_session, &OmnuvSession::signedInChanged, this, [this]() {
