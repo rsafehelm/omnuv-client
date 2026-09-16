@@ -30,6 +30,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -172,8 +173,15 @@ func (t *tunnel) start(mgmt, key string) error {
 		return errNeverEnrolled
 	}
 
+	// Said before the attempt, because the attempt is what fails silently.
+	// `key != ""` rather than the key itself: a setup key is a credential and
+	// this file is written to disk.
+	log.Printf("onv-tunnel: starting mgmt=%q key=%t stored-identity=%t dir=%s",
+		mgmt, key != "", storedIdentity(configPath) != "", dir)
+
 	c, err := netbird.New(opts)
 	if err != nil {
+		log.Printf("onv-tunnel: refused the options: %v", err)
 		t.setFailed(err)
 		return err
 	}
@@ -185,9 +193,11 @@ func (t *tunnel) start(mgmt, key string) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
 		if err := c.Start(ctx); err != nil {
+			log.Printf("onv-tunnel: start failed: %v", err)
 			t.setFailed(classify(err))
 			return
 		}
+		log.Printf("onv-tunnel: running")
 		t.mu.Lock()
 		t.client = c
 		t.state = stateRunning
