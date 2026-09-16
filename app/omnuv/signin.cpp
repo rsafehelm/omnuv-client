@@ -2,6 +2,8 @@
 #include "omnuvsession.h"
 
 #include <QCommandLineParser>
+
+#include <memory>
 #include <QCoreApplication>
 #include <QTimer>
 
@@ -278,6 +280,14 @@ void start(const QStringList& args, QObject* parent)
     parser.addHelpOption();
     parser.addVersionOption();
     parser.addPositionalArgument("signin", "Sign this device in");
+    // **Which account, when the caller knows.** Without it a token already on
+    // the device is the right answer to "sign this device in"; with it, a
+    // token belonging to somebody else is not.
+    QCommandLineOption asOption(QStringLiteral("as"),
+                                QStringLiteral("Only accept an existing token if it belongs to "
+                                               "this account; otherwise sign in afresh."),
+                                QStringLiteral("email"));
+    parser.addOption(asOption);
 
     // Deliberately not parser.process(): that prints to stdout on error, and
     // stdout is the machine-readable channel here. Upstream's own helper makes
@@ -320,9 +330,48 @@ void start(const QStringList& args, QObject* parent)
     // which the console has no surface to revoke. Said as a distinct value
     // rather than as `yes`, so a harness can tell a fresh grant from a device
     // that was already enrolled.
-    if (session->signedIn()) {
+    // **A token is not an identity, and this treated them as one.**
+    // `signed-in=already` was emitted for any token at all, whoever it
+    // belonged to. Measured on 16 September: the rig held a token for an
+    // account seeded four days earlier, every run reported `SIGNEDIN=already`,
+    // and the pairing then asked that account for machines it does not have
+    // and truthfully reported none — three rounds of diagnosis against a
+    // machine that was working the whole time.
+    //
+    // With `--as`, `already` means the token is *that* account's. Anything
+    // else signs out and grants a fresh one, because "sign this device in as
+    // X" is a request a token for Y does not satisfy.
+    const QString expect = parser.value(asOption).trimmed();
+    if (session->signedIn() && expect.isEmpty()) {
         fact("signed-in", QStringLiteral("already"));
         ::exit(0);
+    }
+    if (session->signedIn()) {
+        // The identity is fetched, so this waits for it rather than assuming.
+        // A session that cannot say who it is within ten seconds is signed
+        // out: an unanswerable token is not this account's until it says so.
+        auto* probe = new QTimer(parent);
+        probe->setInterval(500);
+        auto tries = std::make_shared<int>(0);
+        QObject::connect(probe, &QTimer::timeout, session,
+                         [session, probe, expect, parent, tries]() {
+                             const QString who = session->accountEmail();
+                             if (who.isEmpty() && ++*tries < 20) {
+                                 return;
+                             }
+                             probe->stop();
+                             if (!who.isEmpty() && who.compare(expect, Qt::CaseInsensitive) == 0) {
+                                 fact("account", who);
+                                 fact("signed-in", QStringLiteral("already"));
+                                 ::exit(0);
+                             }
+                             fact("account-was",
+                                  who.isEmpty() ? QStringLiteral("(unanswered)") : who);
+                             session->signOut();
+                             (new Driver(parent, session))->begin();
+                         });
+        probe->start();
+        return;
     }
 
     // Everything above ends the process itself, because QCoreApplication::exit()

@@ -130,6 +130,7 @@ void OmnuvSession::fetchIdentity()
         }
         const QJsonObject o = QJsonDocument::fromJson(reply->readAll()).object();
         const QJsonArray projects = o[QStringLiteral("projects")].toArray();
+        m_accountEmail = o[QStringLiteral("email")].toString();
 
         m_projectNames.clear();
         m_projectIds.clear();

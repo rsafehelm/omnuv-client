@@ -83,6 +83,11 @@ public:
     QString status() const { return m_status; }
     QStringList projectNames() const { return m_projectNames; }
     QStringList projectIds() const { return m_projectIds; }
+    // **Whose token this is.** `/v1/me` has always returned it and the client
+    // has always thrown it away, which is how a rig signed in as one account
+    // spent an afternoon reporting no machines for another's project. Empty
+    // until the identity has arrived.
+    QString accountEmail() const { return m_accountEmail; }
     QString projectId() const { return m_projectId; }
     QString projectName() const
     {
@@ -240,6 +245,7 @@ private:
 
     QStringList m_projectNames;
     QStringList m_projectIds;
+    QString m_accountEmail;
     QString m_projectId;
 
     QTimer m_pollTimer;
