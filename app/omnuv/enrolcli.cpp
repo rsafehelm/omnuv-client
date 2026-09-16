@@ -49,6 +49,10 @@ void emitLine(const QString& line)
 // failed goes on reporting that it has failed, once every poll.
 bool done = false;
 
+// Polls spent waiting for the client to report the address it was given. See
+// the `Pass` branch.
+int addressPolls = 0;
+
 void finish(int code)
 {
     if (done) {
@@ -133,14 +137,24 @@ void OmnuvEnrol::start(const QStringList& args, QObject* parent)
     QObject::connect(tunnel, &OmnuvTunnel::changed, tunnel, [tunnel]() {
         switch (tunnel->reading()) {
         case omnuv::Reading::Pass:
-            // **No wait here, and that is the point.** This branch once
-            // retried for six polls when the address came back empty, because
-            // the address was read off the machine's interface list and the
-            // adapter is configured a moment after the engine is up. The
-            // daemon now asks NetBird — `Status().LocalPeerState` — which
-            // holds the assigned address at the instant the client is running,
-            // so a pass has one. An empty one here is a finding to report, not
-            // a race to sleep through.
+            // **A short wait, and it is for the library rather than for the
+            // machine.** Removing this was my own regression: the claim was
+            // that `Status().LocalPeerState` holds the address at the instant
+            // the client reports itself running. It does not quite — NetBird
+            // reports running a moment before the recorder is populated, and
+            // the run after that change printed `state=joined  address=` for a
+            // tunnel that was up.
+            //
+            // The distinction that matters is *what is being waited for*.
+            // Polling the operating system's interface list was waiting for a
+            // side effect, which is the thing that must never be done. Asking
+            // the client again for a value it will have shortly is waiting for
+            // an answer, which is ordinary. Bounded, so a tunnel that stays
+            // addressless still reports — `address=` with `state=joined` is a
+            // finding, and saying nothing at all would say less.
+            if (tunnel->address().isEmpty() && ++addressPolls < 8) {
+                return;
+            }
             verdict(QStringLiteral("state=joined  address=%1").arg(tunnel->address()), 0);
             return;
         case omnuv::Reading::Fail:
