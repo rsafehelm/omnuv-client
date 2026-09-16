@@ -1,21 +1,22 @@
 #!/usr/bin/env bash
-# Builds the embedded tunnel as a shared library the client loads at run time.
+# Builds `onvtunneld`, the privileged half of the private network.
 #
 #     ./tunnel/build.sh            windows + linux, into tunnel/dist/
 #     ./tunnel/build.sh windows    one of them
 #
 # **Everything happens in a container on whatever machine you are sitting at.**
-# The Windows DLL is cross-compiled with mingw, so the Windows build rig never
-# needs a Go toolchain — it goes on building OmnuvClient.exe with MSVC exactly
-# as it does now, and this artefact arrives beside it.
+# The Windows binary is cross-compiled, so the Windows build rig never needs a
+# Go toolchain — it goes on building OmnuvClient.exe with MSVC exactly as it
+# does now, and this artefact arrives beside it.
 #
-# The two halves meet at run time rather than at link time: this emits a .dll
-# and a .h and no import library, so MSVC has nothing to link against and needs
-# nothing — `QLibrary::resolve()` loads the plain C exports by name. That also
-# sidesteps the MSVC-against-mingw ABI question entirely.
-#
-# `-s -w` because the symbol tables are half the file: 62.9 MB becomes 32.2 MB,
-# measured, against a client that already ships 126 MB.
+# **No cgo, and that is the point of the shape.** This was a `-buildmode=
+# c-shared` DLL loaded into the client with QLibrary until 16 September, which
+# meant mingw, a C ABI, and a standing rule against allocating on one side and
+# freeing on the other. Then the measurement came in: a WireGuard adapter needs
+# administrator rights, the client does not have them at login, and the tunnel
+# had to move into a service anyway. A service talks over a socket, so the C
+# surface had nothing left to do — and a pure-Go static binary is the simplest
+# thing that can possibly work.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 out="$here/dist"; mkdir -p "$out"
@@ -35,24 +36,18 @@ if [ ! -f "$here/go.sum" ]; then
     run 'go mod tidy'
 fi
 
+# The one check worth its second: the protocol answers what it says it answers,
+# including the two refusals that are questions rather than retries.
+run 'go vet . && go test .'
+
 if [ "$targets" = all ] || [ "$targets" = windows ]; then
-    run '
-      apt-get -qq update >/dev/null 2>&1
-      DEBIAN_FRONTEND=noninteractive apt-get -qq install -y gcc-mingw-w64-x86-64 >/dev/null 2>&1
-      CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc \
-        go build -buildmode=c-shared -ldflags="-s -w" -o dist/onvtunnel.dll .
-    '
-    echo "  windows  dist/onvtunnel.dll  $(du -h "$out/onvtunnel.dll" | cut -f1)"
+    run 'CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o dist/onvtunneld.exe .'
+    echo "  windows  dist/onvtunneld.exe  $(du -h "$out/onvtunneld.exe" | cut -f1)"
 fi
 
 if [ "$targets" = all ] || [ "$targets" = linux ]; then
-    # `lib` prefix on purpose: the client loads this with QLibrary("onvtunnel"),
-    # which appends the platform's own decoration — `onvtunnel.dll` on Windows,
-    # `libonvtunnel.so` here. One call site, no per-platform file names.
-    run 'CGO_ENABLED=1 go build -buildmode=c-shared -ldflags="-s -w" -o dist/libonvtunnel.so .'
-    echo "  linux    dist/libonvtunnel.so   $(du -h "$out/libonvtunnel.so" | cut -f1)"
+    run 'CGO_ENABLED=0 go build -ldflags="-s -w" -o dist/onvtunneld .'
+    echo "  linux    dist/onvtunneld      $(du -h "$out/onvtunneld" | cut -f1)"
 fi
 
-# The header is the contract the C++ side resolves against; it is generated
-# beside whichever library was built last and is identical for both.
 ls "$out" | sed 's/^/  /'
