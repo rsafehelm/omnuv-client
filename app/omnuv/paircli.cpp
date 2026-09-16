@@ -99,6 +99,32 @@ void OmnuvPairCli::start(const QStringList& args, QObject* parent)
     // One argument: upstream's constructor takes only the preferences, and
     // `main.cpp` leaks the same object for the `list` action. Parented to
     // `parent` afterwards so this one does not.
+    // **The machine's name says which project it is in, so use it.** A
+    // marketplace private name is `<machine>-<project8>.internal`, and a
+    // device signed in to an account with several projects otherwise picks one
+    // by an order that has nothing to do with the machine being asked for.
+    // Measured on 16 September: the account held five live projects, the
+    // client took the oldest, and it reported `0 machine(s)` while the machine
+    // sat in the newest — so no row ever matched and no PIN was ever
+    // delivered, for two minutes, silently.
+    //
+    // Selecting it here rather than fixing the order elsewhere, because the
+    // order is a fair default for a person opening a window and is simply not
+    // an answer to *this* question: the caller named a machine.
+    const QString label = host.section(QLatin1Char('.'), 0, 0);
+    const QString suffix = label.section(QLatin1Char('-'), -1);
+    QObject::connect(session, &OmnuvSession::projectsChanged, session, [session, suffix]() {
+        if (suffix.length() != 8) {
+            return;
+        }
+        for (const QString& id : session->projectIds()) {
+            if (id.startsWith(suffix, Qt::CaseInsensitive) && id != session->projectId()) {
+                session->selectProject(id);
+                return;
+            }
+        }
+    });
+
     auto* computers = new ComputerManager(StreamingPreferences::get());
     computers->setParent(parent);
 
