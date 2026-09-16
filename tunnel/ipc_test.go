@@ -48,3 +48,28 @@ func TestAnswer(t *testing.T) {
 		t.Fatalf("stopping a stopped tunnel is fine, got %q", got)
 	}
 }
+
+// **A resume on a connected tunnel is a no-op; an enrolment is not.**
+//
+// Returning "already up" to a key would leave a device on the network it was
+// already on while telling everyone it had joined the new one — which is what
+// happened on 16 September, and it kept a device `Pending` for ever because no
+// peer ever appeared in the group its key named.
+func TestAnEnrolmentMovesAConnectedTunnel(t *testing.T) {
+	tn := &tunnel{state: stateRunning}
+
+	if got := answer(tn, "resume"); got != "ok" {
+		t.Fatalf("a resume on a running tunnel is a no-op, got %q", got)
+	}
+	if state, _ := tn.snapshot(); state != stateRunning {
+		t.Fatalf("a resume must not disturb a running tunnel, state is now %d", state)
+	}
+
+	// The enrolment tears the old membership down before starting. With no
+	// real client behind it the start then fails, which is fine: what this
+	// asserts is that it did *not* short-circuit and leave it running.
+	_ = answer(tn, "enrol https://example.invalid somekey")
+	if state, _ := tn.snapshot(); state == stateRunning {
+		t.Fatal("an enrolment with a key must not leave the previous membership running")
+	}
+}

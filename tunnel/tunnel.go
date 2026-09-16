@@ -113,8 +113,27 @@ func storedIdentity(configPath string) string {
 func (t *tunnel) start(mgmt, key string) error {
 	t.mu.Lock()
 	if t.state == stateStarting || t.state == stateRunning {
+		// **A key is a request to join *that* network, even from here.**
+		//
+		// Returning "already up" is right for a resume — the machine is on its
+		// network and there is nothing to do. It is wrong for an enrolment: a
+		// one-time key names a network, and a device that is already connected
+		// to a *different* one must move rather than report success and stay.
+		//
+		// Measured on 16 September: the rig was joined from an earlier run, an
+		// end-to-end run minted it a key for a new network, the daemon answered
+		// `ok`, and the client reported `state=joined` with the address it
+		// already had. Core saw the device it had issued the key for stay
+		// `Pending` for ever, because no peer ever appeared in its group.
+		if key == "" {
+			t.mu.Unlock()
+			return nil
+		}
 		t.mu.Unlock()
-		return nil
+		if err := t.stop(); err != nil {
+			return err
+		}
+		t.mu.Lock()
 	}
 	t.state = stateStarting
 	t.lastError = ""
