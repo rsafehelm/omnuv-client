@@ -10,6 +10,9 @@
 #include <QCoreApplication>
 #include <QTimer>
 
+#include <functional>
+#include <memory>
+
 #include <stdio.h>
 
 // The stdout contract, and the same rule as `signin` and `enrol`: this file is
@@ -111,31 +114,47 @@ void OmnuvPairCli::start(const QStringList& args, QObject* parent)
     // until this client's own pairing request is already waiting on the
     // machine, so delivering beside `execute()` would address nothing. See
     // `pairing.cpp`.
-    QObject::connect(launcher, &CliPair::Launcher::pairing, session,
-                     [session, host, pin](const QString& name, const QString&) {
-                         emitLine(QStringLiteral("state=pairing  machine=%1").arg(name));
+    // **Finding the row waits for the list, because the list is fetched.**
+    // `OmnuvSession` asks Core for its machines on construction and the answer
+    // arrives whenever it arrives; the launcher's `pairing` signal arrives on
+    // the machine's clock. On 16 September those two raced and the loser
+    // reported `Omnuv does not list a machine at …`, which reads as a missing
+    // machine and was a fetch that had not landed. Retried on every change to
+    // the model, bounded by the run's own deadline.
+    //
+    // Matched on the host *or* the name, because the launcher reports what
+    // Sunshine advertises — `gamerig-e2e` — while the harness asks for
+    // `gamerig-e2e-<project8>.internal`, and either is a fair way to say which
+    // machine this is.
+    auto deliver = std::make_shared<std::function<void()>>();
+    auto delivered = std::make_shared<bool>(false);
+    *deliver = [session, host, pin, delivered]() {
+        if (*delivered) {
+            return;
+        }
+        MachineModel* machines = session->machines();
+        const QString bare = host.section(QLatin1Char('.'), 0, 0);
+        for (int i = 0; i < machines->rowCount(); ++i) {
+            if (machines->hostAt(i).compare(host, Qt::CaseInsensitive) == 0
+                || machines->nameAt(i).compare(bare, Qt::CaseInsensitive) == 0) {
+                *delivered = true;
+                session->deliverPin(i, pin);
+                return;
+            }
+        }
+    };
 
-                         // `deliverPin` is addressed by a row of *Omnuv's* list
-                         // of machines, which is what knows the deployment the
-                         // credential belongs to — not upstream's list of
-                         // hosts, which knows only an address.
-                         MachineModel* machines = session->machines();
-                         int row = -1;
-                         for (int i = 0; i < machines->rowCount(); ++i) {
-                             if (machines->hostAt(i).compare(host, Qt::CaseInsensitive) == 0) {
-                                 row = i;
-                                 break;
-                             }
-                         }
-                         if (row < 0) {
-                             verdict(QStringLiteral("state=failed  reason=Omnuv does not list a "
-                                                    "machine at %1 in this project")
-                                         .arg(host),
-                                     1);
-                             return;
-                         }
-                         session->deliverPin(row, pin);
+    QObject::connect(launcher, &CliPair::Launcher::pairing, session,
+                     [deliver](const QString& name, const QString&) {
+                         emitLine(QStringLiteral("state=pairing  machine=%1").arg(name));
+                         (*deliver)();
                      });
+
+    // Every later arrival of the list is another chance, for as long as the
+    // deadline allows. A machine that genuinely is not in the project simply
+    // never matches, and the deadline says so.
+    QObject::connect(session->machines(), &MachineModel::countChanged, session,
+                     [deliver]() { (*deliver)(); });
 
     // The delivery's own failure is reported and is *not* final: the machine
     // may still accept a PIN somebody types, so the launcher decides the
@@ -157,8 +176,18 @@ void OmnuvPairCli::start(const QStringList& args, QObject* parent)
                          verdict(QStringLiteral("state=failed  reason=%1").arg(text), 1);
                      });
 
-    QTimer::singleShot(kDeadlineMs, launcher, []() {
-        verdict(QStringLiteral("state=failed  reason=the pairing did not finish in two minutes"),
+    // **The deadline says what it was waiting for.** Making the row lookup
+    // retry silently turned "Omnuv does not list a machine" into two minutes
+    // of nothing, which is the same defect this repository has now met in a
+    // probe, a teardown and a watcher: an answer replaced by a silence. The
+    // count and whether anything ever matched are the two facts that separate
+    // a machine missing from the project, a fetch that never landed, and a
+    // host that would not answer.
+    QTimer::singleShot(kDeadlineMs, launcher, [session, host, delivered]() {
+        verdict(QStringLiteral("state=failed  reason=the pairing did not finish in two minutes"
+                               "  machines=%1  matched=%2  host=%3")
+                    .arg(session->machines()->rowCount())
+                    .arg(*delivered ? QStringLiteral("yes") : QStringLiteral("no"), host),
                 1);
     });
 
