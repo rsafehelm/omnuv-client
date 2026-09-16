@@ -201,6 +201,9 @@ GlobalCommandLineParser::ParseResult GlobalCommandLineParser::parse(const QStrin
                 // Omnuv, and both spellings plus the plain word, because the
                 // console's links and the installer have used all three.
                 return EnrolRequested;
+            } else if (action == "pair-machine") {
+                // Omnuv. Upstream's `pair` still means what it always meant.
+                return PairMachineRequested;
             }
         }
 

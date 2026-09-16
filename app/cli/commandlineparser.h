@@ -21,6 +21,12 @@ public:
         // Omnuv: join this device to its private network from a shell. Same
         // reasoning as SignInRequested — an action, not a flag.
         EnrolRequested,
+        // Omnuv: pair with a machine without anybody typing a PIN. Named
+        // `pair-machine` rather than `pair` because upstream's `pair` is a
+        // different promise — it prints a number for a person — and silently
+        // changing what an existing command does to somebody's script is the
+        // one thing a published CLI may not do.
+        PairMachineRequested,
     };
 
     GlobalCommandLineParser();

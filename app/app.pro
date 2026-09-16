@@ -248,6 +248,7 @@ SOURCES += \
     omnuv/machinemodel.cpp \
     omnuv/omnuvsession.cpp \
     omnuv/pairing.cpp \
+    omnuv/paircli.cpp \
     omnuv/probe.cpp \
     omnuv/enrolcli.cpp \
     omnuv/signin.cpp \
@@ -264,6 +265,7 @@ HEADERS += \
     omnuv/machinemodel.h \
     omnuv/omnuvsession.h \
     omnuv/pairing.h \
+    omnuv/paircli.h \
     omnuv/probe.h \
     omnuv/signin.h \
     omnuv/streamquality.h \
