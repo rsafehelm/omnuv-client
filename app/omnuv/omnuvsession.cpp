@@ -401,7 +401,14 @@ void OmnuvSession::refresh()
 
         // Logged because a person reporting "it says I have no machines" needs
         // this line to tell an empty account from a request that never arrived.
-        qInfo() << "omnuv: signed in," << machines.count() << "machine(s)";
+        // **What was asked for, not only what came back.** An empty list and a
+        // query naming the wrong project produce the same count, and on
+        // 16 September that cost three rounds of diagnosis on a machine that
+        // was up the whole time: the client said `0 machine(s)` and nothing
+        // said which project it had asked about, or how many it knew of.
+        qInfo() << "omnuv: signed in," << machines.count() << "machine(s), project"
+                << (m_projectId.isEmpty() ? QStringLiteral("(default)") : m_projectId)
+                << "of" << m_projectIds.count();
     });
 }
 
