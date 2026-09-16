@@ -1,7 +1,6 @@
 #include "tunnel.h"
 
 #include <QLocalSocket>
-#include <QNetworkInterface>
 #include <QTimer>
 
 namespace {
@@ -70,38 +69,6 @@ OmnuvTunnel::OmnuvTunnel(QObject* parent)
 // down, any more than closing a browser turns off their Wi-Fi.
 OmnuvTunnel::~OmnuvTunnel() = default;
 
-// **The daemon cannot be asked where this device is.** With a real adapter
-// (`NoUserspace`) the embed API exposes neither a status nor an address: its
-// status recorder is unexported, and the Dial/Listen calls that would know are
-// netstack-only and unused here. So the address is read the way any other
-// program on the machine would read it — from the operating system's own view
-// of the interface the tunnel created. That also makes it a *second* source:
-// the daemon says whether it believes it is up, the machine says whether there
-// is an adapter, and a disagreement between them is a finding.
-QString OmnuvTunnel::adapterAddress()
-{
-#ifdef Q_OS_DARWIN
-    static const QString kAdapter = QStringLiteral("utun100");
-#else
-    static const QString kAdapter = QStringLiteral("wt0");
-#endif
-    const QList<QNetworkInterface> all = QNetworkInterface::allInterfaces();
-    for (const QNetworkInterface& iface : all) {
-        // Windows names an interface by its GUID and keeps the friendly name
-        // separately; Linux and macOS put it in both.
-        if (iface.name() != kAdapter && iface.humanReadableName() != kAdapter) {
-            continue;
-        }
-        const QList<QNetworkAddressEntry> entries = iface.addressEntries();
-        for (const QNetworkAddressEntry& entry : entries) {
-            if (entry.ip().protocol() == QAbstractSocket::IPv4Protocol) {
-                return entry.ip().toString();
-            }
-        }
-    }
-    return QString();
-}
-
 void OmnuvTunnel::set(bool available, omnuv::Reading reading, const QString& state,
                       const QString& address)
 {
@@ -166,6 +133,19 @@ void OmnuvTunnel::updatePolling()
     }
 }
 
+// **The address comes from the daemon, which asks the library.** This used to
+// enumerate the machine's interfaces and look for `wt0`, and the failure that
+// removed it is worth keeping: the adapter is configured a moment *after* the
+// engine reports itself up, so a read taken at the wrong instant returned an
+// empty string for a tunnel that was working. The rig printed
+// `state=joined  address=` while its own guest agent showed `wt0` holding
+// `10.210.219.11`.
+//
+// NetBird's `Client.Status().LocalPeerState` carries the address the
+// management server assigned and the name it published, so the daemon reports
+// both on the `state` line. **Where a library answers the question, ask the
+// library** — an observation of its side effects is a different fact, arriving
+// later and for other reasons.
 void OmnuvTunnel::check()
 {
     const QString reply = request(QStringLiteral("state"));
@@ -181,11 +161,13 @@ void OmnuvTunnel::check()
         return;
     }
 
-    // `state <n> <sentence>`; the sentence may be empty and may contain
-    // spaces, so it is everything after the second field.
+    // `state <n> <address|-> <name|-> <sentence>`; the sentence may be empty
+    // and may contain spaces, so it is everything after the fourth field.
     const QStringList fields = reply.split(QLatin1Char(' '));
     const int state = fields.value(1).toInt();
-    const QString why = fields.mid(2).join(QLatin1Char(' '));
+    const QString dashed = fields.value(2);
+    const QString address = dashed == QLatin1String("-") ? QString() : dashed;
+    const QString why = fields.mid(4).join(QLatin1Char(' '));
 
     switch (state) {
     case Running: {
@@ -194,7 +176,7 @@ void OmnuvTunnel::check()
         // the tunnel is idle and still carrying the *previous* sentence — and
         // a watcher reading that pair reported "failed: Joining your Omnuv
         // network", which is two states mixed into one lie.
-        set(true, omnuv::Reading::Pass, tr("On your Omnuv network"), adapterAddress());
+        set(true, omnuv::Reading::Pass, tr("On your Omnuv network"), address);
         setBusy(false);
         return;
     }

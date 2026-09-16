@@ -80,6 +80,36 @@ func (t *tunnel) snapshot() (int, string) {
 	return t.state, t.lastError
 }
 
+// This device's address on the network, and the name it answers to, as the
+// client itself has them.
+//
+// **Asked of the library, never inferred from the machine.** The client keeps a
+// status recorder — `Status().LocalPeerState` — holding the address the
+// management server assigned and the FQDN it published, and that is the
+// authority for both. Reading the operating system's interface list instead
+// looked equivalent and is not: the adapter is configured a moment *after* the
+// engine is up, so a caller that asked at the wrong instant got an empty string
+// from a tunnel that was working. Measured on 16 September, when the rig
+// reported `state=joined  address=` and the guest agent showed `wt0` holding
+// `10.210.219.11` in the same minute.
+//
+// The general rule, and it is the operator's: where a library answers the
+// question, ask the library. An observation of a side effect is a different
+// fact arriving later.
+func (t *tunnel) address() (string, string) {
+	t.mu.Lock()
+	c := t.client
+	t.mu.Unlock()
+	if c == nil {
+		return "", ""
+	}
+	st, err := c.Status()
+	if err != nil {
+		return "", ""
+	}
+	return st.LocalPeerState.IP, st.LocalPeerState.FQDN
+}
+
 // The identity this machine already holds, or "".
 //
 // **Why this is read here rather than passed in.** A device that has enrolled
@@ -90,11 +120,19 @@ func (t *tunnel) snapshot() (int, string) {
 // options* on every call, and a setup key spends itself, so it cannot be the
 // thing that is replayed. The stored private key is.
 //
-// `profilemanager` is an `internal` package and cannot be imported from
-// outside NetBird, so the config is read as what it is on disk: JSON with an
-// untagged `PrivateKey` field. If they rename it this returns "" and the
-// device asks to be enrolled again rather than silently making a second peer —
-// wrong, but wrong in the direction that is visible.
+// **The one place here that reads a library's state instead of asking it, and
+// it is checked rather than assumed.** `Client.GetConfig()` would answer this
+// exactly, and cannot be reached: it is a method on a client, `New()` refuses
+// to build one without a credential, and the credential is what is being
+// looked for. `profilemanager` is an `internal` package, so the type cannot be
+// imported either. There is no accessor — which is the narrow exception in
+// *Where a Library Answers the Question, Ask the Library*, named here so the
+// next reader does not have to re-derive it.
+//
+// So the config is read as what it is on disk: JSON with an untagged
+// `PrivateKey` field. If they rename it this returns "" and the device asks to
+// be enrolled again rather than silently making a second peer — wrong, but
+// wrong in the direction that is visible.
 func storedIdentity(configPath string) string {
 	raw, err := os.ReadFile(configPath)
 	if err != nil {

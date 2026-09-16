@@ -49,6 +49,10 @@ void emitLine(const QString& line)
 // failed goes on reporting that it has failed, once every poll.
 bool done = false;
 
+// How many polls a join that is up but unaddressed has been given. See the
+// `Pass` branch below for why an address is worth waiting three seconds for.
+int addressPolls = 0;
+
 void finish(int code)
 {
     if (done) {
@@ -133,6 +137,23 @@ void OmnuvEnrol::start(const QStringList& args, QObject* parent)
     QObject::connect(tunnel, &OmnuvTunnel::changed, tunnel, [tunnel]() {
         switch (tunnel->reading()) {
         case omnuv::Reading::Pass:
+            // **Up is not addressed yet, and the difference is measurable.**
+            // The daemon reports Running the moment the engine is, which on
+            // Windows is before the operating system has finished configuring
+            // the adapter it just created: the guest agent showed `wt0` with
+            // `10.210.219.11` on a rig whose own client had printed
+            // `address=` a minute earlier. The window heals itself — it polls
+            // — but this action prints once and exits, so an early read is the
+            // answer for ever.
+            //
+            // So a pass with no address waits for the next poll rather than
+            // verdicting. Bounded, because a tunnel that is up and *stays*
+            // unaddressed is a finding of its own and must still be reported:
+            // `address=` with `state=joined` says exactly that, and saying
+            // nothing at all would say less.
+            if (tunnel->address().isEmpty() && ++addressPolls < 6) {
+                return;
+            }
             verdict(QStringLiteral("state=joined  address=%1").arg(tunnel->address()), 0);
             return;
         case omnuv::Reading::Fail:

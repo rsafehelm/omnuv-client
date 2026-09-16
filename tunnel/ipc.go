@@ -19,7 +19,14 @@ import (
 //	resume                 → ok | err <sentence>
 //	enrol <url> <key>      → ok | err <sentence>
 //	stop                   → ok | err <sentence>
-//	state                  → state <0-3> <sentence, possibly empty>
+//	state                  → state <0-3> <address|-> <name|-> <sentence, possibly empty>
+//
+// The address and the name are this device's own, taken from the client's
+// status recorder rather than from the machine's interface list — see
+// `tunnel.address()`. Both are `-` when the client does not have them yet,
+// which is a different thing from a tunnel that is down and must stay
+// distinguishable: a field that is empty and a field that is absent read the
+// same to a parser splitting on spaces.
 //
 // `resume` and `enrol` return as soon as the attempt is *accepted*; whether it
 // worked arrives through `state`, because a join takes tens of seconds and the
@@ -73,7 +80,8 @@ func answer(t *tunnel, line string) string {
 	switch fields[0] {
 	case "state":
 		state, why := t.snapshot()
-		return fmt.Sprintf("state %d %s", state, why)
+		ip, fqdn := t.address()
+		return fmt.Sprintf("state %d %s %s %s", state, dash(ip), dash(fqdn), why)
 
 	case "resume":
 		if err := t.start("", ""); err != nil {
@@ -111,4 +119,13 @@ func answer(t *tunnel, line string) string {
 		return "ok"
 	}
 	return "err unknown request: " + fields[0]
+}
+
+// An empty field would vanish when the line is split on spaces, taking the
+// fields after it one place to the left. `-` is never a valid address or name.
+func dash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }

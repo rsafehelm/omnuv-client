@@ -9,7 +9,11 @@ import "testing"
 func TestAnswer(t *testing.T) {
 	tn := &tunnel{state: stateStopped}
 
-	if got := answer(tn, "state"); got != "state 0 " {
+	// Four fields before the sentence, and the two placeholders are the point:
+	// a daemon with no client yet has no address and no name, and `-` keeps
+	// those positions occupied so the sentence stays the fourth field rather
+	// than sliding into the second.
+	if got := answer(tn, "state"); got != "state 0 - - " {
 		t.Fatalf("a fresh daemon should report stopped with no reason, got %q", got)
 	}
 	if got := answer(tn, ""); got[:3] != "err" {

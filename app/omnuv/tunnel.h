@@ -127,7 +127,6 @@ private:
     // This device's address, read from the operating system rather than from
     // the service — with a real WireGuard adapter the embed API exposes
     // neither a status nor an address. See the note in tunnel.cpp.
-    static QString adapterAddress();
 
     QTimer m_timer;
     bool m_watching = false;
