@@ -160,6 +160,31 @@ func (t *tunnel) start(mgmt, key string) error {
 		NoUserspace:   true,
 	}
 
+	// **A key means a new identity, so the old one is cleared first.**
+	//
+	// `client/embed` loads the configuration at `ConfigPath` and keeps the
+	// private key in it. With a stored identity present, NetBird logs in as
+	// *the peer it already is* and never spends the setup key — so a device
+	// asked to join a different network reconnected to its old one, in two
+	// seconds instead of twenty, and reported success. Core watched the device
+	// it had issued that key for stay `Pending` for ever, because the peer
+	// never appeared in the group the key named. Read out of this daemon's own
+	// log on 16 September: `key=true stored-identity=true` followed by
+	// `running` a heartbeat later.
+	//
+	// So the identity is removed before the library reads it. That is what a
+	// key asks for: this device, on that network, as a new peer. What it costs
+	// is stated plainly — the old peer is left behind in the old network and
+	// whoever moved the device revokes it there. Losing the identity on a
+	// *failed* enrolment is the honest outcome too: the device then has none,
+	// which is exactly what it needs a key for.
+	if key != "" {
+		if err := os.Remove(configPath); err != nil && !os.IsNotExist(err) {
+			log.Printf("onv-tunnel: could not clear the old identity: %v", err)
+		}
+		_ = os.Remove(statePath)
+	}
+
 	// Exactly one of the two, and which one decides whether a peer is made.
 	if key != "" {
 		opts.SetupKey = key
