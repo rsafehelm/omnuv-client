@@ -477,15 +477,18 @@ void OmnuvSession::fetchDeviceKey()
             return;
         }
 
-        // **The project's network, and a project has exactly one.** Since
-        // 16 September that is a database invariant rather than a convention:
-        // a project is created with its network in one transaction (0128's
-        // sibling change) and a trigger refuses to delete one while the
-        // project is alive (0129). `projectQuery()` above scopes the list to
-        // the project this window is showing, so `first` is that project's
-        // network and not whichever network the account happened to list
-        // first — which is what a device joining the *wrong* tenant would
-        // look like.
+        // **The project's network, and a project always has at least one.**
+        // Since 16 September a project is created with its network in one
+        // transaction and a trigger refuses to delete one while the project is
+        // alive, so this is never empty. It is *not* guaranteed to be the only
+        // one — nothing stops a second, and a harness created exactly that the
+        // same afternoon — so `first` is a choice rather than the only answer,
+        // and the right long-term shape is for a device to be told which
+        // network to join rather than to pick.
+        //
+        // What it does rule out is the worse case: `projectQuery()` scopes the
+        // list to the project this window is showing, so `first` is always
+        // *this tenant's*, never whichever network the account listed first.
         const QString id = networks.first().toObject()[QStringLiteral("id")].toString();
         const QJsonObject body { { QStringLiteral("name"), QSysInfo::machineHostName() } };
 
