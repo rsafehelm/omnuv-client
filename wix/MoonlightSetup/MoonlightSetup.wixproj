@@ -12,6 +12,20 @@
   <PropertyGroup>
     <AcceptEula>wix7</AcceptEula>
   </PropertyGroup>
+  <!--
+    Where the Visual C++ redistributable is found. It is carried inside the
+    bundle rather than downloaded at install time, so this has to exist before
+    a bundle can be built: `scripts/fetch-vcredist` puts it there, verified
+    against the pins at the top of Bundle.wxs. REDIST_FOLDER overrides it for a
+    build that keeps its artefacts elsewhere.
+  -->
+  <PropertyGroup>
+    <RedistFolder Condition=" '$(REDIST_FOLDER)' != '' ">$(REDIST_FOLDER)</RedistFolder>
+    <RedistFolder Condition=" '$(RedistFolder)' == '' ">$(MSBuildThisFileDirectory)..\..\build\redist</RedistFolder>
+  </PropertyGroup>
+  <PropertyGroup>
+    <DefineConstants>RedistDir=$(RedistFolder)</DefineConstants>
+  </PropertyGroup>
   <PropertyGroup Condition="$(SIGN)!=''">
     <SignOutput>true</SignOutput>
   </PropertyGroup>

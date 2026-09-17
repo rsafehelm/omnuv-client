@@ -52,11 +52,10 @@ if not exist "%BUILD_ROOT%\build-x64-%BUILD_CONFIG%\Moonlight.msi" (
     echo You must run 'build-arch.bat %BUILD_CONFIG% x64' first
     exit /b 1
 )
-if not exist "%BUILD_ROOT%\build-arm64-%BUILD_CONFIG%\Moonlight.msi" (
-    echo Unable to build bundle - missing binaries for %BUILD_CONFIG% arm64
-    echo You must run 'build-arch.bat %BUILD_CONFIG% arm64' first
-    exit /b 1
-)
+rem arm64 is not built here: nothing in this lab has an arm64 compiler, so the
+rem bundle chains x64 only and refuses an arm64 machine with a message. When
+rem the toolchain exists, the arm64 MSI and its redistributable go back into
+rem Bundle.wxs and this check comes back with them.
 
 echo Cleaning output directories
 rmdir /s /q %BUILD_FOLDER%
@@ -78,9 +77,9 @@ cmd /c "set VERSION= && msbuild -Restore %SOURCE_ROOT%\wix\MoonlightSetup\Moonli
 if !ERRORLEVEL! NEQ 0 goto Error
 
 rem Rename the installer to match the publishing convention
-ren %INSTALLER_FOLDER%\MoonlightSetup.exe MoonlightSetup-%VERSION%.exe
+ren %INSTALLER_FOLDER%\MoonlightSetup.exe OmnuvSetup-%VERSION%.exe
 
-echo Build successful for Moonlight v%VERSION% installer!
+echo Build successful for Omnuv Client v%VERSION% installer!
 exit /b 0
 
 :Error

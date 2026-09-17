@@ -11,19 +11,22 @@
 
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
 
-  <Bundle Name="Moonlight Game Streaming Client"
-          Version="!(bind.PackageVersion.Moonlight_x64)"
-          Manufacturer="Moonlight Game Streaming Project"
-          UpgradeCode="466fa35d-4be4-40ef-9ce5-afadc3b63bc5"
-          HelpUrl="https://github.com/moonlight-stream/moonlight-docs/wiki/Setup-Guide"
-          UpdateUrl="https://github.com/moonlight-stream/moonlight-qt/releases"
+  <Bundle Name="Omnuv Client"
+          Version="!(bind.PackageVersion.Omnuv_x64)"
+          Manufacturer="Omnuv"
+          UpgradeCode="2e478f7b-3c4f-4145-90e3-536bedb5812d"
+          HelpUrl="https://omnuv.com"
+          UpdateUrl="https://omnuv.com"
           DisableModify="yes"
           IconSourceFile="..\..\app\moonlight.ico">
 
-    <bal:Condition Message="This version of Moonlight requires Windows 10 or later." Condition="VersionNT &gt;= v10.0" />
-    <bal:Condition Message="This version of Moonlight requires a 64-bit version of Windows." Condition="NativeMachine &lt;&gt; 332" />
+    <bal:Condition Message="Omnuv Client requires Windows 10 or later." Condition="VersionNT &gt;= v10.0" />
+    <bal:Condition Message="Omnuv Client requires a 64-bit version of Windows." Condition="NativeMachine &lt;&gt; 332" />
+    <!-- 43620 is ARM64. Refused with a reason rather than silently installing
+         nothing: see the note on the chain below. -->
+    <bal:Condition Message="Omnuv Client does not support ARM64 Windows yet." Condition="NativeMachine &lt;&gt; 43620" />
 
-    <Variable Name="InstallFolder" Type="formatted" Value="[ProgramFiles6432Folder]Moonlight Game Streaming" />
+    <Variable Name="InstallFolder" Type="formatted" Value="[ProgramFiles6432Folder]Omnuv" />
 
     <!-- Define "Add desktop shortcut" -checkbox's state by defining a variable
          which has same name as the checkbox has. Value 1 means that checkbox
@@ -32,18 +35,13 @@
     <Variable Name="AddDesktopShortcutCheckbox" Type="numeric" Value="1" />
     <!-- Get checkbox's state from registry if present. The registry value
          "DesktopShortcutInstallState" is set in Product.wxs. -->
-    <util:RegistrySearch Variable="HasDesktopShortcutInstallStateRegKey" Root="HKCU" Key="Software\Moonlight Game Streaming Project" Value="DesktopShortcutInstallState" Result="exists" />
-    <util:RegistrySearch Variable="AddDesktopShortcutCheckbox" Root="HKCU" Key="Software\Moonlight Game Streaming Project" Value="DesktopShortcutInstallState" Condition="HasDesktopShortcutInstallStateRegKey" />
+    <util:RegistrySearch Variable="HasDesktopShortcutInstallStateRegKey" Root="HKCU" Key="Software\Omnuv" Value="DesktopShortcutInstallState" Result="exists" />
+    <util:RegistrySearch Variable="AddDesktopShortcutCheckbox" Root="HKCU" Key="Software\Omnuv" Value="DesktopShortcutInstallState" Condition="HasDesktopShortcutInstallStateRegKey" />
 
     <util:ProductSearch Id="VCREDIST_14_x64"
                         UpgradeCode="$(var.VCREDIST_X64_UPGRADE_CODE)"
                         Result="version"
                         Variable="VCREDIST_14_x64" />
-
-    <util:ProductSearch Id="VCREDIST_14_ARM64"
-                        UpgradeCode="$(var.VCREDIST_ARM64_UPGRADE_CODE)"
-                        Result="version"
-                        Variable="VCREDIST_14_ARM64" />
 
     <BootstrapperApplication>
       <bal:WixStandardBootstrapperApplication ShowVersion="yes"
@@ -55,60 +53,46 @@
       <Payload Name="Moonlight.ico" SourceFile="..\..\app\moonlight.ico" Compressed="yes" />
     </BootstrapperApplication>
 
+    <!--
+      **x64 only, deliberately.** Upstream chains an arm64 redistributable and
+      an arm64 MSI beside these; both are removed because nothing here can
+      build an arm64 client — this rig's Visual Studio carries only
+      VC.Tools.x86.x64 — and a bundle that references an MSI nobody produces
+      cannot be built at all. Queued in TODO.md; the two packages come back
+      with the toolchain rather than being half-kept here.
+
+      An arm64 machine is refused above with a message instead of being handed
+      a bundle whose every InstallCondition is false, which would report
+      success having installed nothing.
+    -->
     <Chain>
       <ExePackage Cache="remove"
                   PerMachine="yes"
                   Permanent="yes"
                   Vital="yes"
-                  InstallCondition="(VersionNT64 AND NOT NativeMachine) OR (NativeMachine = 34404)"
                   DetectCondition="VCREDIST_14_x64 &gt;= v$(var.VCREDIST_VER)"
                   InstallArguments="/install /quiet /norestart">
 
-        <ExePackagePayload Description="Microsoft Visual C++ 2015-2022 Redistributable - x64"
-                           ProductName="Microsoft Visual C++ 2015-2022 Redistributable - x64"
-                           Size="$(var.VCREDIST_X64_SIZE)"
-                           Version="$(var.VCREDIST_VER)"
-                           Hash="$(var.VCREDIST_X64_SHA512)"
-                           Name="VC_redist.x64.exe"
-                           DownloadUrl="$(var.VCREDIST_X64_URL)" />
+        <!--
+          **Carried, not downloaded.** This was a `DownloadUrl` with no local
+          payload, which made the one-file installer a *downloading* installer:
+          it needed Microsoft reachable at install time, so a machine behind a
+          proxy, on a locked-down network or simply offline got a bundle that
+          could not finish. `scripts/fetch-vcredist` puts the verified binary
+          where this points, checking it against the pins at the top of this
+          file rather than against a second copy of them.
+        -->
+        <ExePackagePayload Name="VC_redist.x64.exe"
+                           Compressed="yes"
+                           SourceFile="$(var.RedistDir)\VC_redist.x64.exe" />
 
         <!-- Newer version installed is fine -->
         <ExitCode Value="1638" Behavior="success" />
       </ExePackage>
 
-      <ExePackage Cache="remove"
-                  PerMachine="yes"
-                  Permanent="yes"
-                  Vital="yes"
-                  InstallCondition="NativeMachine = 43620"
-                  DetectCondition="VCREDIST_14_ARM64 &gt;= v$(var.VCREDIST_VER)"
-                  InstallArguments="/install /quiet /norestart">
-
-        <ExePackagePayload Description="Microsoft Visual C++ 2015-2022 Redistributable - ARM64"
-                           ProductName="Microsoft Visual C++ 2015-2022 Redistributable - ARM64"
-                           Size="$(var.VCREDIST_ARM64_SIZE)"
-                           Version="$(var.VCREDIST_VER)"
-                           Hash="$(var.VCREDIST_ARM64_SHA512)"
-                           Name="VC_redist.arm64.exe"
-                           DownloadUrl="$(var.VCREDIST_ARM64_URL)" />
-
-        <!-- Newer version installed is fine -->
-        <ExitCode Value="1638" Behavior="success" />
-      </ExePackage>
-
-      <MsiPackage Id="Moonlight_x64"
+      <MsiPackage Id="Omnuv_x64"
                   SourceFile="$(env.BUILD_ROOT)\build-x64-$(env.BUILD_CONFIG)\Moonlight.msi"
-                  Name="Moonlight_x64.msi"
-                  InstallCondition="(VersionNT64 AND NOT NativeMachine) OR (NativeMachine = 34404)"
-                  Vital="yes">
-        <MsiProperty Name="INSTALLFOLDER" Value="[InstallFolder]" />
-        <MsiProperty Name="ADDDESKTOPSHORTCUT" Value="[AddDesktopShortcutCheckbox]" />
-      </MsiPackage>
-
-      <MsiPackage Id="Moonlight_arm64"
-                  SourceFile="$(env.BUILD_ROOT)\build-arm64-$(env.BUILD_CONFIG)\Moonlight.msi"
-                  Name="Moonlight_arm64.msi"
-                  InstallCondition="NativeMachine = 43620"
+                  Name="Omnuv_x64.msi"
                   Vital="yes">
         <MsiProperty Name="INSTALLFOLDER" Value="[InstallFolder]" />
         <MsiProperty Name="ADDDESKTOPSHORTCUT" Value="[AddDesktopShortcutCheckbox]" />
