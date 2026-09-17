@@ -137,9 +137,13 @@ QHash<int, QByteArray> MachineModel::roleNames() const
 
 // The one place the API's shape is read. Everything above works on Machine.
 //
-// A full reset every refresh, rather than a diff. With a handful of machines
-// nobody sees it; with a hundred it would throw away the selection and the
-// scroll position every fifteen seconds, and then it is worth comparing rows.
+// **The same machines in the same order are updated where they stand; only a
+// different list is a reset.** It was a reset every refresh, and a reset
+// destroys every card and builds it again: fifteen seconds apart, for ever,
+// which repainted each card's picture, dropped whatever the pointer was over,
+// and meant a machine going from Starting to Running could never *change* on
+// screen — the card that was starting was gone before the one that is running
+// arrived. Rows are matched by Core's id, never by name.
 void MachineModel::replace(const QJsonArray& machines)
 {
     // Remember what each machine was, so a *transition* can be told from a
@@ -148,8 +152,8 @@ void MachineModel::replace(const QJsonArray& machines)
     QHash<QString, QString> previous = m_lastStatus;
     QSet<QString> wasWaiting = m_lastWaiting;
 
-    beginResetModel();
-    m_machines.clear();
+    QList<Machine> next;
+    next.reserve(machines.size());
 
     for (const QJsonValue& value : machines) {
         const QJsonObject o = value.toObject();
@@ -193,8 +197,17 @@ void MachineModel::replace(const QJsonArray& machines)
         }
         m.summary = parts.join(QStringLiteral(" · "));
 
-        m_machines.append(m);
+        next.append(m);
     }
+
+    bool sameRows = next.size() == m_machines.size();
+    for (int i = 0; sameRows && i < next.size(); ++i) {
+        sameRows = next.at(i).id == m_machines.at(i).id;
+    }
+    if (!sameRows) {
+        beginResetModel();
+    }
+    m_machines = next;
 
     // What to announce, decided here and emitted after the reset, so that a
     // handler which reads this model finds it already consistent.
@@ -233,7 +246,11 @@ void MachineModel::replace(const QJsonArray& machines)
         }
     }
 
-    endResetModel();
+    if (!sameRows) {
+        endResetModel();
+    } else if (!m_machines.isEmpty()) {
+        emit dataChanged(index(0), index(m_machines.size() - 1));
+    }
 
     // Not on the first load: everything would look new, and a person opening
     // the application does not need to be told about machines they can already

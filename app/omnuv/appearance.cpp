@@ -4,6 +4,7 @@
 #include <QGuiApplication>
 #include <QOperatingSystemVersion>
 #include <QQuickStyle>
+#include <QStyleHints>
 #include <QWindow>
 
 #ifdef Q_OS_WIN
@@ -14,8 +15,6 @@
 #include <QSettings>
 #include <windows.h>
 #include <dwmapi.h>
-#else
-#include <QStyleHints>
 #endif
 
 namespace {
@@ -52,8 +51,23 @@ bool queryAnimations()
 #endif
 }
 
+// `OMNUV_THEME=light|dark`, the sibling of `OMNUV_STYLE` below and the same
+// kind of thing: a debugging switch so the rig can photograph both themes
+// without anybody changing its Windows settings. Anything else, including
+// unset, is "ask the system". **It works where the platform theme honours
+// `requestColorScheme()`** — Windows and macOS do; Qt's generic Unix theme
+// does not, so the Linux loop draws dark whatever this says.
+int forcedTheme()
+{
+    const QByteArray forced = qgetenv("OMNUV_THEME");
+    return forced == "dark" ? 1 : forced == "light" ? 0 : -1;
+}
+
 bool queryDark()
 {
+    if (forcedTheme() >= 0) {
+        return forcedTheme() == 1;
+    }
 #ifdef Q_OS_WIN
     // HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\
     // Personalize, value `AppsUseLightTheme`, a DWORD, where 0 means dark.
@@ -219,6 +233,14 @@ void OmnuvAppearance::applyStyle()
     // the defects that cost 15 September were FluentWinUI3's sizing under the
     // software backend, which runs on Linux just as well. A debugging switch,
     // not a preference: nothing sets it in a shipped configuration.
+    // The theme first, because the style reads it as it loads. Qt draws the
+    // controls from `QStyleHints::colorScheme()`, so that is what is set; and
+    // `queryDark()` answers the same, so `Theme` and the style cannot disagree.
+    if (forcedTheme() >= 0) {
+        QGuiApplication::styleHints()->setColorScheme(forcedTheme() == 1 ? Qt::ColorScheme::Dark
+                                                                       : Qt::ColorScheme::Light);
+    }
+
     const QString forced = qEnvironmentVariable("OMNUV_STYLE");
     if (!forced.isEmpty()) {
         QQuickStyle::setStyle(forced);

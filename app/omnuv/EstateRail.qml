@@ -14,9 +14,9 @@
 // never the target behind it; the history names *Omnuv* for marketplace
 // changes, which is Core's resolution, never the provider that observed them.
 
-import QtQuick 2.9
-import QtQuick.Controls 2.2
-import QtQuick.Layouts 1.3
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
 
 import Omnuv 1.0
 import "estate.js" as Estate
@@ -33,6 +33,9 @@ ColumnLayout {
     component Section: ColumnLayout {
         id: section
         property string title
+        property string icon: ""
+        // A word beside the title: "Estimate".
+        property string tag: ""
         property var read: null
         // A hairline above every section but the first: sections are told
         // apart by space and a rule, never by a box.
@@ -48,25 +51,60 @@ ColumnLayout {
             Layout.fillWidth: true
             Layout.bottomMargin: Theme.spacingLoose
             implicitHeight: 1
-            color: Theme.strokeCard
+            color: Theme.strokeDivider
         }
 
-        Label {
+        // A glyph and a name in sentence case — Windows does not shout its
+        // headings — with whatever the section wants to say beside them.
+        RowLayout {
             Layout.fillWidth: true
-            text: section.title
-            font.family: Theme.textFamily
-            font.pixelSize: Theme.captionSize
-            font.weight: Theme.strongWeight
-            font.letterSpacing: 0.5
-            opacity: 0.6
+            Layout.bottomMargin: Theme.spacingTight
+            spacing: Theme.spacing
+
+            Glyph {
+                icon: section.icon
+                size: 14
+                opacity: 0.7
+            }
+            Label {
+                text: section.title
+                font.family: Theme.textFamily
+                font.pixelSize: Theme.bodySize
+                font.weight: Theme.strongWeight
+            }
+            Pill {
+                visible: section.tag !== ""
+                text: section.tag
+            }
+            Item {
+                Layout.fillWidth: true
+            }
         }
 
-        Label {
-            visible: section.state_ === "loading"
-            text: qsTr("Reading…")
-            font.family: Theme.textFamily
-            font.pixelSize: Theme.bodySize
-            opacity: 0.4
+        // A first load is the shape of what is coming, breathing — not a
+        // word. It stops the moment the read lands or fails, and under
+        // reduced motion it holds still.
+        Repeater {
+            model: section.state_ === "loading" ? [0.62, 0.38] : []
+
+            Rectangle {
+                Layout.preferredWidth: section.width * modelData
+                implicitHeight: index === 0 ? 14 : 10
+                Layout.topMargin: 2
+                radius: Theme.radiusControl
+                color: Theme.fillSubtle
+                Accessible.name: qsTr("Reading")
+
+                SequentialAnimation on opacity {
+                    // Only while it can be seen: an animation on a hidden
+                    // item still ticks, and an organization with no project
+                    // hides this rail with its reads never made.
+                    running: Theme.motion && parent.visible
+                    loops: Animation.Infinite
+                    NumberAnimation { from: 1; to: 0.35; duration: 700; easing.type: Easing.InOutSine }
+                    NumberAnimation { from: 0.35; to: 1; duration: 700; easing.type: Easing.InOutSine }
+                }
+            }
         }
 
         Label {
@@ -128,7 +166,8 @@ ColumnLayout {
     Section {
         id: network
         rule: false
-        title: qsTr("NETWORK")
+        title: qsTr("Network")
+        icon: Theme.icon.network
         read: rail.estate.networks
         readonly property var net: {
             var d = rail.estate.networks.data
@@ -198,7 +237,8 @@ ColumnLayout {
 
     Section {
         id: endpoints
-        title: qsTr("ENDPOINTS")
+        title: qsTr("Endpoints")
+        icon: Theme.icon.globe
         read: rail.estate.endpoints
         readonly property var rows: rail.estate.endpoints.data
 
@@ -247,7 +287,8 @@ ColumnLayout {
 
     Section {
         id: inference
-        title: qsTr("INFERENCE")
+        title: qsTr("Inference")
+        icon: Theme.icon.key
         read: rail.estate.keys
         readonly property var keys: rail.estate.keys.data
         readonly property var usage: rail.estate.usage.data
@@ -272,7 +313,9 @@ ColumnLayout {
     // charged, and no surface may imply otherwise.
     Section {
         id: spend
-        title: qsTr("SPEND, 30 DAYS · ESTIMATE")
+        title: qsTr("Spend, 30 days")
+        icon: Theme.icon.spend
+        tag: qsTr("Estimate")
         read: rail.estate.usage
         readonly property var usage: rail.estate.usage.data
         // The day, not the second: the series changes when a day turns over
@@ -287,8 +330,8 @@ ColumnLayout {
 
             Label {
                 text: spend.usage ? Estate.money(spend.usage.cost, spend.usage.currency) : ""
-                font.family: Theme.textFamily
-                font.pixelSize: Theme.subtitleSize
+                font.family: Theme.displayFamily
+                font.pixelSize: Theme.titleSize
                 font.weight: Theme.strongWeight
             }
 
@@ -298,7 +341,7 @@ ColumnLayout {
             Canvas {
                 id: spark
                 Layout.fillWidth: true
-                Layout.preferredHeight: 28
+                Layout.preferredHeight: 36
                 Layout.alignment: Qt.AlignVCenter
                 property var points: spend.points
                 property string drawn: ""
@@ -333,12 +376,15 @@ ColumnLayout {
                         max = Math.max(max, p[i])
                     }
                     var last = Math.max(1, Math.round((p.length - 1) * progress))
-                    ctx.strokeStyle = Theme.accent
-                    ctx.lineWidth = 1.5
+                    var a = Theme.accent
+                    var rgb = Math.round(a.r * 255) + "," + Math.round(a.g * 255) + "," + Math.round(a.b * 255)
+                    var x = 0, y = 0
                     ctx.beginPath()
                     for (var j = 0; j <= last; j++) {
-                        var x = j * (width - 2) / (p.length - 1) + 1
-                        var y = height - 2 - (max > 0 ? p[j] / max * (height - 4) : 0)
+                        x = j * (width - 8) / (p.length - 1) + 1
+                        // The floor sits a little above the picture's edge,
+                        // so a quiet month still has an area under it.
+                        y = height - 12 - (max > 0 ? p[j] / max * (height - 18) : 0)
                         if (j === 0) {
                             ctx.moveTo(x, y)
                         }
@@ -346,7 +392,26 @@ ColumnLayout {
                             ctx.lineTo(x, y)
                         }
                     }
+                    ctx.lineJoin = "round"
+                    ctx.lineWidth = 2
+                    ctx.strokeStyle = "rgba(" + rgb + ",1)"
                     ctx.stroke()
+                    // The area under it, fading out: what Dev Home's widgets
+                    // and Task Manager do, and what makes a line read as an
+                    // amount rather than as a scribble.
+                    ctx.lineTo(x, height)
+                    ctx.lineTo(1, height)
+                    ctx.closePath()
+                    var fill = ctx.createLinearGradient(0, 0, 0, height)
+                    fill.addColorStop(0, "rgba(" + rgb + ",0.38)")
+                    fill.addColorStop(1, "rgba(" + rgb + ",0)")
+                    ctx.fillStyle = fill
+                    ctx.fill()
+                    // Today.
+                    ctx.beginPath()
+                    ctx.arc(x, y, 3, 0, Math.PI * 2)
+                    ctx.fillStyle = "rgba(" + rgb + ",1)"
+                    ctx.fill()
                 }
             }
         }
@@ -362,7 +427,8 @@ ColumnLayout {
 
     Section {
         id: changes
-        title: qsTr("CHANGES")
+        title: qsTr("Changes")
+        icon: Theme.icon.history
         read: rail.estate.history
         readonly property var rows: rail.estate.history.data
         readonly property var broken: {
@@ -391,24 +457,54 @@ ColumnLayout {
         Repeater {
             model: changes.rows !== undefined ? changes.rows : []
 
-            ColumnLayout {
+            // A timeline: a dot per change and a thread between them, so
+            // three changes read as one history rather than three notes.
+            RowLayout {
                 Layout.fillWidth: true
-                Layout.bottomMargin: Theme.spacing
-                spacing: 0
+                spacing: Theme.spacingLoose
 
-                Label {
-                    Layout.fillWidth: true
-                    text: Estate.sentence(modelData)
-                    wrapMode: Text.WordWrap
-                    font.family: Theme.textFamily
-                    font.pixelSize: Theme.bodySize
+                Item {
+                    Layout.fillHeight: true
+                    implicitWidth: 8
+
+                    Rectangle {
+                        visible: index < changes.rows.length - 1
+                        x: 3.5
+                        y: 14
+                        width: 1
+                        height: parent.height - 8
+                        color: Theme.strokeDivider
+                    }
+                    Rectangle {
+                        y: 6
+                        width: 8
+                        height: 8
+                        radius: 4
+                        color: index === 0 ? Theme.accent : "transparent"
+                        border.width: index === 0 ? 0 : 1
+                        border.color: Theme.fillNeutral
+                    }
                 }
-                Caption {
-                    text: qsTr("%1 · %2 · version %3").arg(Estate.ago(modelData.at, rail.now))
-                                                                .arg(modelData.actor)
-                                                                .arg(modelData.epoch)
-                    elide: Label.ElideRight
-                    wrapMode: Text.NoWrap
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    Layout.bottomMargin: Theme.spacingLoose
+                    spacing: 0
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: Estate.sentence(modelData)
+                        wrapMode: Text.WordWrap
+                        font.family: Theme.textFamily
+                        font.pixelSize: Theme.bodySize
+                    }
+                    Caption {
+                        text: qsTr("%1 · %2 · version %3").arg(Estate.ago(modelData.at, rail.now))
+                                                                    .arg(modelData.actor)
+                                                                    .arg(modelData.epoch)
+                        elide: Label.ElideRight
+                        wrapMode: Text.NoWrap
+                    }
                 }
             }
         }

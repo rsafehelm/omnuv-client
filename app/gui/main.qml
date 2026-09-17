@@ -21,7 +21,10 @@ ApplicationWindow {
 
     id: window
     width: 1280
-    height: 600
+    // Omnuv: 720, not upstream's 600. A machine card leads with a picture and
+    // is taller than a host tile was; at 600 one row of them fitted and the
+    // second was a sliver. Still inside a 1366x768 laptop with its taskbar.
+    height: 720
 
     // Omnuv: the tray lives in C++ (app/omnuv/tray.cpp), not here. A QML tray
     // meant importing Qt.labs.platform, and `windeployqt --qmldir app\gui`

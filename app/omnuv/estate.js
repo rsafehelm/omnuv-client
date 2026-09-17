@@ -159,6 +159,11 @@ function pulse(counts, machinesLoaded, parked) {
     if (machinesLoaded) {
         out.push({ label: "running", n: counts["Running"] || 0, tone: "running" })
         out.push({ label: "starting", n: counts["Starting"] || 0, tone: "starting" })
+        // Trouble is counted when there is some and not mentioned when there
+        // is none: "0 need attention" is a sentence nobody needs to read.
+        if ((counts["Needs attention"] || 0) > 0) {
+            out.push({ label: "attention", n: counts["Needs attention"], tone: "attention" })
+        }
     }
     if (parked) {
         out.push({ label: "waiting", n: waiting(parked).length, tone: "waiting" })

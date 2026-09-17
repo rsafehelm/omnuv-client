@@ -9,9 +9,9 @@
 // is drawn from the newest history row and from nothing else — and not drawn
 // at all until that row has arrived, because version 0 is a claim.
 
-import QtQuick 2.9
-import QtQuick.Controls 2.2
-import QtQuick.Layouts 1.3
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
 
 import Omnuv 1.0
 import "estate.js" as Estate
@@ -52,8 +52,11 @@ ColumnLayout {
         Label {
             text: Omnuv.projectName
             elide: Label.ElideRight
-            Layout.maximumWidth: header.width * 0.6
-            font.family: Theme.textFamily
+            // A number, not a share of the header's width: a limit that
+            // follows the width the layout is in the middle of deciding sends
+            // the layout round again, and Qt logs the loop.
+            Layout.maximumWidth: 520
+            font.family: Theme.displayFamily
             font.pixelSize: Theme.titleSize
             font.weight: Theme.strongWeight
         }
@@ -93,78 +96,130 @@ ColumnLayout {
         return null
     }
 
-    component Counter: Rectangle {
+    // Running is green, starting amber, waiting the accent, stopped grey: the
+    // same colours, under the same words, as every card.
+    function tone(label) {
+        return label === "running" ? Theme.fillSuccess
+             : label === "starting" ? Theme.fillCaution
+             : label === "waiting" ? Theme.accent
+             : label === "attention" ? Theme.fillCritical
+             : Theme.fillNeutral
+    }
+
+    // **The fleet at a glance: one thin bar, shared out by what the machines
+    // are doing.** Six machines running and one stopped is a bar that is
+    // nearly all green before a number is read, which four equal pills could
+    // never say. The legend beneath carries the numbers and the words, so the
+    // bar is never the only carrier of anything.
+    // What the bar is shared between: the counters that have something to
+    // show. Widths are worked out here rather than by a layout, because a
+    // layout inside a layout whose children come and go rearranges itself in
+    // a loop, and says so in the log.
+    readonly property var meterRows: {
+        var out = []
+        for (var i = 0; i < pulseRows.length; i++) {
+            if (pulseRows[i].n > 0) {
+                out.push(pulseRows[i])
+            }
+        }
+        return out
+    }
+    readonly property int meterTotal: {
+        var n = 0
+        for (var i = 0; i < meterRows.length; i++) {
+            n += meterRows[i].n
+        }
+        return n
+    }
+
+    Item {
+        id: meter
+        Layout.fillWidth: true
+        Layout.maximumWidth: 520
+        implicitHeight: 6
+        visible: header.meterTotal > 0
+        Accessible.ignored: true
+
+        Row {
+            spacing: 3
+
+            Repeater {
+                model: header.meterRows
+
+                Rectangle {
+                    width: Math.max(6, (meter.width - 3 * (header.meterRows.length - 1)) * modelData.n / header.meterTotal)
+                    height: 6
+                    radius: 3
+                    color: header.tone(modelData.label)
+                    opacity: modelData.label === "stopped" ? 0.45 : 1
+                }
+            }
+        }
+    }
+
+    component Counter: Row {
         id: counter
         property string label
         property string word
         readonly property var row: header.pulseRow(label)
         readonly property int n: row !== null ? row.n : 0
-        // Running is green, starting amber, waiting the accent, stopped grey:
-        // the same dot-and-word rule as every card, on the same wash as a pill.
-        readonly property color tone: label === "running" ? Theme.fillSuccess
-                                    : label === "starting" ? Theme.fillCaution
-                                    : label === "waiting" ? Theme.accent
-                                    : Theme.fillNeutral
         visible: row !== null
-        implicitHeight: 28
-        implicitWidth: counterRow.implicitWidth + 2 * Theme.spacingLoose
-        radius: height / 2
-        color: Qt.rgba(tone.r, tone.g, tone.b, 0.14)
+        spacing: Theme.spacingTight + 2
         Accessible.role: Accessible.StaticText
         Accessible.name: qsTr("%1 %2").arg(n).arg(word)
 
-        Row {
-            id: counterRow
-            anchors.centerIn: parent
-            spacing: Theme.spacing
+        Rectangle {
+            anchors.verticalCenter: parent.verticalCenter
+            width: Theme.spacing
+            height: Theme.spacing
+            radius: width / 2
+            color: counter.label === "stopped" ? "transparent" : header.tone(counter.label)
+            border.width: counter.label === "stopped" ? 1 : 0
+            border.color: header.tone(counter.label)
+        }
 
-            Rectangle {
-                anchors.verticalCenter: parent.verticalCenter
-                width: Theme.spacing
-                height: Theme.spacing
-                radius: width / 2
-                color: counter.label === "stopped" ? "transparent" : counter.tone
-                border.width: counter.label === "stopped" ? 1 : 0
-                border.color: counter.tone
+        Label {
+            id: number
+            anchors.verticalCenter: parent.verticalCenter
+            text: counter.n
+            font.family: Theme.textFamily
+            font.pixelSize: Theme.bodySize
+            font.weight: Theme.strongWeight
+            transformOrigin: Item.Center
+
+            // A counter that moved pops once, alone. Nothing pulses at
+            // rest, and with animations off this is instant.
+            SequentialAnimation {
+                id: pop
+                NumberAnimation { target: number; property: "scale"; to: 1.25; duration: Theme.durationFaster }
+                NumberAnimation { target: number; property: "scale"; to: 1.0; duration: Theme.durationFast }
             }
+        }
 
-            Label {
-                id: number
-                anchors.verticalCenter: parent.verticalCenter
-                text: counter.n
-                font.family: Theme.textFamily
-                font.pixelSize: Theme.bodySize
-                font.weight: Theme.strongWeight
-                transformOrigin: Item.Center
-
-                // A counter that moved pops once, alone. Nothing pulses at
-                // rest, and with animations off this is instant.
-                SequentialAnimation {
-                    id: pop
-                    NumberAnimation { target: number; property: "scale"; to: 1.25; duration: Theme.durationFaster }
-                    NumberAnimation { target: number; property: "scale"; to: 1.0; duration: Theme.durationFast }
-                }
-            }
-
-            Label {
-                anchors.verticalCenter: parent.verticalCenter
-                text: counter.word
-                font.family: Theme.textFamily
-                font.pixelSize: Theme.bodySize
-                opacity: 0.8
-            }
+        Label {
+            anchors.verticalCenter: parent.verticalCenter
+            text: counter.word
+            font.family: Theme.textFamily
+            font.pixelSize: Theme.bodySize
+            opacity: 0.78
         }
 
         onNChanged: pop.restart()
     }
 
-    Flow {
-        Layout.fillWidth: true
-        spacing: Theme.spacing
-        visible: header.pulseRows.length > 0
+    // A Row, not a Flow: a Flow's height follows its width, and inside a
+    // ColumnLayout that is a layout rearranging itself mid-rearrange — Qt says
+    // so in the log and gives up after two turns. Five short counters fit the
+    // narrowest window this view is laid out for.
+    Row {
+        spacing: Theme.padding
+        // Nothing to count is said once, by the empty state in the grid —
+        // not four times over as a row of zeros.
+        visible: header.meterTotal > 0
 
         Counter { label: "running"; word: qsTr("running") }
         Counter { label: "starting"; word: qsTr("starting") }
+        Counter { label: "attention"; word: counter_attention.n === 1 ? qsTr("needs attention") : qsTr("need attention"); id: counter_attention }
         Counter { label: "waiting"; word: qsTr("waiting") }
         Counter { label: "stopped"; word: qsTr("stopped") }
     }
@@ -179,18 +234,5 @@ ColumnLayout {
         font.family: Theme.textFamily
         font.pixelSize: Theme.captionSize
         color: Theme.fillCritical
-    }
-
-    // Nothing rented yet — said only once the list has actually been read.
-    Label {
-        Layout.fillWidth: true
-        Layout.topMargin: Theme.padding
-        visible: Omnuv.machines.loaded && Omnuv.machines.count === 0 && header.waiting.length === 0
-        text: qsTr("No machines yet. Rent one in the Omnuv console and it will appear here.")
-        wrapMode: Text.WordWrap
-        horizontalAlignment: Text.AlignHCenter
-        font.family: Theme.textFamily
-        font.pixelSize: Theme.bodySize
-        opacity: 0.7
     }
 }

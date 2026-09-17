@@ -1,6 +1,6 @@
 pragma Singleton
 
-import QtQuick 2.9
+import QtQuick
 
 import Omnuv 1.0
 
@@ -43,6 +43,10 @@ QtObject {
     // itself for the top-level frame: nothing here has to know.
     readonly property int radiusOverlay: 8
     readonly property int radiusControl: 4
+    // A card that carries a picture — Store, Xbox, the Settings home page —
+    // is drawn at the overlay radius rather than the control one. A machine
+    // card is that kind of card, so it borrows the number and says why.
+    readonly property int radiusCard: radiusOverlay
 
     // ---- Type -----------------------------------------------------------
     //
@@ -82,6 +86,19 @@ QtObject {
         return candidates[candidates.length - 1]
     }
     readonly property string textFamily: firstInstalled(textFamilies)
+
+    // Segoe UI Variable has an optical-size axis, and Windows publishes its
+    // three stops as families of their own: Small, Text and Display. The type
+    // ramp uses Display from Subtitle (20px) up, where its tighter spacing and
+    // finer joins are what make a Windows 11 title look like one. Where it is
+    // not installed the text family is the answer, which is what it was.
+    readonly property string displayFamily: firstInstalled(["Segoe UI Variable Display"].concat(textFamilies))
+
+    // A machine's private name is something a person copies into a terminal,
+    // so it is drawn in the face a terminal uses. Cascadia ships with Windows
+    // 11; Consolas with everything before it. `monospace` is not a family on
+    // Windows and resolved to Courier New, which is nobody's idea of native.
+    readonly property string monoFamily: firstInstalled(["Cascadia Mono", "Cascadia Code", "Consolas", "monospace"])
 
     // Caption 12/16 Regular. Microsoft's stated floor for legibility is 12px
     // Regular, so nothing in this application goes below it.
@@ -247,7 +264,39 @@ QtObject {
 
     readonly property color fillCard: onDarkSurface ? "#0DFFFFFF" : "#B3FFFFFF"
     readonly property color strokeCard: onDarkSurface ? "#19000000" : "#0F000000"
+    // Pointer over a card: ControlFillColorSecondary, the fill WinUI gives a
+    // SettingsCard under the pointer, with ControlStrokeColorSecondary.
+    readonly property color fillCardHover: onDarkSurface ? "#15FFFFFF" : "#80F9F9F9"
+    readonly property color strokeCardHover: onDarkSurface ? "#18FFFFFF" : "#29000000"
+    // LayerFillColorDefault: the quiet surface content sits on above Mica —
+    // the rail and the messages bar. One step below a card, on purpose.
+    readonly property color fillLayer: onDarkSurface ? "#4C3A3A3A" : "#80FFFFFF"
+    // DividerStrokeColorDefault, for a rule between things on one surface.
+    readonly property color strokeDivider: onDarkSurface ? "#15FFFFFF" : "#0F000000"
+    // SubtleFillColorSecondary: a chip, a skeleton, a track.
+    readonly property color fillSubtle: onDarkSurface ? "#0FFFFFFF" : "#09000000"
 
+    // ---- The lit tile -----------------------------------------------------
+    //
+    // The organization's initial, and the badge of an empty state, sit on a
+    // tile of the person's own accent colour lit from one side — the same
+    // light that falls across the pictures on the machine cards
+    // (`MachineArt.qml`), so the window has one source of it.
+    //
+    // **Always a deep colour, in both themes, because white sits on it.** The
+    // palette's accent is dark on a light desktop and *light* on a dark one
+    // (Windows hands dark mode SystemAccentColorLight2), and a white initial
+    // on that is unreadable. So the tile is built from the accent's hue at a
+    // fixed, low lightness rather than from the accent itself, and its second
+    // stop is the first turned a seventh of the way round the wheel.
+    function deep(c, lightness, turn) {
+        var h = (c.hslHue < 0 ? 0.58 : c.hslHue) + turn
+        return Qt.hsla(h - Math.floor(h), Math.min(0.85, Math.max(0.45, c.hslSaturation)), lightness, 1)
+    }
+    readonly property color tileFrom: deep(accent, 0.42, 0)
+    readonly property color tileTo: deep(accent, 0.34, 0.14)
+
+    // The four system fill colours a status is painted with — see above.
     readonly property color fillSuccess: onDarkSurface ? "#6CCB5F" : "#0F7B0F"
     readonly property color fillCaution: onDarkSurface ? "#FCE100" : "#9D5D00"
     readonly property color fillCritical: onDarkSurface ? "#FF99A4" : "#C42B1C"
@@ -297,5 +346,20 @@ QtObject {
         readonly property string info: "\uE946"          // Info
         readonly property string warning: "\uE7BA"       // Warning
         readonly property string error: "\uE783"         // Error
+        readonly property string game: "\uE7FC"          // Game
+        readonly property string terminal: "\uE756"      // CommandPrompt
+        readonly property string network: "\uE968"       // Network
+        readonly property string globe: "\uE774"         // Globe
+        readonly property string key: "\uE8D7"           // Permissions
+        readonly property string spend: "\uE8C7"         // PaymentCard
+        readonly property string history: "\uE81C"       // History
+        readonly property string chevronUp: "\uE70E"     // ChevronUp
+        readonly property string chevronDown: "\uE70D"   // ChevronDown
+        readonly property string cloud: "\uE753"         // Cloud
+        readonly property string waiting: "\uE823"       // Recent
+        readonly property string message: "\uE8BD"       // Message
+        readonly property string completed: "\uE930"     // Completed
+        readonly property string sync: "\uE895"          // Sync
+        readonly property string ring: "\uEA3A"          // CircleRing
     }
 }

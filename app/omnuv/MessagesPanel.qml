@@ -9,9 +9,9 @@
 //
 // Severity is a word and a tone, never a tone alone.
 
-import QtQuick 2.9
-import QtQuick.Controls 2.2
-import QtQuick.Layouts 1.3
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
 
 import Omnuv 1.0
 import "estate.js" as Estate
@@ -47,19 +47,29 @@ Rectangle {
              : qsTr("note")
     }
 
+    // A quiet bar along the window's floor, on the layer fill — the surface
+    // Windows puts content on above Mica — the way Docker Desktop and Visual
+    // Studio keep a system line at the bottom. One step below a card, so it
+    // never competes with the machines.
     implicitHeight: column.implicitHeight
-    color: "transparent"
+    radius: Theme.radiusOverlay
+    color: Theme.fillLayer
+    border.width: 1
+    border.color: Theme.strokeCard
+    clip: true
 
-    // A hairline above, not a box around: the panel is part of the window.
-    Rectangle {
-        width: parent.width
-        height: 1
-        color: Theme.strokeCard
+    Behavior on implicitHeight {
+        NumberAnimation {
+            duration: Theme.durationNormal
+            easing.type: Easing.Bezier
+            easing.bezierCurve: Theme.easeEntrance
+        }
     }
 
     ColumnLayout {
         id: column
-        width: parent.width
+        x: Theme.padding
+        width: parent.width - 2 * Theme.padding
         spacing: 0
 
         // The fold: a title, the newest message when folded, and the toggle.
@@ -73,15 +83,20 @@ Rectangle {
             Accessible.name: panel.open ? qsTr("Hide messages from Omnuv") : qsTr("Show messages from Omnuv")
             onClicked: panel.open = !panel.open
 
+            background: Item {}
             contentItem: RowLayout {
                 spacing: Theme.spacingLoose
 
+                Glyph {
+                    icon: Theme.icon.message
+                    size: 14
+                    opacity: 0.7
+                }
                 Label {
                     text: qsTr("Messages from Omnuv")
                     font.family: Theme.textFamily
-                    font.pixelSize: Theme.captionSize
+                    font.pixelSize: Theme.bodySize
                     font.weight: Theme.strongWeight
-                    opacity: 0.7
                 }
 
                 Pill {
@@ -121,7 +136,7 @@ Rectangle {
                 }
 
                 Label {
-                    text: Theme.iconsInstalled ? (panel.open ? "" : "")
+                    text: Theme.iconsInstalled ? (panel.open ? Theme.icon.chevronDown : Theme.icon.chevronUp)
                                                : (panel.open ? qsTr("Hide") : qsTr("Show"))
                     font.family: Theme.iconsInstalled ? Theme.iconFamily : Theme.textFamily
                     font.pixelSize: Theme.captionSize
@@ -135,6 +150,7 @@ Rectangle {
             id: list
             Layout.fillWidth: true
             Layout.preferredHeight: panel.open ? Math.min(contentHeight, 168) : 0
+            Layout.bottomMargin: panel.open ? Theme.spacing : 0
             visible: panel.open
             clip: true
             interactive: contentHeight > height

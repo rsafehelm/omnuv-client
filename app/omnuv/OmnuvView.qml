@@ -16,10 +16,10 @@
 // menu, for the rare machine with several. `CliStartStreamSegue` proves the
 // path: the CLI has started a named application without the grid all along.
 
-import QtQuick 2.9
-import QtQuick.Controls 2.2
-import QtQuick.Layouts 1.3
-import QtQuick.Window 2.2
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+import QtQuick.Window
 
 import ComputerModel 1.0
 import ComputerManager 1.0
@@ -584,7 +584,7 @@ Item {
                 text: pairing.pin
                 font.pixelSize: Theme.titleSize
                 font.letterSpacing: 6
-                font.family: "monospace"
+                font.family: Theme.monoFamily
             }
 
             Button {
@@ -609,7 +609,7 @@ Item {
                 text: pairing.detail
                 wrapMode: Text.WordWrap
                 font.pixelSize: Theme.captionSize
-                font.family: "monospace"
+                font.family: Theme.monoFamily
                 opacity: 0.6
             }
         }
@@ -649,13 +649,23 @@ Item {
     ColumnLayout {
         anchors.centerIn: parent
         width: Math.min(parent.width - 80, 460)
-        spacing: 16
+        spacing: Theme.padding
         visible: !Omnuv.signedIn
+
+        // Whose window this is, before anything is asked.
+        Image {
+            Layout.alignment: Qt.AlignHCenter
+            Layout.bottomMargin: Theme.spacing
+            source: "omnuv.svg"
+            sourceSize: Qt.size(64, 64)
+        }
 
         Label {
             Layout.fillWidth: true
             text: qsTr("Sign in to Omnuv")
-            font.pointSize: 20
+            font.family: Theme.displayFamily
+            font.pixelSize: Theme.titleSize
+            font.weight: Theme.strongWeight
             horizontalAlignment: Text.AlignHCenter
         }
 
@@ -666,7 +676,9 @@ Item {
                        "You will not be asked for a password.")
             wrapMode: Text.WordWrap
             horizontalAlignment: Text.AlignHCenter
-            opacity: 0.7
+            font.family: Theme.textFamily
+            font.pixelSize: Theme.bodySize
+            opacity: 0.78
         }
 
         TextField {
@@ -683,6 +695,8 @@ Item {
             visible: Omnuv.userCode === ""
             enabled: !Omnuv.busy && coreField.text.trim() !== ""
             text: Omnuv.busy ? qsTr("Working…") : qsTr("Sign in")
+            highlighted: true
+            implicitWidth: Math.max(140, implicitContentWidth + leftPadding + rightPadding)
             onClicked: {
                 Omnuv.coreUrl = coreField.text
                 Omnuv.signIn()
@@ -710,12 +724,40 @@ Item {
                 opacity: 0.7
             }
 
-            Label {
+            // The code, a character to a tile: it is read aloud, typed on a
+            // phone and compared by eye, and a tile per character is how every
+            // one of those goes right. A separator Core put in the code is
+            // kept as one, between the tiles.
+            Row {
                 Layout.alignment: Qt.AlignHCenter
-                text: Omnuv.userCode
-                font.pointSize: 30
-                font.letterSpacing: 4
-                font.family: "monospace"
+                Layout.topMargin: Theme.spacing
+                Layout.bottomMargin: Theme.spacing
+                spacing: Theme.spacingTight + 2
+                Accessible.role: Accessible.StaticText
+                Accessible.name: Omnuv.userCode
+
+                Repeater {
+                    model: Omnuv.userCode.split("")
+
+                    Rectangle {
+                        readonly property bool separator: modelData === "-" || modelData === " "
+                        width: separator ? 12 : 44
+                        height: 56
+                        radius: Theme.radiusControl
+                        color: separator ? "transparent" : Theme.fillCard
+                        border.width: separator ? 0 : 1
+                        border.color: Theme.strokeCardHover
+
+                        Label {
+                            anchors.centerIn: parent
+                            text: modelData
+                            font.family: Theme.monoFamily
+                            font.pixelSize: Theme.titleSize
+                            font.weight: Theme.strongWeight
+                            opacity: parent.separator ? 0.5 : 1
+                        }
+                    }
+                }
             }
 
             Button {
@@ -759,12 +801,8 @@ Item {
         radius: Theme.radiusControl
         color: Qt.rgba(tone.r, tone.g, tone.b, 0.12)
 
-        Rectangle {
-            width: 3
-            height: parent.height
-            radius: 1.5
-            color: notice.tone
-        }
+        border.width: 1
+        border.color: Qt.rgba(tone.r, tone.g, tone.b, 0.30)
 
         RowLayout {
             id: noticeRow
@@ -772,6 +810,14 @@ Item {
             anchors.leftMargin: Theme.padding
             anchors.rightMargin: Theme.spacing
             spacing: Theme.spacingLoose
+
+            // The InfoBar's own severity glyph, in its tone; the sentence
+            // beside it is what says what is wrong.
+            Glyph {
+                icon: Theme.icon.warning
+                size: 16
+                color: notice.tone
+            }
 
             Label {
                 id: noticeText
@@ -791,6 +837,67 @@ Item {
         }
     }
 
+    // Nothing to show yet, said the same way wherever it is said: the lit
+    // tile the organization wears, a title, a sentence, and at most one
+    // action. The window's own colours, where a stock illustration would be
+    // somebody else's.
+    component EmptyState: ColumnLayout {
+        id: empty
+        property string icon
+        property alias title: emptyTitle.text
+        property alias text: emptyText.text
+        property alias actionText: emptyAction.text
+        signal action()
+
+        width: Math.min(parent.width, 460)
+        spacing: Theme.spacing
+
+        Rectangle {
+            Layout.alignment: Qt.AlignHCenter
+            Layout.bottomMargin: Theme.spacingLoose
+            implicitWidth: 72
+            implicitHeight: 72
+            radius: 20
+            gradient: Gradient {
+                orientation: Gradient.Horizontal
+                GradientStop { position: 0; color: Theme.tileFrom }
+                GradientStop { position: 1; color: Theme.tileTo }
+            }
+
+            Glyph {
+                anchors.centerIn: parent
+                icon: empty.icon
+                size: 32
+                color: "white"
+            }
+        }
+        Label {
+            id: emptyTitle
+            Layout.fillWidth: true
+            horizontalAlignment: Text.AlignHCenter
+            font.family: Theme.displayFamily
+            font.pixelSize: Theme.subtitleSize
+            font.weight: Theme.strongWeight
+        }
+        Label {
+            id: emptyText
+            Layout.fillWidth: true
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+            font.family: Theme.textFamily
+            font.pixelSize: Theme.bodySize
+            opacity: 0.78
+        }
+        Button {
+            id: emptyAction
+            visible: text !== ""
+            Layout.alignment: Qt.AlignHCenter
+            Layout.topMargin: Theme.spacingLoose
+            highlighted: true
+            onClicked: empty.action()
+        }
+    }
+
     // The colour this window's controls are drawn on, handed to `Theme` so
     // the cards choose their fill from the surface they sit on. A Control,
     // because a Control is what carries the palette the style resolved.
@@ -804,10 +911,18 @@ Item {
         value: surfaceProbe.palette.window
     }
 
+    // Light behind the top of the window, signed in or not.
+    Aurora {
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: Math.min(parent.height, 360)
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: Theme.padding + Theme.spacing
-        spacing: Theme.spacingLoose
+        spacing: Theme.padding
         visible: Omnuv.signedIn
 
         OrganizationBand {
@@ -844,34 +959,13 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
 
-            ColumnLayout {
+            EmptyState {
                 anchors.centerIn: parent
-                width: Math.min(parent.width, 460)
-                spacing: Theme.spacing
-
-                Label {
-                    Layout.fillWidth: true
-                    horizontalAlignment: Text.AlignHCenter
-                    text: qsTr("No project yet")
-                    font.family: Theme.textFamily
-                    font.pixelSize: Theme.subtitleSize
-                    font.weight: Theme.strongWeight
-                }
-                Label {
-                    Layout.fillWidth: true
-                    horizontalAlignment: Text.AlignHCenter
-                    wrapMode: Text.WordWrap
-                    text: qsTr("This organization has no project to show. Signing in to the Omnuv console sets up a new workspace, and this window fills in once it exists.")
-                    font.family: Theme.textFamily
-                    font.pixelSize: Theme.bodySize
-                    opacity: 0.7
-                }
-                Button {
-                    Layout.alignment: Qt.AlignHCenter
-                    Layout.topMargin: Theme.spacing
-                    text: qsTr("Check again")
-                    onClicked: Omnuv.refresh(true)
-                }
+                icon: Theme.icon.cloud
+                title: qsTr("No project yet")
+                text: qsTr("This organization has no project to show. Signing in to the Omnuv console sets up a new workspace, and this window fills in once it exists.")
+                actionText: qsTr("Check again")
+                onAction: Omnuv.refresh(true)
             }
         }
 
@@ -880,7 +974,7 @@ Item {
             visible: !Omnuv.noProject
             Layout.fillWidth: true
             Layout.fillHeight: true
-            spacing: Theme.padding + Theme.spacing
+            spacing: Theme.padding
 
             readonly property bool wideEnough: width >= 900
 
@@ -911,7 +1005,12 @@ Item {
                     readonly property int gap: Theme.spacingLoose
                     readonly property int columns: Math.max(1, Math.floor(width / 292))
                     cellWidth: Math.floor(width / columns)
-                    cellHeight: 224
+                    // A picture, a name, a state and a button, with room for a
+                    // launch under way and for two lines of Core's reason.
+                    cellHeight: 292
+                    // The shadows reach past the cards; the first row's must
+                    // not be cut by the grid's own edge.
+                    topMargin: 4
 
                     ScrollBar.vertical: ScrollBar {}
 
@@ -926,6 +1025,109 @@ Item {
                         repeat: true
                         running: machineList.visible && machineList.Window.active
                         onTriggered: machineList.now = Date.now()
+                    }
+
+                    // Nothing rented yet — said only once the list has actually
+                    // been read, and not while something is waiting for
+                    // capacity, which is drawn as a card of its own.
+                    EmptyState {
+                        visible: Omnuv.machines.loaded && Omnuv.machines.count === 0 && estateHeader.waiting.length === 0
+                        x: (machineList.width - width) / 2
+                        y: Math.max(0, (machineList.height - height) / 2 - 24)
+                        icon: Theme.icon.game
+                        title: qsTr("No machines yet")
+                        text: qsTr("Rent one in the Omnuv console and it appears here, ready to play.")
+                    }
+
+                    // The cards arrive, one after another, rising a little as
+                    // they do — Windows' own entrance, and its own curve. Once:
+                    // a refresh updates the cards where they stand
+                    // (`MachineModel::replace`), so this runs when the list is
+                    // first read or is a different list, not every fifteen
+                    // seconds. Under reduced motion every duration is zero and
+                    // the cards are simply there.
+                    populate: Transition {
+                        id: arrive
+                        SequentialAnimation {
+                            PropertyAction { property: "opacity"; value: 0 }
+                            PauseAnimation { duration: Theme.motion ? Math.min(arrive.ViewTransition.index, 6) * 45 : 0 }
+                            ParallelAnimation {
+                                NumberAnimation { property: "opacity"; to: 1; duration: Theme.durationNormal }
+                                NumberAnimation {
+                                    property: "y"
+                                    from: arrive.ViewTransition.destination.y + 18
+                                    to: arrive.ViewTransition.destination.y
+                                    duration: Theme.durationSlow
+                                    easing.type: Easing.Bezier
+                                    easing.bezierCurve: Theme.easeEntrance
+                                }
+                            }
+                        }
+                    }
+
+                    // Until the machines have been read: the shape of what is
+                    // coming, breathing, in the places the cards will take —
+                    // Docker Desktop draws its empty list the same way. Three,
+                    // because that is a row; gone the moment the list lands.
+                    Row {
+                        visible: !Omnuv.machines.loaded
+                        z: 2
+
+                        Repeater {
+                            model: Omnuv.machines.loaded ? 0 : Math.min(3, machineList.columns)
+
+                            Item {
+                                width: machineList.cellWidth
+                                height: machineList.cellHeight
+
+                                Rectangle {
+                                    width: parent.width - machineList.gap
+                                    height: parent.height - machineList.gap
+                                    radius: Theme.radiusCard
+                                    color: Theme.fillCard
+                                    border.width: 1
+                                    border.color: Theme.strokeCard
+
+                                    Column {
+                                        x: Theme.padding
+                                        y: 64 + Theme.padding
+                                        width: parent.width - 2 * Theme.padding
+                                        spacing: Theme.spacingLoose
+
+                                        Repeater {
+                                            model: [0.55, 0.8, 0.4]
+
+                                            Rectangle {
+                                                width: parent.width * modelData
+                                                height: index === 0 ? 20 : 12
+                                                radius: Theme.radiusControl
+                                                color: Theme.fillSubtle
+                                            }
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        x: 1
+                                        y: 1
+                                        width: parent.width - 2
+                                        height: 64
+                                        topLeftRadius: Theme.radiusCard - 1
+                                        topRightRadius: Theme.radiusCard - 1
+                                        color: Theme.fillSubtle
+                                    }
+
+                                    SequentialAnimation on opacity {
+                                        // Only while it can be seen: an
+                                        // animation on a hidden item still
+                                        // ticks, for ever, with no project.
+                                        running: Theme.motion && parent.visible
+                                        loops: Animation.Infinite
+                                        NumberAnimation { from: 1; to: 0.45; duration: 700; easing.type: Easing.InOutSine }
+                                        NumberAnimation { from: 0.45; to: 1; duration: 700; easing.type: Easing.InOutSine }
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     delegate: MachineCard {
@@ -976,7 +1178,7 @@ Item {
                                             ctx.lineWidth = 1
                                             ctx.setLineDash([4, 3])
                                             ctx.beginPath()
-                                            ctx.roundedRect(0, 0, width, height, Theme.radiusControl, Theme.radiusControl)
+                                            ctx.roundedRect(0, 0, width, height, Theme.radiusCard, Theme.radiusCard)
                                             ctx.stroke()
                                         }
                                     }
@@ -988,11 +1190,29 @@ Item {
                                         height: outline.height - 2 * Theme.padding
                                         spacing: Theme.spacing
 
+                                        // The place a machine's picture will
+                                        // be, holding the one thing known
+                                        // about it so far: it is waiting.
+                                        Rectangle {
+                                            Layout.bottomMargin: Theme.spacing
+                                            implicitWidth: 36
+                                            implicitHeight: 36
+                                            radius: Theme.radiusOverlay
+                                            color: Theme.fillSubtle
+                                            visible: Theme.iconsInstalled
+
+                                            Glyph {
+                                                anchors.centerIn: parent
+                                                icon: Theme.icon.waiting
+                                                size: 18
+                                                opacity: 0.8
+                                            }
+                                        }
                                         Label {
                                             Layout.fillWidth: true
                                             text: qsTr("Waiting for capacity")
-                                            font.family: Theme.textFamily
-                                            font.pixelSize: Theme.bodySize
+                                            font.family: Theme.displayFamily
+                                            font.pixelSize: Theme.subtitleSize
                                             font.weight: Theme.strongWeight
                                             elide: Label.ElideRight
                                         }
@@ -1037,30 +1257,35 @@ Item {
                 }
             }
 
-            // The rail, with a hairline between it and the machines rather
-            // than a box around it. It scrolls on its own when it is taller
-            // than the window.
+            // The rail, on one quiet layer — LayerFillColorDefault, the
+            // surface Windows lays content on above Mica — rather than a box
+            // per section. It scrolls on its own when it is taller than the
+            // window.
             Rectangle {
                 visible: estateBody.wideEnough
+                Layout.preferredWidth: 320
                 Layout.fillHeight: true
-                implicitWidth: 1
-                color: Theme.strokeCard
-            }
+                radius: Theme.radiusOverlay
+                color: Theme.fillLayer
+                border.width: 1
+                border.color: Theme.strokeCard
 
-            Flickable {
-                id: railScroller
-                visible: estateBody.wideEnough
-                Layout.preferredWidth: 300
-                Layout.fillHeight: true
-                contentHeight: sideRail.implicitHeight
-                clip: true
-                boundsBehavior: Flickable.StopAtBounds
-                ScrollBar.vertical: ScrollBar {}
+                Flickable {
+                    id: railScroller
+                    anchors.fill: parent
+                    anchors.margins: 1
+                    contentHeight: sideRail.implicitHeight + 2 * Theme.padding
+                    clip: true
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar {}
 
-                EstateRail {
-                    id: sideRail
-                    width: railScroller.width
-                    now: machineList.now
+                    EstateRail {
+                        id: sideRail
+                        x: Theme.padding
+                        y: Theme.padding
+                        width: railScroller.width - 2 * Theme.padding
+                        now: machineList.now
+                    }
                 }
             }
         }

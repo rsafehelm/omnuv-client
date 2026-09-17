@@ -19,6 +19,7 @@
 #include <QNetworkRequest>
 #include <QDesktopServices>
 #include <QProcess>
+#include <QGuiApplication>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QUrl>
@@ -72,13 +73,29 @@ OmnuvSession::OmnuvSession(QObject* parent)
       m_pairing(new OmnuvPairing(&m_net, this))
 {
     QSettings settings;
-    m_coreUrl = settings.value(QStringLiteral("omnuv/coreUrl")).toString();
-    if (m_coreUrl.isEmpty()) {
-        // Set at build time for a packaged client; typed in by hand otherwise.
-        m_coreUrl = QString::fromLocal8Bit(qgetenv("OMNUV_CORE_URL"));
-    }
+    if (m_fixture) {
+        // **A guest in somebody else's house.** `OMNUV_FIXTURE_URL` is how the
+        // two loops photograph a populated window against
+        // `deployment/client-linux/fixture-core.py` — and the Windows rig is
+        // signed in to production, with a real token in Credential Manager and
+        // a saved address the end-to-end harness depends on. So a fixture run
+        // reads neither and writes neither: the address is the variable, the
+        // token is the one string only the fixture accepts, and every place
+        // below that would remember or forget something asks `m_fixture`
+        // first. A real token is never sent to a fixture, because it is never
+        // loaded.
+        m_coreUrl = qEnvironmentVariable("OMNUV_FIXTURE_URL");
+        m_token = QStringLiteral("fixture-token");
+        qInfo() << "omnuv: fixture session against" << m_coreUrl << "- nothing saved is read or written";
+    } else {
+        m_coreUrl = settings.value(QStringLiteral("omnuv/coreUrl")).toString();
+        if (m_coreUrl.isEmpty()) {
+            // Set at build time for a packaged client; typed in by hand otherwise.
+            m_coreUrl = QString::fromLocal8Bit(qgetenv("OMNUV_CORE_URL"));
+        }
 
-    loadToken();
+        loadToken();
+    }
 
     // The tunnel asks for a key only when the device has never enrolled.
     connect(m_tunnel, &OmnuvTunnel::needsKey, this, &OmnuvSession::fetchDeviceKey);
@@ -105,7 +122,9 @@ OmnuvSession::OmnuvSession(QObject* parent)
     // No fetch here: the view asks when it opens, and again when a person
     // comes back to it from a stream. Doing both would send two requests every
     // time the application starts.
-    m_projectId = settings.value(QStringLiteral("omnuv/projectId")).toString();
+    if (!m_fixture) {
+        m_projectId = settings.value(QStringLiteral("omnuv/projectId")).toString();
+    }
 
     if (signedIn()) {
         m_refreshTimer.start();
@@ -162,7 +181,7 @@ void OmnuvSession::fetchIdentity()
         }
         if (!m_projectIds.contains(m_projectId)) {
             m_projectId = m_projectIds.value(0);
-            QSettings().setValue(QStringLiteral("omnuv/projectId"), m_projectId);
+            remember(QStringLiteral("omnuv/projectId"), m_projectId);
         }
         m_estate->setProject(m_projectId);
         if (m_projectIds.isEmpty()) {
@@ -182,7 +201,7 @@ void OmnuvSession::selectProject(const QString& id)
         return;
     }
     m_projectId = id;
-    QSettings().setValue(QStringLiteral("omnuv/projectId"), m_projectId);
+    remember(QStringLiteral("omnuv/projectId"), m_projectId);
     emit projectsChanged();
     // The machines on screen belong to the project that was chosen a moment
     // ago; leaving them there would be showing one project's estate under
@@ -202,6 +221,13 @@ QString OmnuvSession::projectQuery() const
 }
 
 
+void OmnuvSession::remember(const QString& key, const QString& value)
+{
+    if (!m_fixture) {
+        QSettings().setValue(key, value);
+    }
+}
+
 void OmnuvSession::loadToken()
 {
     m_token = OmnuvCredentials::load();
@@ -212,7 +238,7 @@ void OmnuvSession::saveToken(const QString& token)
     // Says so when it could not. A client that signs in, fails to remember it,
     // and says nothing sends the person through the whole browser dance again
     // at the next launch with no idea why.
-    if (!OmnuvCredentials::store(token)) {
+    if (!m_fixture && !OmnuvCredentials::store(token)) {
         setStatus(tr("Signed in, but this device could not remember it."));
     }
 }
@@ -228,7 +254,7 @@ void OmnuvSession::setCoreUrl(const QString& url)
     }
 
     m_coreUrl = trimmed;
-    QSettings().setValue(QStringLiteral("omnuv/coreUrl"), m_coreUrl);
+    remember(QStringLiteral("omnuv/coreUrl"), m_coreUrl);
     emit coreUrlChanged();
 }
 
@@ -380,7 +406,7 @@ void OmnuvSession::poll()
         // "Could not find your network" for an address it no longer had.
         // Found on the rig on 16 September, by an access log that showed the
         // request had never been made.
-        QSettings().setValue(QStringLiteral("omnuv/coreUrl"), m_coreUrl);
+        remember(QStringLiteral("omnuv/coreUrl"), m_coreUrl);
         clearPending();
         emit signedInChanged();
         setStatus(QString());
@@ -394,7 +420,9 @@ void OmnuvSession::signOut()
 {
     // Both the credential store and any file an older version left behind.
     // Signing out must not leave a token anywhere.
-    OmnuvCredentials::clear();
+    if (!m_fixture) {
+        OmnuvCredentials::clear();
+    }
     m_token.clear();
     m_identityKnown = false;
     m_refreshTimer.stop();
@@ -409,7 +437,9 @@ void OmnuvSession::signOut()
 // signed in, rather than retrying a token that is dead.
 void OmnuvSession::accessTakenBack()
 {
-    OmnuvCredentials::clear();
+    if (!m_fixture) {
+        OmnuvCredentials::clear();
+    }
     m_token.clear();
     m_identityKnown = false;
     m_refreshTimer.stop();
@@ -845,6 +875,12 @@ static void registerOmnuvTypes()
     qmlRegisterSingletonType<OmnuvSession>("Omnuv", 1, 0, "Omnuv",
                                            [](QQmlEngine*, QJSEngine*) -> QObject* {
                                                auto* session = new OmnuvSession();
+                                               // The title bar says the product's name. The
+                                               // *application* name stays `OmnuvClient` —
+                                               // settings, the credential target and the log
+                                               // directory are keyed on it — and with no display
+                                               // name set Qt titled the window with that.
+                                               QGuiApplication::setApplicationDisplayName(QStringLiteral("Omnuv"));
                                                // The tray is created here rather than in main.cpp
                                                // because this is our file and that one is
                                                // upstream's. By the time the QML engine resolves

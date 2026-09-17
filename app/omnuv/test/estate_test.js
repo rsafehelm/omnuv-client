@@ -84,6 +84,8 @@ check('pulse: an unread source is left out, never drawn as zero', () => {
     assert.deepStrictEqual(plain(E.pulse({}, false, undefined)), []);
     const p = E.pulse({ Running: 2, Stopped: 1 }, true, undefined);
     assert.deepStrictEqual(plain(p.map((c) => c.label)), ['running', 'starting', 'stopped']);
+    const r = E.pulse({ Running: 1, 'Needs attention': 2 }, true, undefined);
+    assert.deepStrictEqual(plain(r.map((c) => [c.label, c.n])), [['running', 1], ['starting', 0], ['attention', 2], ['stopped', 0]]);
     const q = E.pulse({}, false, [{ status: 'WAITING' }, { status: 'PLACED' }]);
     assert.deepStrictEqual(plain(q.map((c) => [c.label, c.n])), [['waiting', 1]]);
 });

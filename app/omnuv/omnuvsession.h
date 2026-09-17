@@ -245,6 +245,10 @@ private:
     // urgent, because a widget holds a token across reboots rather than for
     // the minutes an application is open.
     void loadToken();
+    // The one door to QSettings for what a session remembers, shut in a
+    // fixture session — see the constructor.
+    void remember(const QString& key, const QString& value);
+    const bool m_fixture = qEnvironmentVariableIsSet("OMNUV_FIXTURE_URL");
     void saveToken(const QString& token);
 
     QNetworkAccessManager m_net;

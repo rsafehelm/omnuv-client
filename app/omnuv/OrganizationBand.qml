@@ -8,9 +8,9 @@
 // thing on the bar drawn in the accent. With one project there is nothing to
 // switch, so the row is not drawn — a switch with one position is furniture.
 
-import QtQuick 2.9
-import QtQuick.Controls 2.2
-import QtQuick.Layouts 1.3
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
 
 import Omnuv 1.0
 
@@ -34,19 +34,26 @@ RowLayout {
         return parts.join(" \u00B7 ")
     }
 
-    // Whose cloud: an initial on the accent's wash, the name, and the two
-    // facts about the person's place in it.
+    // Whose cloud: an initial on the accent, lit from one corner like the
+    // pictures on the cards below it, then the name and the two facts about
+    // the person's place in it. The tile is always a deep colour, so the
+    // initial is always white — see `Theme.tileFrom`.
     Rectangle {
         visible: bar.estate.organizationName !== ""
-        implicitWidth: 36
-        implicitHeight: 36
+        implicitWidth: 40
+        implicitHeight: 40
         radius: Theme.radiusOverlay
-        color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.22)
+        gradient: Gradient {
+            orientation: Gradient.Horizontal
+            GradientStop { position: 0; color: Theme.tileFrom }
+            GradientStop { position: 1; color: Theme.tileTo }
+        }
 
         Label {
             anchors.centerIn: parent
             text: bar.estate.organizationName.charAt(0).toUpperCase()
-            font.family: Theme.textFamily
+            color: "white"
+            font.family: Theme.displayFamily
             font.pixelSize: Theme.subtitleSize
             font.weight: Theme.strongWeight
         }
@@ -94,16 +101,37 @@ RowLayout {
         Repeater {
             model: Omnuv.projectIds
 
-            Button {
+            // Windows' SelectorBar: every name plain, and a short rule in
+            // the accent under the one in view. A filled button here was the
+            // loudest thing in the window, louder than Play, for a choice
+            // most people make once.
+            ToolButton {
+                id: segment
                 readonly property bool selected: modelData === Omnuv.projectId
                 text: Omnuv.projectNames[index]
-                flat: !selected
-                highlighted: selected
                 font.family: Theme.textFamily
                 font.pixelSize: Theme.bodySize
                 font.weight: selected ? Theme.strongWeight : Theme.regularWeight
+                opacity: selected || hovered ? 1 : 0.78
                 Accessible.name: selected ? qsTr("%1, the project in view").arg(text) : text
                 onClicked: Omnuv.selectProject(modelData)
+
+                Rectangle {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.bottom: parent.bottom
+                    anchors.bottomMargin: 1
+                    width: segment.selected ? 16 : 0
+                    height: 3
+                    radius: 1.5
+                    color: Theme.accent
+                    Behavior on width {
+                        NumberAnimation {
+                            duration: Theme.durationFast
+                            easing.type: Easing.Bezier
+                            easing.bezierCurve: Theme.easeEntrance
+                        }
+                    }
+                }
             }
         }
     }

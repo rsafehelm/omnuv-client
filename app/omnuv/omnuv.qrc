@@ -5,8 +5,11 @@
 -->
 <RCC>
     <qresource prefix="/omnuv">
+        <file>Aurora.qml</file>
         <file>EstateRail.qml</file>
         <file>EstateHeader.qml</file>
+        <file>Glyph.qml</file>
+        <file>MachineArt.qml</file>
         <file>MachineCard.qml</file>
         <file>MessagesPanel.qml</file>
         <file>OmnuvCliSegue.qml</file>
@@ -16,6 +19,7 @@
         <file>Pill.qml</file>
         <file>StreamSettingsSheet.qml</file>
         <file>Theme.qml</file>
+        <file>card-shadow.png</file>
         <file>estate.js</file>
         <file>omnuv.svg</file>
     </qresource>
