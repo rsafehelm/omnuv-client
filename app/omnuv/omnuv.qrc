@@ -5,13 +5,15 @@
 -->
 <RCC>
     <qresource prefix="/omnuv">
-        <file>EstateFooter.qml</file>
+        <file>EstateRail.qml</file>
         <file>EstateHeader.qml</file>
         <file>MachineCard.qml</file>
+        <file>MessagesPanel.qml</file>
         <file>OmnuvCliSegue.qml</file>
         <file>OmnuvSegue.qml</file>
         <file>OmnuvView.qml</file>
         <file>OrganizationBand.qml</file>
+        <file>Pill.qml</file>
         <file>StreamSettingsSheet.qml</file>
         <file>Theme.qml</file>
         <file>estate.js</file>

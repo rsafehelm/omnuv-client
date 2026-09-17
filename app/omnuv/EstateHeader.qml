@@ -1,6 +1,8 @@
-// Omnuv: the top of band two — which project, which version of it, and a
-// count of what its machines are doing. The machine cards follow it; the rest
-// of the band is `EstateFooter.qml`.
+// Omnuv: the top of the estate — which project, which version of it, and a
+// count of what its machines are doing. The machine grid follows it and the
+// rest of the estate is `EstateRail.qml`. What is waiting for capacity is
+// drawn in the grid itself, and a refresh that failed is one notice under the
+// top bar (`OmnuvView.qml`), which reads `stale` from here.
 //
 // **The version is the map's epoch.** "Version 41 of your cloud, and it last
 // changed two minutes ago" is what the map exists to let a tenant say, so it
@@ -27,8 +29,8 @@ ColumnLayout {
     readonly property var parked: estate.parked.data
     readonly property var waiting: parked !== undefined ? Estate.waiting(parked) : []
 
-    // One banner for the whole band. Rows that could not be refreshed stay on
-    // screen, dimmed by their own column; this says why, once.
+    // The reads that could not be refreshed. Their rows stay on screen,
+    // dimmed where they are drawn; the view says why, once.
     readonly property var stale: Estate.staleOf([estate.parked, estate.networks, estate.devices,
                                                  estate.endpoints, estate.keys, estate.usage,
                                                  estate.history])
@@ -48,23 +50,30 @@ ColumnLayout {
         spacing: Theme.spacingLoose
 
         Label {
-            Layout.fillWidth: true
             text: Omnuv.projectName
             elide: Label.ElideRight
+            Layout.maximumWidth: header.width * 0.6
             font.family: Theme.textFamily
-            font.pixelSize: Theme.subtitleSize
+            font.pixelSize: Theme.titleSize
             font.weight: Theme.strongWeight
         }
 
-        Label {
+        // The version, as a thing with a name rather than a number in prose.
+        Pill {
             visible: header.head !== null
-            text: header.head === null ? ""
-                                       : qsTr("version %1 · last change %2")
-                                         .arg(header.head.epoch)
-                                         .arg(Estate.ago(header.head.at, header.now))
+            tone: Theme.accent
+            strong: true
+            text: header.head === null ? "" : qsTr("version %1").arg(header.head.epoch)
+        }
+
+        Label {
+            Layout.fillWidth: true
+            visible: header.head !== null
+            text: header.head === null ? "" : qsTr("changed %1").arg(Estate.ago(header.head.at, header.now))
+            elide: Label.ElideRight
             font.family: Theme.textFamily
             font.pixelSize: Theme.captionSize
-            opacity: 0.7
+            opacity: 0.6
         }
     }
 
@@ -84,53 +93,66 @@ ColumnLayout {
         return null
     }
 
-    component Counter: Row {
+    component Counter: Rectangle {
         id: counter
         property string label
         property string word
         readonly property var row: header.pulseRow(label)
         readonly property int n: row !== null ? row.n : 0
+        // Running is green, starting amber, waiting the accent, stopped grey:
+        // the same dot-and-word rule as every card, on the same wash as a pill.
+        readonly property color tone: label === "running" ? Theme.fillSuccess
+                                    : label === "starting" ? Theme.fillCaution
+                                    : label === "waiting" ? Theme.accent
+                                    : Theme.fillNeutral
         visible: row !== null
-        spacing: Theme.spacingTight
+        implicitHeight: 28
+        implicitWidth: counterRow.implicitWidth + 2 * Theme.spacingLoose
+        radius: height / 2
+        color: Qt.rgba(tone.r, tone.g, tone.b, 0.14)
         Accessible.role: Accessible.StaticText
         Accessible.name: qsTr("%1 %2").arg(n).arg(word)
 
-        // Running fills, starting is drawn as progress, waiting is a ring in
-        // the accent and stopped is hollow: the dot-and-word rule of every card.
-        Rectangle {
-            anchors.verticalCenter: parent.verticalCenter
-            width: Theme.spacing
-            height: Theme.spacing
-            radius: width / 2
-            color: counter.label === "running" ? Theme.fillSuccess
-                 : counter.label === "starting" ? Theme.fillCaution
-                 : "transparent"
-            border.width: counter.label === "stopped" || counter.label === "waiting" ? 1 : 0
-            border.color: counter.label === "waiting" ? Theme.accent : Theme.fillNeutral
-        }
+        Row {
+            id: counterRow
+            anchors.centerIn: parent
+            spacing: Theme.spacing
 
-        Label {
-            id: number
-            text: counter.n
-            font.family: Theme.textFamily
-            font.pixelSize: Theme.bodySize
-            font.weight: Theme.strongWeight
-            transformOrigin: Item.Center
-
-            // A counter that moved pops once, alone. Nothing pulses at rest,
-            // and with animations off this is instant.
-            SequentialAnimation {
-                id: pop
-                NumberAnimation { target: number; property: "scale"; to: 1.25; duration: Theme.durationFaster }
-                NumberAnimation { target: number; property: "scale"; to: 1.0; duration: Theme.durationFast }
+            Rectangle {
+                anchors.verticalCenter: parent.verticalCenter
+                width: Theme.spacing
+                height: Theme.spacing
+                radius: width / 2
+                color: counter.label === "stopped" ? "transparent" : counter.tone
+                border.width: counter.label === "stopped" ? 1 : 0
+                border.color: counter.tone
             }
-        }
 
-        Label {
-            text: counter.word
-            font.family: Theme.textFamily
-            font.pixelSize: Theme.bodySize
-            opacity: 0.7
+            Label {
+                id: number
+                anchors.verticalCenter: parent.verticalCenter
+                text: counter.n
+                font.family: Theme.textFamily
+                font.pixelSize: Theme.bodySize
+                font.weight: Theme.strongWeight
+                transformOrigin: Item.Center
+
+                // A counter that moved pops once, alone. Nothing pulses at
+                // rest, and with animations off this is instant.
+                SequentialAnimation {
+                    id: pop
+                    NumberAnimation { target: number; property: "scale"; to: 1.25; duration: Theme.durationFaster }
+                    NumberAnimation { target: number; property: "scale"; to: 1.0; duration: Theme.durationFast }
+                }
+            }
+
+            Label {
+                anchors.verticalCenter: parent.verticalCenter
+                text: counter.word
+                font.family: Theme.textFamily
+                font.pixelSize: Theme.bodySize
+                opacity: 0.8
+            }
         }
 
         onNChanged: pop.restart()
@@ -138,48 +160,13 @@ ColumnLayout {
 
     Flow {
         Layout.fillWidth: true
-        spacing: Theme.padding
+        spacing: Theme.spacing
         visible: header.pulseRows.length > 0
 
         Counter { label: "running"; word: qsTr("running") }
         Counter { label: "starting"; word: qsTr("starting") }
         Counter { label: "waiting"; word: qsTr("waiting") }
         Counter { label: "stopped"; word: qsTr("stopped") }
-    }
-
-    // Stale: what is shown is kept, and said to be old.
-    Rectangle {
-        Layout.fillWidth: true
-        visible: header.stale.length > 0
-        implicitHeight: staleRow.implicitHeight + 2 * Theme.spacing
-        radius: Theme.radiusControl
-        color: "transparent"
-        border.width: 1
-        border.color: Theme.fillCaution
-
-        RowLayout {
-            id: staleRow
-            anchors.fill: parent
-            anchors.margins: Theme.spacing
-            spacing: Theme.spacing
-
-            Label {
-                Layout.fillWidth: true
-                text: header.stale.length === 0 ? ""
-                      : qsTr("Showing %1 — could not refresh: %2")
-                        .arg(Qt.formatTime(header.oldestStale(), "HH:mm"))
-                        .arg(header.stale[0].problem)
-                wrapMode: Text.WordWrap
-                font.family: Theme.textFamily
-                font.pixelSize: Theme.captionSize
-            }
-
-            Button {
-                text: qsTr("Try again")
-                flat: true
-                onClicked: Omnuv.estate.retryAll()
-            }
-        }
     }
 
     // Waiting requests that could not be read at all. The pulse leaves the
@@ -192,35 +179,6 @@ ColumnLayout {
         font.family: Theme.textFamily
         font.pixelSize: Theme.captionSize
         color: Theme.fillCritical
-    }
-
-    // Requests waiting for capacity. A clock, not a spinner: waiting is not
-    // activity, and the reason is Core's, verbatim.
-    Repeater {
-        model: header.waiting
-
-        ColumnLayout {
-            Layout.fillWidth: true
-            spacing: 0
-
-            Label {
-                Layout.fillWidth: true
-                text: qsTr("Waiting: %1").arg(modelData.waiting_on)
-                wrapMode: Text.WordWrap
-                font.family: Theme.textFamily
-                font.pixelSize: Theme.bodySize
-            }
-
-            Label {
-                Layout.fillWidth: true
-                text: qsTr("%1 · gives up %2").arg(modelData.billing)
-                                                  .arg(Estate.ago(modelData.expires_at, header.now))
-                wrapMode: Text.WordWrap
-                font.family: Theme.textFamily
-                font.pixelSize: Theme.captionSize
-                opacity: 0.7
-            }
-        }
     }
 
     // Nothing rented yet — said only once the list has actually been read.

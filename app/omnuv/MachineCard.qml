@@ -9,7 +9,7 @@
 // network — not observed" in the browser and "Private network — not observed"
 // here has learned one thing, not two.
 //
-// Used as a ListView delegate, so `model` and `index` are the delegate's own
+// Used as a GridView delegate, so `model` and `index` are the delegate's own
 // context. It reports what a person pressed and decides nothing: the view above
 // owns connecting, because connecting is upstream's machinery and this file is
 // a rendering.
@@ -27,6 +27,16 @@ ItemDelegate {
     // the same second, so there is one timer for the screen rather than one per
     // card — and a card that is not on a screen is not driving anything.
     property double now: 0
+
+    // Space kept free on the right and below, so cards laid edge to edge in
+    // a grid cell still stand apart. The card fills its cell; the gap is
+    // part of it and draws nothing.
+    property int gap: 0
+
+    readonly property string summaryText: model.summary
+    rightInset: gap
+    bottomInset: gap
+    clip: true
 
     signal primaryActivated()
     signal chooseAppRequested()
@@ -177,6 +187,8 @@ ItemDelegate {
         id: body
         anchors.fill: parent
         anchors.margins: Theme.padding
+        anchors.rightMargin: Theme.padding + card.gap
+        anchors.bottomMargin: Theme.padding + card.gap
         spacing: Theme.spacing
 
         // ---- Name, and the state in a word ------------------------------
@@ -185,11 +197,20 @@ ItemDelegate {
             spacing: Theme.spacingLoose
 
             Label {
-                Layout.fillWidth: true
                 text: model.name
+                Layout.maximumWidth: card.width * 0.5
                 font.family: Theme.textFamily
                 font.pixelSize: Theme.bodySize
                 font.weight: Theme.strongWeight
+                elide: Label.ElideRight
+            }
+
+            Label {
+                Layout.fillWidth: true
+                text: model.region
+                font.family: Theme.textFamily
+                font.pixelSize: Theme.captionSize
+                opacity: 0.6
                 elide: Label.ElideRight
             }
 
@@ -198,221 +219,162 @@ ItemDelegate {
             // purpose, so the word is the only thing left carrying meaning —
             // and a person who cannot tell amber from green is in the same
             // position on an ordinary display.
-            RowLayout {
-                spacing: Theme.spacingTight
-
-                Rectangle {
-                    Layout.alignment: Qt.AlignVCenter
-                    implicitWidth: Theme.spacing
-                    implicitHeight: Theme.spacing
-                    radius: Theme.spacing / 2
-                    color: card.statusColour(model.status)
-                }
-
-                Label {
-                    text: model.status
-                    font.family: Theme.textFamily
-                    font.pixelSize: Theme.captionSize
-                }
+            Pill {
+                tone: card.statusColour(model.status)
+                dot: true
+                text: model.status
             }
         }
 
         // ---- What it is, and where ---------------------------------------
+        //
+        // Core's summary, one chip per fact. Split
+        // on the separator Core itself puts between the facts, so a summary
+        // with three facts or five draws three chips or five.
+        Flow {
+            Layout.fillWidth: true
+            spacing: Theme.spacingTight
+
+            Repeater {
+                // Through the card: inside a Repeater, `model` is the
+                // Repeater's own property, not this machine.
+                model: card.summaryText !== "" ? card.summaryText.split(" \u00B7 ") : []
+
+                Pill {
+                    text: modelData
+                }
+            }
+
+        }
+
+        // The name it answers to on the project network — the one address
+        // this application ever connects to. Empty until one is assigned.
         Label {
             Layout.fillWidth: true
-            text: model.summary + " · " + model.region
-            font.family: Theme.textFamily
+            visible: model.host !== ""
+            text: model.host
+            font.family: "monospace"
             font.pixelSize: Theme.captionSize
             opacity: 0.7
             elide: Label.ElideRight
         }
 
-        // ---- The name it answers to, and when it was last seen ------------
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: Theme.spacingLoose
-            // A machine with no address yet has neither of these to show, and
-            // an empty row of two blanks reads as something failing to load.
-            // The test is the model's field rather than the sentence built
-            // from it: `observed()` reads the clock, so asking it here would
-            // re-evaluate this binding every second to get the same answer.
-            visible: model.host !== "" || model.observed
-
-            Label {
-                text: model.host
-                font.family: "monospace"
-                font.pixelSize: Theme.captionSize
-                opacity: 0.7
-                elide: Label.ElideRight
-                Layout.fillWidth: true
-            }
-
-            Label {
-                text: card.observed()
-                font.family: Theme.textFamily
-                font.pixelSize: Theme.captionSize
-                opacity: 0.5
-                visible: text !== ""
-            }
-        }
-
         // ---- The ladder, while something is happening --------------------
+        //
+        // Compact, because the card is a grid cell: the four steps are four
+        // segments, and the one step that matters — the first that is not
+        // done — is named beneath them with its note and its clock. The
+        // steps, their states and their words are still `ladder()`'s, so the
+        // console and this card say the same thing; only the drawing folded.
         ColumnLayout {
+            id: ladderView
             Layout.fillWidth: true
             Layout.topMargin: Theme.spacingTight
-            spacing: 0
+            spacing: Theme.spacingTight
             visible: card.launching
 
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.bottomMargin: Theme.spacingLoose
-                implicitHeight: 1
-                color: Theme.strokeCard
-            }
+            readonly property var steps: card.launching ? card.ladder() : []
 
-            Repeater {
-                id: ladderSteps
-                // Re-evaluated whenever anything the steps are built from
-                // moves, which is the model reset every refresh.
-                model: card.launching ? card.ladder() : []
-
-                delegate: RowLayout {
-                    id: step
-                    Layout.fillWidth: true
-                    spacing: Theme.spacingLoose
-
-                    readonly property bool isDone: modelData.state === "done"
-                    readonly property bool isActive: modelData.state === "active"
-                    readonly property bool isFailed: modelData.state === "failed"
-                    readonly property bool isUnknown: modelData.state === "unknown"
-
-                    // The marker, and the line that ties it to the next one.
-                    // Not aligned to the top: the column has to stretch to the
-                    // row's height or the connector has nothing to fill.
-                    ColumnLayout {
-                        spacing: 0
-
-                        Rectangle {
-                            // One body line tall, so a marker and its label sit
-                            // on the same baseline without a magic number.
-                            implicitWidth: Theme.bodyLineHeight
-                            implicitHeight: Theme.bodyLineHeight
-                            radius: Theme.bodyLineHeight / 2
-                            color: step.isDone ? Theme.fillSuccess
-                                               : step.isFailed ? Theme.fillCritical
-                                                               : "transparent"
-                            border.width: (step.isDone || step.isFailed) ? 0 : 1
-                            border.color: step.isActive ? Theme.accent : Theme.fillNeutral
-
-                            Label {
-                                anchors.centerIn: parent
-                                font.family: step.isUnknown ? Theme.textFamily : Theme.iconFamily
-                                font.pixelSize: Theme.captionSize
-                                // A question mark rather than a dashed ring:
-                                // QML cannot dash a border, and the character
-                                // is the part a person reads anyway.
-                                text: step.isDone ? Theme.icon.accept
-                                                  : step.isFailed ? Theme.icon.warning
-                                                                  : step.isUnknown ? "?" : ""
-                                color: (step.isDone || step.isFailed) ? Theme.fillCard
-                                                                      : Theme.fillNeutral
-                            }
-
-                            // The one moving thing in the ladder, and it stops
-                            // when the step resolves. Under reduced motion the
-                            // duration collapses and it becomes a static dot,
-                            // which still says "this is the step" — the pulse
-                            // was the escort, not the message.
-                            Rectangle {
-                                anchors.centerIn: parent
-                                visible: step.isActive
-                                implicitWidth: Theme.spacingTight + 2
-                                implicitHeight: Theme.spacingTight + 2
-                                radius: width / 2
-                                color: Theme.accent
-
-                                SequentialAnimation on opacity {
-                                    running: step.isActive && Theme.motion
-                                    loops: Animation.Infinite
-                                    NumberAnimation { to: 0.3; duration: Theme.durationSlow }
-                                    NumberAnimation { to: 1.0; duration: Theme.durationSlow }
-                                }
-                            }
-                        }
-
-                        Rectangle {
-                            Layout.fillHeight: true
-                            Layout.alignment: Qt.AlignHCenter
-                            implicitWidth: 1
-                            visible: index < ladderSteps.count - 1
-                            color: step.isDone ? Theme.fillSuccess : Theme.strokeCard
-                        }
-                    }
-
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        Layout.bottomMargin: index < ladderSteps.count - 1 ? Theme.spacing : 0
-                        spacing: 0
-
-                        Label {
-                            Layout.fillWidth: true
-                            text: modelData.label
-                            font.family: Theme.textFamily
-                            font.pixelSize: Theme.bodySize
-                            font.weight: (step.isActive || step.isFailed) ? Theme.strongWeight
-                                                                          : Theme.regularWeight
-                            opacity: (step.isActive || step.isFailed) ? 1.0 : step.isDone ? 0.7 : 0.5
-                            elide: Label.ElideRight
-                        }
-
-                        Label {
-                            Layout.fillWidth: true
-                            // The agent's own words when it said any, and the
-                            // word "not observed" when nobody looked. Colour is
-                            // never the only carrier of either.
-                            text: modelData.note !== "" ? modelData.note
-                                                        : step.isUnknown ? qsTr("not observed") : ""
-                            visible: text !== ""
-                            font.family: Theme.textFamily
-                            font.pixelSize: Theme.captionSize
-                            opacity: 0.6
-                            wrapMode: Text.WordWrap
+            // The step to name: a failure first, then the one in progress,
+            // then one nobody has observed, then the next still to come.
+            readonly property var current: {
+                var order = ["failed", "active", "unknown", "pending"]
+                for (var o = 0; o < order.length; o++) {
+                    for (var i = 0; i < steps.length; i++) {
+                        if (steps[i].state === order[o]) {
+                            return steps[i]
                         }
                     }
                 }
+                return steps.length > 0 ? steps[steps.length - 1] : null
             }
 
-            // How long, and how many times — shown only when Core has an
-            // operation to date them from.
-            //
-            // The console's footer carries a third thing, `waiting_on`, and
-            // this one does not: it is already the Booting step's note, where
-            // it says which step is waiting as well as what for. Printing it
-            // twice on a card this narrow would cost a line and add nothing.
-            // `observed n ago` is not here either — it is up beside the
-            // machine's name, because it is true of the machine rather than of
-            // the operation, and the card has a permanent place for it.
             RowLayout {
                 Layout.fillWidth: true
-                Layout.topMargin: Theme.spacingLoose
-                spacing: Theme.spacingLoose
-                visible: model.operating
+                spacing: 2
+                Accessible.role: Accessible.ProgressBar
+                Accessible.name: {
+                    var parts = []
+                    for (var i = 0; i < ladderView.steps.length; i++) {
+                        parts.push(ladderView.steps[i].label + ": " + ladderView.steps[i].state)
+                    }
+                    return parts.join(", ")
+                }
+
+                Repeater {
+                    model: ladderView.steps
+
+                    Rectangle {
+                        id: segment
+                        Layout.fillWidth: true
+                        implicitHeight: 4
+                        radius: 2
+                        readonly property string state_: modelData.state
+                        color: state_ === "done" ? Theme.fillSuccess
+                             : state_ === "failed" ? Theme.fillCritical
+                             : state_ === "active" ? Theme.accent
+                             : state_ === "unknown" ? "transparent"
+                             : Theme.strokeCard
+                        border.width: state_ === "unknown" ? 1 : 0
+                        border.color: Theme.fillNeutral
+
+                        // The one moving thing on the card: the active step
+                        // dims and returns once a second, on the screen's own
+                        // clock. A continuous animation redraws the window
+                        // sixty times a second for as long as a machine is
+                        // starting — measured at 18 % of a core in the Linux
+                        // loop — where this redraws for a sixth of a second.
+                        // Under reduced motion it holds still.
+                        opacity: state_ === "active" && Theme.motion
+                                 && Math.floor(card.now / 1000) % 2 === 1 ? 0.45 : 1
+                        Behavior on opacity {
+                            NumberAnimation { duration: Theme.durationFast }
+                        }
+                    }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Theme.spacing
 
                 Label {
-                    text: model.operating ? card.elapsed() : ""
+                    Layout.fillWidth: true
+                    // A failed step is said in words, not only in red.
+                    text: !ladderView.current ? ""
+                          : ladderView.current.state === "failed" ? qsTr("Stopped at: %1").arg(ladderView.current.label)
+                          : ladderView.current.label
+                    font.family: Theme.textFamily
+                    font.pixelSize: Theme.bodySize
+                    font.weight: Theme.strongWeight
+                    elide: Label.ElideRight
+                }
+
+                // How long, and how many times — only when Core has an
+                // operation to date them from. Attempt 1 is not news.
+                Label {
+                    visible: model.operating
+                    text: !model.operating ? ""
+                          : model.attempt > 1 ? qsTr("%1 · attempt %2").arg(card.elapsed()).arg(model.attempt)
+                          : card.elapsed()
                     font.family: Theme.textFamily
                     font.pixelSize: Theme.captionSize
                     opacity: 0.6
                 }
+            }
 
-                Label {
-                    // Attempt 1 is not news; attempt 4 is.
-                    text: qsTr("attempt %1").arg(model.attempt)
-                    visible: model.attempt > 1
-                    font.family: Theme.textFamily
-                    font.pixelSize: Theme.captionSize
-                    opacity: 0.6
-                }
+            // The agent's own words when it said any, and "not observed" when
+            // nobody looked. Colour is never the only carrier of either.
+            Label {
+                Layout.fillWidth: true
+                text: !ladderView.current ? ""
+                      : ladderView.current.note !== "" ? ladderView.current.note
+                      : ladderView.current.state === "unknown" ? qsTr("not observed") : ""
+                visible: text !== ""
+                font.family: Theme.textFamily
+                font.pixelSize: Theme.captionSize
+                opacity: 0.6
+                elide: Label.ElideRight
             }
         }
 
@@ -431,6 +393,26 @@ ItemDelegate {
             font.pixelSize: Theme.captionSize
             color: Theme.fillCritical
             wrapMode: Text.WordWrap
+            // A grid cell has room for two lines; the whole sentence is one
+            // hover away, because a truncated reason is still Core's reason.
+            maximumLineCount: 2
+            elide: Label.ElideRight
+            ToolTip.visible: truncated && errorHover.containsMouse
+            ToolTip.text: model.lastError
+            // Hover only: it takes no buttons, so a press still reaches the card.
+            MouseArea {
+                id: errorHover
+                anchors.fill: parent
+                hoverEnabled: true
+                acceptedButtons: Qt.NoButton
+            }
+        }
+
+        // The actions sit on the card's floor whatever is above them, so a
+        // row of cards reads as a row.
+        Item {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
         }
 
         // ---- One primary action, and the rest under a menu ----------------
@@ -439,7 +421,16 @@ ItemDelegate {
             Layout.topMargin: Theme.spacingTight
             spacing: Theme.spacing
 
-            Item { Layout.fillWidth: true }
+            // When the provider last looked, when it has. The test is the
+            // model's field rather than `observed()`, which reads the clock.
+            Label {
+                Layout.fillWidth: true
+                text: model.observed ? card.observed() : ""
+                font.family: Theme.textFamily
+                font.pixelSize: Theme.captionSize
+                opacity: 0.5
+                elide: Label.ElideRight
+            }
 
             Button {
                 // Play when the machine streams something, Terminal when it
@@ -458,8 +449,8 @@ ItemDelegate {
             // machine.
             ToolButton {
                 id: moreButton
-                text: Theme.icon.more
-                font.family: Theme.iconFamily
+                text: Theme.iconsInstalled ? Theme.icon.more : qsTr("More")
+                font.family: Theme.iconsInstalled ? Theme.iconFamily : Theme.textFamily
                 font.pixelSize: Theme.bodySize
                 hoverEnabled: true
                 // Only where there is more. A machine whose one action is a

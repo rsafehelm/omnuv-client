@@ -103,7 +103,8 @@ OmnuvEstate::OmnuvEstate(OmnuvRead::Get get, QObject* parent)
       m_endpoints(new OmnuvRead(QStringLiteral("endpoints"), get, this)),
       m_keys(new OmnuvRead(QStringLiteral("keys"), get, this)),
       m_usage(new OmnuvRead(QStringLiteral("usage"), get, this)),
-      m_history(new OmnuvRead(QStringLiteral("history"), get, this))
+      m_history(new OmnuvRead(QStringLiteral("history"), get, this)),
+      m_events(new OmnuvRead(QStringLiteral("events"), get, this))
 {
     // Devices hang off the project's network, so they are asked about once
     // the network is known — and asked again only if it is a different one.
@@ -135,7 +136,7 @@ void OmnuvEstate::setProject(const QString& projectId)
         return;
     }
     m_project = projectId;
-    for (OmnuvRead* r : { m_parked, m_networks, m_devices, m_endpoints, m_keys, m_usage, m_history }) {
+    for (OmnuvRead* r : { m_parked, m_networks, m_devices, m_endpoints, m_keys, m_usage, m_history, m_events }) {
         r->forget();
     }
     m_ticks = 0;
@@ -158,7 +159,7 @@ void OmnuvEstate::clear()
 {
     m_project.clear();
     m_ticks = 0;
-    for (OmnuvRead* r : { m_members, m_parked, m_networks, m_devices, m_endpoints, m_keys, m_usage, m_history }) {
+    for (OmnuvRead* r : { m_members, m_parked, m_networks, m_devices, m_endpoints, m_keys, m_usage, m_history, m_events }) {
         r->forget();
     }
     setIdentity(QString(), QString());
@@ -166,7 +167,7 @@ void OmnuvEstate::clear()
 
 void OmnuvEstate::retryAll()
 {
-    for (OmnuvRead* r : { m_members, m_parked, m_networks, m_devices, m_endpoints, m_keys, m_usage, m_history }) {
+    for (OmnuvRead* r : { m_members, m_parked, m_networks, m_devices, m_endpoints, m_keys, m_usage, m_history, m_events }) {
         r->retry();
     }
 }
@@ -191,6 +192,9 @@ void OmnuvEstate::readFast()
     // Core computes the chain over the rows it returns, and a `from` would
     // leave the oldest of them without a predecessor.
     m_history->read(QStringLiteral("/v1/projects/%1/history?limit=3").arg(m_project));
+    // Twenty: the panel shows the newest when folded and a short list when
+    // open; anything older is the console's timeline.
+    m_events->read(QStringLiteral("/v1/events?limit=20&project=") + m_project);
 }
 
 void OmnuvEstate::readSlow()

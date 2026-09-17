@@ -111,6 +111,11 @@ class OmnuvEstate : public QObject
     // Band three: the map's own history, newest first, collapsed to three.
     Q_PROPERTY(OmnuvRead* history READ history CONSTANT)
 
+    // What Omnuv has to say about the project — its operational events,
+    // newest first, as the window's read-only messages panel shows them.
+    // Core already names the marketplace, never a provider, as the actor.
+    Q_PROPERTY(OmnuvRead* events READ events CONSTANT)
+
 public:
     explicit OmnuvEstate(OmnuvRead::Get get, QObject* parent = nullptr);
 
@@ -125,6 +130,7 @@ public:
     OmnuvRead* keys() const { return m_keys; }
     OmnuvRead* usage() const { return m_usage; }
     OmnuvRead* history() const { return m_history; }
+    OmnuvRead* events() const { return m_events; }
 
     void setIdentity(const QString& organizationName, const QString& role);
 
@@ -132,7 +138,8 @@ public:
     // organization's members are not: they do not change with the project.
     void setProject(const QString& projectId);
 
-    // What moves — waiting requests and the history — on every call; the rest
+    // What moves — waiting requests, the history and the messages — on every
+    // call; the rest
     // on every fourth, because a network or an API key changes on the scale of
     // days and the window refreshes every minute.
     void refresh(bool everything);
@@ -159,6 +166,7 @@ private:
     OmnuvRead* m_keys;
     OmnuvRead* m_usage;
     OmnuvRead* m_history;
+    OmnuvRead* m_events;
 
     QString m_organizationName;
     bool m_owner = false;

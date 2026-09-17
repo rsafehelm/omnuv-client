@@ -233,13 +233,25 @@ QtObject {
     // purpose: under high contrast, colour stops carrying meaning and the text
     // beside it is the only thing left. Every consumer of these draws the
     // state's word too.
-    readonly property color fillCard: Omnuv.appearance.darkAppsTheme ? "#0DFFFFFF" : "#B3FFFFFF"
-    readonly property color strokeCard: Omnuv.appearance.darkAppsTheme ? "#19000000" : "#0F000000"
+    // **Which of those two dictionaries applies is a question about the
+    // surface, not about the setting.** The window is painted in the style's
+    // own `palette.window` (`gui/main.qml`), and where the style and the
+    // system setting disagree — the Linux loop's container is one: no colour
+    // scheme, a dark style — choosing by the setting put a 70 % white card
+    // under white text. So the view reports the colour its controls are
+    // actually drawn on, and the choice follows that. Until it has, the
+    // setting decides, as it did before.
+    property color surface: "transparent"
+    readonly property bool onDarkSurface: surface.a > 0 ? surface.hslLightness < 0.5
+                                                        : Omnuv.appearance.darkAppsTheme
 
-    readonly property color fillSuccess: Omnuv.appearance.darkAppsTheme ? "#6CCB5F" : "#0F7B0F"
-    readonly property color fillCaution: Omnuv.appearance.darkAppsTheme ? "#FCE100" : "#9D5D00"
-    readonly property color fillCritical: Omnuv.appearance.darkAppsTheme ? "#FF99A4" : "#C42B1C"
-    readonly property color fillNeutral: Omnuv.appearance.darkAppsTheme ? "#8BFFFFFF" : "#72000000"
+    readonly property color fillCard: onDarkSurface ? "#0DFFFFFF" : "#B3FFFFFF"
+    readonly property color strokeCard: onDarkSurface ? "#19000000" : "#0F000000"
+
+    readonly property color fillSuccess: onDarkSurface ? "#6CCB5F" : "#0F7B0F"
+    readonly property color fillCaution: onDarkSurface ? "#FCE100" : "#9D5D00"
+    readonly property color fillCritical: onDarkSurface ? "#FF99A4" : "#C42B1C"
+    readonly property color fillNeutral: onDarkSurface ? "#8BFFFFFF" : "#72000000"
 
     // ---- Icons ----------------------------------------------------------
     //
@@ -265,6 +277,11 @@ QtObject {
     // `font.family: Theme.iconFamily`, chosen the same way as `textFamily`.
     readonly property var iconFamilies: ["Segoe Fluent Icons", "Segoe MDL2 Assets"]
     readonly property string iconFamily: firstInstalled(iconFamilies)
+    // Whether either icon font is actually here. `firstInstalled` falls back
+    // to the last name whether or not it exists, so on a Linux or macOS
+    // desktop a glyph-only button draws an empty box; a button that is only a
+    // glyph asks this and shows its word instead.
+    readonly property bool iconsInstalled: Qt.fontFamilies().indexOf(iconFamily) >= 0
 
     readonly property QtObject icon: QtObject {
         readonly property string settings: "\uE713"      // Setting

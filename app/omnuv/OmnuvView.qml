@@ -25,6 +25,7 @@ import ComputerModel 1.0
 import ComputerManager 1.0
 
 import Omnuv 1.0
+import "estate.js" as Estate
 
 Item {
     id: root
@@ -735,152 +736,299 @@ Item {
     }
 
     // ----------------------------------------------------------------- signed in
+    //
+    // One surface. The top bar, at most two notices, then the estate: the
+    // project and its pulse over a grid of machine cards, and a quiet rail of
+    // everything else beside it. The machines are the only cards, because
+    // they are the only things a person acts on; the rail is text. Below
+    // `wideEnough` there is no room for a rail, so the same rail follows the
+    // grid instead of standing beside it.
+
+    // A line that says one thing and offers one action: an edge in the tone,
+    // a faint wash of it, and no frame. Windows calls this an InfoBar.
+    component Notice: Rectangle {
+        id: notice
+        property alias text: noticeText.text
+        property alias actionText: noticeAction.text
+        property bool actionEnabled: true
+        property color tone: Theme.fillCaution
+        signal action()
+
+        Layout.fillWidth: true
+        implicitHeight: Math.max(40, noticeRow.implicitHeight + 2 * Theme.spacing)
+        radius: Theme.radiusControl
+        color: Qt.rgba(tone.r, tone.g, tone.b, 0.12)
+
+        Rectangle {
+            width: 3
+            height: parent.height
+            radius: 1.5
+            color: notice.tone
+        }
+
+        RowLayout {
+            id: noticeRow
+            anchors.fill: parent
+            anchors.leftMargin: Theme.padding
+            anchors.rightMargin: Theme.spacing
+            spacing: Theme.spacingLoose
+
+            Label {
+                id: noticeText
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                font.family: Theme.textFamily
+                font.pixelSize: Theme.bodySize
+            }
+
+            Button {
+                id: noticeAction
+                visible: text !== ""
+                enabled: notice.actionEnabled
+                flat: true
+                onClicked: notice.action()
+            }
+        }
+    }
+
+    // The colour this window's controls are drawn on, handed to `Theme` so
+    // the cards choose their fill from the surface they sit on. A Control,
+    // because a Control is what carries the palette the style resolved.
+    Control {
+        id: surfaceProbe
+        visible: false
+    }
+    Binding {
+        target: Theme
+        property: "surface"
+        value: surfaceProbe.palette.window
+    }
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 20
-        spacing: 12
+        anchors.margins: Theme.padding + Theme.spacing
+        spacing: Theme.spacingLoose
         visible: Omnuv.signedIn
+
+        OrganizationBand {
+            Layout.fillWidth: true
+        }
 
         // Whether this device is on the project network at all. Shown before
         // the machines, because "Connect does nothing" is nearly always this.
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 44
+        Notice {
             visible: !Omnuv.tunnel.connected
-            // Windows rounds an in-page backplate at 4, not at whatever looked
-            // right the day it was typed. This is also the first thing to read
-            // `Theme`, which is deliberate: a singleton nothing references is
-            // never constructed, so a registration that did not work would go
-            // unnoticed until the phase that needed it.
-            radius: Theme.radiusControl
-            color: "#3a3226"
-
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: 12
-                anchors.rightMargin: 12
-                spacing: 12
-
-                Label {
-                    Layout.fillWidth: true
-                    text: Omnuv.tunnel.state
-                    wrapMode: Text.WordWrap
-                    elide: Label.ElideRight
-                }
-
-                Button {
-                    text: Omnuv.tunnel.busy ? qsTr("Joining…") : qsTr("Join this device")
-                    enabled: Omnuv.tunnel.available && !Omnuv.tunnel.busy && Omnuv.signedIn
-                    onClicked: Omnuv.tunnel.join()
-                }
-            }
+            text: Omnuv.tunnel.state
+            actionText: Omnuv.tunnel.busy ? qsTr("Joining…") : qsTr("Join this device")
+            actionEnabled: Omnuv.tunnel.available && !Omnuv.tunnel.busy && Omnuv.signedIn
+            onAction: Omnuv.tunnel.join()
         }
 
-        // Band one: whose cloud, and which project. The switch that used to
-        // be a menu here is its row of segments.
+        // A refresh that failed. What was shown stays, dimmed where it is
+        // drawn; this says why, once for the whole screen.
+        Notice {
+            visible: estateHeader.stale.length > 0
+            text: estateHeader.stale.length === 0 ? ""
+                  : qsTr("Showing %1 \u2014 could not refresh: %2")
+                    .arg(Qt.formatTime(estateHeader.oldestStale(), "HH:mm"))
+                    .arg(estateHeader.stale[0].problem)
+            actionText: qsTr("Try again")
+            onAction: Omnuv.estate.retryAll()
+        }
+
         RowLayout {
-            Layout.fillWidth: true
-            spacing: Theme.spacingLoose
-
-            OrganizationBand {
-                Layout.fillWidth: true
-            }
-
-            Label {
-                visible: Omnuv.status !== ""
-                Layout.maximumWidth: 240
-                text: Omnuv.status
-                elide: Label.ElideRight
-                opacity: 0.7
-            }
-
-            Button {
-                text: qsTr("Refresh")
-                flat: true
-                onClicked: Omnuv.refresh(true)
-            }
-
-            Button {
-                text: qsTr("Sign out")
-                flat: true
-                onClicked: Omnuv.signOut()
-            }
-        }
-
-        ListView {
-            id: machineList
+            id: estateBody
             Layout.fillWidth: true
             Layout.fillHeight: true
-            model: Omnuv.machines
-            spacing: Theme.spacing
-            clip: true
-            focus: true
-            keyNavigationWraps: true
+            spacing: Theme.padding + Theme.spacing
 
-            // Seconds are shown — "observed 8s ago", "42s" — so seconds have
-            // to pass. One timer for the whole screen rather than one per card:
-            // every card is showing the same second, and a hundred timers
-            // computing it a hundred times is a hundred wake-ups for one
-            // number. It stops when the list is not on screen, because nothing
-            // nobody is looking at needs to keep time.
-            property double now: Date.now()
+            readonly property bool wideEnough: width >= 900
 
-            Timer {
-                interval: 1000
-                repeat: true
-                running: machineList.visible && machineList.Window.active
-                onTriggered: machineList.now = Date.now()
-            }
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                spacing: Theme.spacingLoose
 
-            // Band two is the list's own header and footer, so the machine
-            // cards are its middle column and keyboard navigation between
-            // them is unchanged; band three closes the footer.
-            // Whether the person has scrolled. Until they have, the list stays
-            // at its top while the header grows as the estate arrives —
-            // otherwise the growth pushes the project's name up under the
-            // band above, where nothing can be read.
-            property bool scrolled: false
-            onMovementStarted: scrolled = true
-
-            header: Item {
-                width: machineList.width
-                height: estateHeader.implicitHeight + Theme.spacingLoose
-                onHeightChanged: {
-                    if (!machineList.scrolled) {
-                        machineList.positionViewAtBeginning()
-                    }
-                }
                 EstateHeader {
                     id: estateHeader
-                    width: parent.width
+                    Layout.fillWidth: true
+                    now: machineList.now
+                }
+
+                GridView {
+                    id: machineList
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    model: Omnuv.machines
+                    clip: true
+                    focus: true
+                    keyNavigationWraps: true
+                    boundsBehavior: Flickable.StopAtBounds
+
+                    // As many columns of 280 or more as fit, then shared out,
+                    // so a row always reaches the edge. Every cell is one
+                    // height: a grid whose rows do not line up reads as a pile.
+                    readonly property int gap: Theme.spacingLoose
+                    readonly property int columns: Math.max(1, Math.floor(width / 292))
+                    cellWidth: Math.floor(width / columns)
+                    cellHeight: 224
+
+                    ScrollBar.vertical: ScrollBar {}
+
+                    // Seconds are shown — "observed 8s ago", "42s" — so
+                    // seconds have to pass. One timer for the whole screen
+                    // rather than one per card, and it stops when nobody is
+                    // looking.
+                    property double now: Date.now()
+
+                    Timer {
+                        interval: 1000
+                        repeat: true
+                        running: machineList.visible && machineList.Window.active
+                        onTriggered: machineList.now = Date.now()
+                    }
+
+                    delegate: MachineCard {
+                        width: machineList.cellWidth
+                        height: machineList.cellHeight
+                        gap: machineList.gap
+                        now: machineList.now
+
+                        onPrimaryActivated: root.connectTo(index)
+                        onTerminalRequested: root.openTerminalFor(index)
+                        onChooseAppRequested: {
+                            root.chooseApp = true
+                            root.connectTo(index)
+                        }
+                        onSettingsRequested: streamSettings.open()
+                    }
+
+                    // After the machines: what is waiting for capacity, as
+                    // cards that are not machines yet — a dashed outline, the
+                    // reason in Core's words, and when it gives up. Then, on a
+                    // narrow window, the rail.
+                    footer: Column {
+                        width: machineList.width
+                        spacing: Theme.padding
+
+                        Flow {
+                            width: parent.width
+
+                            Repeater {
+                                model: estateHeader.waiting
+
+                                Item {
+                                    width: machineList.cellWidth
+                                    height: machineList.cellHeight
+
+                                    Canvas {
+                                        id: outline
+                                        x: 0.5
+                                        y: 0.5
+                                        width: parent.width - machineList.gap - 1
+                                        height: parent.height - machineList.gap - 1
+                                        onWidthChanged: requestPaint()
+                                        onHeightChanged: requestPaint()
+                                        onPaint: {
+                                            var ctx = getContext("2d")
+                                            ctx.reset()
+                                            ctx.strokeStyle = Theme.fillNeutral
+                                            ctx.lineWidth = 1
+                                            ctx.setLineDash([4, 3])
+                                            ctx.beginPath()
+                                            ctx.roundedRect(0, 0, width, height, Theme.radiusControl, Theme.radiusControl)
+                                            ctx.stroke()
+                                        }
+                                    }
+
+                                    ColumnLayout {
+                                        x: Theme.padding
+                                        y: Theme.padding
+                                        width: outline.width - 2 * Theme.padding
+                                        height: outline.height - 2 * Theme.padding
+                                        spacing: Theme.spacing
+
+                                        Label {
+                                            Layout.fillWidth: true
+                                            text: qsTr("Waiting for capacity")
+                                            font.family: Theme.textFamily
+                                            font.pixelSize: Theme.bodySize
+                                            font.weight: Theme.strongWeight
+                                            elide: Label.ElideRight
+                                        }
+                                        Label {
+                                            Layout.fillWidth: true
+                                            text: modelData.waiting_on
+                                            wrapMode: Text.WordWrap
+                                            maximumLineCount: 3
+                                            elide: Label.ElideRight
+                                            font.family: Theme.textFamily
+                                            font.pixelSize: Theme.bodySize
+                                        }
+                                        Label {
+                                            Layout.fillWidth: true
+                                            text: modelData.billing
+                                            wrapMode: Text.WordWrap
+                                            font.family: Theme.textFamily
+                                            font.pixelSize: Theme.captionSize
+                                            opacity: 0.6
+                                        }
+                                        Item {
+                                            Layout.fillHeight: true
+                                        }
+                                        Label {
+                                            Layout.fillWidth: true
+                                            text: qsTr("gives up %1").arg(Estate.ago(modelData.expires_at, machineList.now))
+                                            font.family: Theme.textFamily
+                                            font.pixelSize: Theme.captionSize
+                                            opacity: 0.6
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        EstateRail {
+                            visible: !estateBody.wideEnough
+                            width: parent.width
+                            now: machineList.now
+                        }
+                    }
+                }
+            }
+
+            // The rail, with a hairline between it and the machines rather
+            // than a box around it. It scrolls on its own when it is taller
+            // than the window.
+            Rectangle {
+                visible: estateBody.wideEnough
+                Layout.fillHeight: true
+                implicitWidth: 1
+                color: Theme.strokeCard
+            }
+
+            Flickable {
+                id: railScroller
+                visible: estateBody.wideEnough
+                Layout.preferredWidth: 300
+                Layout.fillHeight: true
+                contentHeight: sideRail.implicitHeight
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: ScrollBar {}
+
+                EstateRail {
+                    id: sideRail
+                    width: railScroller.width
                     now: machineList.now
                 }
             }
+        }
 
-            footer: Item {
-                width: machineList.width
-                height: estateFooter.implicitHeight + Theme.spacingLoose
-                EstateFooter {
-                    id: estateFooter
-                    y: Theme.spacingLoose
-                    width: parent.width
-                    now: machineList.now
-                }
-            }
-
-            delegate: MachineCard {
-                width: machineList.width
-                now: machineList.now
-
-                onPrimaryActivated: root.connectTo(index)
-                onTerminalRequested: root.openTerminalFor(index)
-                onChooseAppRequested: {
-                    root.chooseApp = true
-                    root.connectTo(index)
-                }
-                onSettingsRequested: streamSettings.open()
-            }
+        // What Omnuv has to say, read-only, folded to one line until opened.
+        MessagesPanel {
+            Layout.fillWidth: true
+            now: machineList.now
         }
     }
 }
