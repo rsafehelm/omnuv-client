@@ -317,7 +317,11 @@ rem
 rem Portable has no installer, so nothing registers the service and nothing
 rem creates the firewall rule. The daemon asserts its own rule at start; the
 rem service is the installed product's business.
-if not defined TUNNEL_FOLDER set TUNNEL_FOLDER=%SOURCE_ROOT%\tunnel\dist
+rem Per architecture: tunnel\build.sh writes dist\x64 and dist\arm64 under the
+rem same names %ARCH% uses, so this is one path with the architecture in it
+rem rather than two vocabularies. Without it an arm64 build packaged the x64
+rem daemon, which cannot run and which no check here would have caught.
+if not defined TUNNEL_FOLDER set TUNNEL_FOLDER=%SOURCE_ROOT%\tunnel\dist\%ARCH%
 echo Copying the tunnel to deployment directory
 copy %TUNNEL_FOLDER%\onvtunneld.exe %DEPLOY_FOLDER%
 if !ERRORLEVEL! NEQ 0 goto Error

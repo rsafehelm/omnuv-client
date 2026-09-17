@@ -40,9 +40,22 @@ fi
 # including the two refusals that are questions rather than retries.
 run 'go vet . && go test .'
 
+# **One directory per architecture, named the way the installer names them.**
+# `x64` and `arm64` are MSBuild's `$(Platform)` and `build-arch.bat`'s `%ARCH%`
+# verbatim, so `TunnelDir` is one path with the architecture substituted and
+# nothing has to translate between two vocabularies.
+#
+# Until 17 September this produced a single amd64 `dist/onvtunneld.exe` and the
+# installer had no architecture in its path at all, so an arm64 MSI would have
+# carried an x64 daemon that cannot run. It failed no build and no x64 install,
+# which is why it survived: the only machine that would have noticed is one
+# nobody had built for yet.
 if [ "$targets" = all ] || [ "$targets" = windows ]; then
-    run 'CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o dist/onvtunneld.exe .'
-    echo "  windows  dist/onvtunneld.exe  $(du -h "$out/onvtunneld.exe" | cut -f1)"
+    for pair in x64:amd64 arm64:arm64; do
+        win="${pair%%:*}"; goarch="${pair##*:}"
+        run "CGO_ENABLED=0 GOOS=windows GOARCH=$goarch go build -ldflags=\"-s -w\" -o dist/$win/onvtunneld.exe ."
+        echo "  windows  dist/$win/onvtunneld.exe  $(du -h "$out/$win/onvtunneld.exe" | cut -f1)"
+    done
 fi
 
 if [ "$targets" = all ] || [ "$targets" = linux ]; then
