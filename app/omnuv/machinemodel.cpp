@@ -262,9 +262,14 @@ void MachineModel::clear()
     // empty, which is the case a `return` at the top would have skipped.
     m_lastStatus.clear();
     m_lastWaiting.clear();
+    const bool wasLoaded = m_loadedOnce;
     m_loadedOnce = false;
 
     if (m_machines.isEmpty()) {
+        // `loaded` changed even though the list did not.
+        if (wasLoaded) {
+            emit countChanged();
+        }
         return;
     }
 
@@ -272,6 +277,15 @@ void MachineModel::clear()
     m_machines.clear();
     endResetModel();
     emit countChanged();
+}
+
+QVariantMap MachineModel::statusCounts() const
+{
+    QVariantMap counts;
+    for (const Machine& m : m_machines) {
+        counts[m.status] = counts.value(m.status).toInt() + 1;
+    }
+    return counts;
 }
 
 QString MachineModel::idAt(int row) const

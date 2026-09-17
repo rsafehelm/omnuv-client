@@ -864,3 +864,18 @@ jobs:
             exit 1
           fi
           echo "the ladder runs, and the driver fails when it should"
+
+      # The estate window's words — the history sentences, the pulse and the
+      # spend series — are a QML JavaScript library, so node runs them as
+      # they ship. The mutant shows an unread machine list as zeros, which is
+      # the one thing the pulse must never do.
+      - name: The estate's words, run
+        run: |
+          set -euo pipefail
+          node app/omnuv/test/estate_test.js
+          sed 's|    if (machinesLoaded) {|    if (true) {|' app/omnuv/estate.js > /tmp/estate.js
+          if ESTATE_JS=/tmp/estate.js node app/omnuv/test/estate_test.js >/dev/null; then
+            echo "The estate test passes against a broken pulse; it is not checking anything."
+            exit 1
+          fi
+          echo "the estate's words hold, and the test fails when they do not"

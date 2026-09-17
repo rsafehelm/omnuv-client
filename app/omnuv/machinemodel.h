@@ -13,6 +13,7 @@
 #include <QList>
 #include <QSet>
 #include <QString>
+#include <QVariantMap>
 
 class QJsonArray;
 
@@ -103,6 +104,15 @@ class MachineModel : public QAbstractListModel
     Q_OBJECT
     Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
 
+    // How many machines carry each of Core's status words — the estate's
+    // pulse row. Counted, not interpreted: the keys are Core's words.
+    Q_PROPERTY(QVariantMap statusCounts READ statusCounts NOTIFY countChanged)
+
+    // Whether the list has been read at all since signing in. A list nobody
+    // has read yet is not an empty list, and the pulse must not draw it as
+    // one.
+    Q_PROPERTY(bool loaded READ loaded NOTIFY countChanged)
+
 public:
     enum Role {
         NameRole = Qt::UserRole + 1,
@@ -162,6 +172,8 @@ public:
     // about, counted from `health()` so that nothing here is a second reading
     // of Core's vocabulary.
     int movingCount() const;
+    QVariantMap statusCounts() const;
+    bool loaded() const { return m_loadedOnce; }
     int unhappyCount() const;
 
 signals:

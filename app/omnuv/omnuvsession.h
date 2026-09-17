@@ -25,6 +25,7 @@
 // Included rather than forward-declared: moc needs the full type to expose
 // MachineModel* as a Q_PROPERTY.
 #include "machinemodel.h"
+#include "estate.h"
 #include "appearance.h"
 #include "autostart.h"
 #include "tunnel.h"
@@ -64,6 +65,11 @@ class OmnuvSession : public QObject
     Q_PROPERTY(QString projectName READ projectName NOTIFY projectsChanged)
 
     Q_PROPERTY(MachineModel* machines READ machines CONSTANT)
+
+    // Everything else the window shows about the project in view: see
+    // `estate.h`. Read only while the window is open, because nothing else
+    // draws it.
+    Q_PROPERTY(OmnuvEstate* estate READ estate CONSTANT)
     Q_PROPERTY(OmnuvTunnel* tunnel READ tunnel CONSTANT)
     Q_PROPERTY(OmnuvAutostart* autostart READ autostart CONSTANT)
 
@@ -100,6 +106,7 @@ public:
     Q_INVOKABLE void selectProject(const QString& id);
 
     MachineModel* machines() const { return m_machines; }
+    OmnuvEstate* estate() const { return m_estate; }
     OmnuvTunnel* tunnel() const { return m_tunnel; }
     OmnuvAutostart* autostart() const { return m_autostart; }
     OmnuvAppearance* appearance() const { return m_appearance; }
@@ -137,7 +144,10 @@ public:
     Q_INVOKABLE void signOut();
 
     // Fetch the machines. Called on start, after signing in, and on a timer.
-    Q_INVOKABLE void refresh();
+    // `everything` also re-reads the parts of the estate that change slowly,
+    // which the timer reads only every few ticks: a person who pressed
+    // Refresh, or just opened the window, means all of it.
+    Q_INVOKABLE void refresh(bool everything = false);
 
     // Open a terminal on an ordinary machine. Returns false when no terminal
     // could be started, which the view turns into a command to copy rather
@@ -233,6 +243,8 @@ private:
 
     QNetworkAccessManager m_net;
     MachineModel* m_machines;
+    OmnuvEstate* m_estate;
+    bool m_windowVisible = true;
     OmnuvTunnel* m_tunnel;
     OmnuvAutostart* m_autostart;
     OmnuvAppearance* m_appearance;

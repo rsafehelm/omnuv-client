@@ -45,7 +45,7 @@ Item {
     property bool chooseApp: false
 
     StackView.onActivated: {
-        Omnuv.refresh()
+        Omnuv.refresh(true)
         Omnuv.tunnel.watch(true)
     }
     StackView.onDeactivating: Omnuv.tunnel.watch(false)
@@ -777,34 +777,20 @@ Item {
             }
         }
 
+        // Band one: whose cloud, and which project. The switch that used to
+        // be a menu here is its row of segments.
         RowLayout {
             Layout.fillWidth: true
+            spacing: Theme.spacingLoose
 
-            // **Which project this window is showing.** A person may belong to
-            // several, each with its own private network, its own machines and
-            // its own device — so "my machines" is not a question with one
-            // answer and the window must not pick silently. Hidden at one,
-            // because a chooser with a single choice is furniture.
-            //
-            // The id is the value and the name is the label: two projects may
-            // share a name across organizations, and picking by name would
-            // then pick the wrong network.
-            ComboBox {
-                id: projectPicker
-                visible: Omnuv.projectNames.length > 1
-                Layout.preferredWidth: 200
-                model: Omnuv.projectNames
-                currentIndex: Omnuv.projectIds.indexOf(Omnuv.projectId)
-                onActivated: function (index) {
-                    Omnuv.selectProject(Omnuv.projectIds[index])
-                }
+            OrganizationBand {
+                Layout.fillWidth: true
             }
 
             Label {
-                Layout.fillWidth: true
-                text: Omnuv.status !== "" ? Omnuv.status
-                                          : (Omnuv.machines.count === 1 ? qsTr("1 machine")
-                                                                        : qsTr("%1 machines").arg(Omnuv.machines.count))
+                visible: Omnuv.status !== ""
+                Layout.maximumWidth: 240
+                text: Omnuv.status
                 elide: Label.ElideRight
                 opacity: 0.7
             }
@@ -812,7 +798,7 @@ Item {
             Button {
                 text: qsTr("Refresh")
                 flat: true
-                onClicked: Omnuv.refresh()
+                onClicked: Omnuv.refresh(true)
             }
 
             Button {
@@ -822,22 +808,10 @@ Item {
             }
         }
 
-        // Nothing rented yet. Says where to go rather than showing a blank.
-        Label {
-            Layout.fillWidth: true
-            Layout.topMargin: 40
-            visible: Omnuv.machines.count === 0
-            text: qsTr("No machines yet. Rent one in the Omnuv console and it will appear here.")
-            wrapMode: Text.WordWrap
-            horizontalAlignment: Text.AlignHCenter
-            opacity: 0.7
-        }
-
         ListView {
             id: machineList
             Layout.fillWidth: true
             Layout.fillHeight: true
-            visible: Omnuv.machines.count > 0
             model: Omnuv.machines
             spacing: Theme.spacing
             clip: true
@@ -857,6 +831,42 @@ Item {
                 repeat: true
                 running: machineList.visible && machineList.Window.active
                 onTriggered: machineList.now = Date.now()
+            }
+
+            // Band two is the list's own header and footer, so the machine
+            // cards are its middle column and keyboard navigation between
+            // them is unchanged; band three closes the footer.
+            // Whether the person has scrolled. Until they have, the list stays
+            // at its top while the header grows as the estate arrives —
+            // otherwise the growth pushes the project's name up under the
+            // band above, where nothing can be read.
+            property bool scrolled: false
+            onMovementStarted: scrolled = true
+
+            header: Item {
+                width: machineList.width
+                height: estateHeader.implicitHeight + Theme.spacingLoose
+                onHeightChanged: {
+                    if (!machineList.scrolled) {
+                        machineList.positionViewAtBeginning()
+                    }
+                }
+                EstateHeader {
+                    id: estateHeader
+                    width: parent.width
+                    now: machineList.now
+                }
+            }
+
+            footer: Item {
+                width: machineList.width
+                height: estateFooter.implicitHeight + Theme.spacingLoose
+                EstateFooter {
+                    id: estateFooter
+                    y: Theme.spacingLoose
+                    width: parent.width
+                    now: machineList.now
+                }
             }
 
             delegate: MachineCard {

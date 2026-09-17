@@ -59,6 +59,7 @@ static const int kLoginIntervalMs = 5 * 1000;
 OmnuvSession::OmnuvSession(QObject* parent)
     : QObject(parent),
       m_machines(new MachineModel(this)),
+      m_estate(new OmnuvEstate([this](const QString& path) { return m_net.get(request(path, true)); }, this)),
       m_tunnel(new OmnuvTunnel(this)),
       m_autostart(new OmnuvAutostart(this)),
       // Built here rather than left to a QML singleton so that it has read
@@ -99,7 +100,7 @@ OmnuvSession::OmnuvSession(QObject* parent)
     connect(&m_pollTimer, &QTimer::timeout, this, &OmnuvSession::poll);
 
     m_refreshTimer.setInterval(kRefreshVisibleMs);
-    connect(&m_refreshTimer, &QTimer::timeout, this, &OmnuvSession::refresh);
+    connect(&m_refreshTimer, &QTimer::timeout, this, [this]() { refresh(); });
 
     // No fetch here: the view asks when it opens, and again when a person
     // comes back to it from a stream. Doing both would send two requests every
@@ -131,6 +132,8 @@ void OmnuvSession::fetchIdentity()
         const QJsonObject o = QJsonDocument::fromJson(reply->readAll()).object();
         const QJsonArray projects = o[QStringLiteral("projects")].toArray();
         m_accountEmail = o[QStringLiteral("email")].toString();
+        m_estate->setIdentity(o[QStringLiteral("organization_name")].toString(),
+                              o[QStringLiteral("organization_role")].toString());
 
         m_projectNames.clear();
         m_projectIds.clear();
@@ -143,6 +146,7 @@ void OmnuvSession::fetchIdentity()
             m_projectId = m_projectIds.value(0);
             QSettings().setValue(QStringLiteral("omnuv/projectId"), m_projectId);
         }
+        m_estate->setProject(m_projectId);
         emit projectsChanged();
         refresh();
     });
@@ -160,6 +164,7 @@ void OmnuvSession::selectProject(const QString& id)
     // ago; leaving them there would be showing one project's estate under
     // another's name.
     m_machines->clear();
+    m_estate->setProject(m_projectId);
     refresh();
 }
 
@@ -364,15 +369,22 @@ void OmnuvSession::signOut()
     m_token.clear();
     m_refreshTimer.stop();
     m_machines->clear();
+    m_estate->clear();
     clearPending();
     emit signedInChanged();
     setStatus(tr("Signed out on this device. Revoke it in the console to take the access back for good."));
 }
 
-void OmnuvSession::refresh()
+void OmnuvSession::refresh(bool everything)
 {
     if (!signedIn()) {
         return;
+    }
+
+    // The estate follows the same tick, and only while somebody can see it:
+    // the tray reads machines and nothing else.
+    if (m_windowVisible) {
+        m_estate->refresh(everything);
     }
 
     QNetworkReply* reply = m_net.get(request(QStringLiteral("/v1/instances") + projectQuery(), true));
@@ -387,6 +399,7 @@ void OmnuvSession::refresh()
             m_token.clear();
             m_refreshTimer.stop();
             m_machines->clear();
+            m_estate->clear();
             emit signedInChanged();
             setStatus(tr("This device's access was taken back. Sign in again."));
             return;
@@ -725,6 +738,7 @@ bool OmnuvSession::shouldStartHidden()
 
 void OmnuvSession::setWindowVisible(bool visible)
 {
+    m_windowVisible = visible;
     if (visible) {
         // Mica behind the window, asked for from here because this is the first
         // moment there is a window to ask about: applying it once after
@@ -754,7 +768,7 @@ void OmnuvSession::setWindowVisible(bool visible)
     // person wait out the remainder of a 60-second tick to see current state.
     // The opposite direction needs nothing: going quiet can wait.
     if (visible && m_refreshTimer.isActive()) {
-        refresh();
+        refresh(true);
     }
 }
 
@@ -776,6 +790,10 @@ static void registerOmnuvTypes()
                                            });
     qmlRegisterUncreatableType<MachineModel>("Omnuv", 1, 0, "MachineModel",
                                              QStringLiteral("Machines come from Omnuv.machines"));
+    qmlRegisterUncreatableType<OmnuvEstate>("Omnuv", 1, 0, "OmnuvEstate",
+                                            QStringLiteral("The estate comes from Omnuv.estate"));
+    qmlRegisterUncreatableType<OmnuvRead>("Omnuv", 1, 0, "OmnuvRead",
+                                          QStringLiteral("Reads come from Omnuv.estate"));
 
     // Two QML files of ours, registered as types in the same module so that the
     // `import Omnuv 1.0` most files already carry brings them along.
