@@ -309,6 +309,23 @@ echo Copying application binary to deployment directory
 copy %BUILD_FOLDER%\app\%BUILD_CONFIG%\OmnuvClient.exe %DEPLOY_FOLDER%
 if !ERRORLEVEL! NEQ 0 goto Error
 
+rem The tunnel, for the portable package. The MSI takes these from
+rem TUNNEL_FOLDER directly, and they arrive here only *after* WiX has
+rem harvested this directory: a file the harvest generates a component for is
+rem a file nothing can attach a ServiceInstall or a FirewallException to.
+rem
+rem Portable has no installer, so nothing registers the service and nothing
+rem creates the firewall rule. The daemon asserts its own rule at start; the
+rem service is the installed product's business.
+if not defined TUNNEL_FOLDER set TUNNEL_FOLDER=%SOURCE_ROOT%\tunnel\dist
+echo Copying the tunnel to deployment directory
+copy %TUNNEL_FOLDER%\onvtunneld.exe %DEPLOY_FOLDER%
+if !ERRORLEVEL! NEQ 0 goto Error
+copy %TUNNEL_FOLDER%\wintun.dll %DEPLOY_FOLDER%
+if !ERRORLEVEL! NEQ 0 goto Error
+copy %TUNNEL_FOLDER%\WINTUN-LICENSE.txt %DEPLOY_FOLDER%
+if !ERRORLEVEL! NEQ 0 goto Error
+
 echo Building portable package
 rem This must be done after WiX harvesting and signing, since the VCRT dlls are MS signed
 rem and should not be harvested for inclusion in the full installer

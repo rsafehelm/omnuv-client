@@ -6,8 +6,24 @@
     <OutputPath>$(BUILD_FOLDER)\</OutputPath>
     <IntermediateOutputPath>$(BUILD_FOLDER)\</IntermediateOutputPath>
   </PropertyGroup>
+  <!--
+    Where onvtunneld.exe and wintun.dll are found. Deliberately outside
+    DEPLOY_FOLDER: Product.wxs harvests that whole tree with <Files Include>,
+    and a file WiX generates a component for is a file nothing can attach a
+    ServiceInstall or a FirewallException to.
+
+    Defaults beside the source so an ordinary build-arch.bat works with nothing
+    set, and TUNNEL_FOLDER overrides it for a build that keeps its artefacts
+    elsewhere. A missing file fails the build, which is right: a client shipped
+    without its tunnel has no private network, and that is not a thing to
+    discover on a buyer's machine.
+  -->
   <PropertyGroup>
-    <DefineConstants>DeployDir=$(DEPLOY_FOLDER);BuildDir=$(BUILD_FOLDER)</DefineConstants>
+    <TunnelFolder Condition=" '$(TUNNEL_FOLDER)' != '' ">$(TUNNEL_FOLDER)</TunnelFolder>
+    <TunnelFolder Condition=" '$(TunnelFolder)' == '' ">$(MSBuildThisFileDirectory)..\..\tunnel\dist</TunnelFolder>
+  </PropertyGroup>
+  <PropertyGroup>
+    <DefineConstants>DeployDir=$(DEPLOY_FOLDER);BuildDir=$(BUILD_FOLDER);TunnelDir=$(TunnelFolder)</DefineConstants>
   </PropertyGroup>
   <PropertyGroup>
     <AcceptEula>wix7</AcceptEula>

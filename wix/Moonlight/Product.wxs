@@ -17,6 +17,24 @@
 
     <Property Id="APPDATAFOLDER" Value="%LOCALAPPDATA%\Moonlight Game Streaming Project" />
 
+    <!--
+      **A default, so the MSI can be installed on its own.** Nothing declared
+      this property: the bundle sets it and the UI sets it, so every install
+      anyone had ever run supplied a value. A bare `msiexec /i … /qn` does not,
+      and `MoonlightDesktopShortcutState` below writes it as an *integer* — an
+      empty integer, which fails with `Error 1406. Could not write value
+      DesktopShortcutInstallState … System error .` and rolls the whole
+      installation back at InstallFinalize.
+
+      The blank system error is what makes it read as a permissions problem; it
+      is not. Measured 17 September installing the MSI silently on a clean
+      Windows rig, which is the first time it had been done.
+
+      0 rather than 1: a silent install should not put something on a desktop
+      nobody asked about. The bundle and the UI both override it.
+    -->
+    <Property Id="ADDDESKTOPSHORTCUT" Value="0" />
+
     <!-- There's no way to delete a registry key on uninstall but not major upgrade, so
         we have to roll our own deletion via custom action -->
     <CustomAction Id="DeleteRegistryKey"
@@ -94,9 +112,90 @@
                                   Name="$(var.FullName)" />
         </File>
       </Component>
+
+      <!--
+        The private network's privileged half.
+
+        **A service, because creating a WireGuard adapter needs administrator
+        rights** and the client does not have them in a login session —
+        measured on the rig, where identical code joins in twenty seconds from
+        an elevated session and dies after ninety in an ordinary one. So the
+        installer is the only thing in a position to register it: it is the one
+        part of the product that runs elevated on a buyer's machine.
+
+        **Its own firewall exception, because ICE is done by this process.**
+        The exception above names OmnuvClient.exe, which streams; the process
+        that gathers candidates is this one, and with no rule for it every
+        connectivity check times out and the peers fall back to a relay. The
+        daemon also asserts this rule at every start, so a deleted one comes
+        back — the two are deliberately the same rule by name, and the daemon
+        replaces one pointing at another binary rather than adding a second.
+
+        Sourced from outside DeployDir on purpose: `MoonlightDependencies`
+        below harvests that whole tree, and a file it generates a component for
+        is a file nothing can attach a service or a firewall rule to.
+      -->
+      <Component Id="OnvTunnel">
+        <File Id="OnvTunneldExe"
+              KeyPath="yes"
+              Checksum="yes"
+              Source="$(var.TunnelDir)\onvtunneld.exe">
+          <fire:FirewallException Id="OnvTunnelFirewallException"
+                                  Scope="any"
+                                  IgnoreFailure="yes"
+                                  Name="Omnuv private network" />
+        </File>
+        <ServiceInstall Id="OnvTunnelService"
+                        Name="OnvTunnel"
+                        DisplayName="Omnuv private network"
+                        Description="Holds this device's WireGuard adapter for its Omnuv private network."
+                        Type="ownProcess"
+                        Start="auto"
+                        ErrorControl="normal"
+                        Account="LocalSystem"
+                        Vital="yes" />
+        <!--
+          **Not waited on.** A joined tunnel tears its adapter and routes down
+          before it exits, and on the rig sixty seconds stopped being enough
+          once the machine was a real peer. An installer that appears hung is
+          worse than a file Windows removes at the next boot, so the stop is
+          asked for and not blocked on.
+        -->
+        <ServiceControl Id="OnvTunnelServiceControl"
+                        Name="OnvTunnel"
+                        Start="install"
+                        Stop="both"
+                        Remove="uninstall"
+                        Wait="no" />
+      </Component>
+
+      <!--
+        Lazy-loaded by the tunnel at the moment it creates an adapter, so it is
+        not linked, `windeployqt` never sees it, and its absence is invisible
+        until the first join fails. Redistribution is permitted for exactly
+        this case by the Wintun licence's clause 3(d); LICENSE.txt travels with
+        it because 3(c) requires the notices to stay with the binary.
+      -->
+      <Component Id="OnvWintun">
+        <File Id="WintunDll" KeyPath="yes" Source="$(var.TunnelDir)\wintun.dll" />
+        <File Id="WintunLicense" Source="$(var.TunnelDir)\WINTUN-LICENSE.txt" />
+      </Component>
     </DirectoryRef>
 
     <ComponentGroup Id="MoonlightDependencies" Directory="INSTALLFOLDER">
+      <!--
+        This harvests whatever is in the deploy directory, and the tunnel must
+        not be in it *at this point in the build*. `build-arch.bat` copies the
+        tunnel here only after WiX has run, for the portable package, because a
+        harvested file gets a generated component and two components installing
+        one file is WIX0369.
+
+        WiX 7's Files element has no Exclude attribute, so the ordering is the
+        whole mechanism — and what breaks it is a stale copy from an earlier
+        build that `rmdir` could not remove because the OnvTunnel service was
+        running out of this directory. The rig's build script stops that
+        service before it starts.
+      -->
       <Files Include="$(var.DeployDir)\**" />
     </ComponentGroup>
 
@@ -105,6 +204,8 @@
       <ComponentRef Id="MoonlightShortcuts" />
       <ComponentRef Id="MoonlightDesktopShortcutState" />
       <ComponentRef Id="MoonlightDesktopShortcut" />
+      <ComponentRef Id="OnvTunnel" />
+      <ComponentRef Id="OnvWintun" />
       <ComponentGroupRef Id="MoonlightDependencies" />
     </Feature>
 
