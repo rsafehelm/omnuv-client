@@ -194,6 +194,9 @@ ItemDelegate {
     // draws no shaders at all. A nine-patch is drawn identically everywhere.
     background: Item {
         BorderImage {
+            // A shadow is depth, which high contrast asks an application not
+            // to imply: there the card's own border is what separates it.
+            visible: !Theme.highContrast
             x: -28
             y: -24
             width: parent.width + 56
@@ -209,8 +212,11 @@ ItemDelegate {
         Rectangle {
             anchors.fill: parent
             radius: Theme.radiusCard
-            color: card.pressed ? Theme.fillCard : card.hovered ? Theme.fillCardHover : Theme.fillCard
-            border.width: card.activeFocus ? 2 : 1
+            color: card.pressed ? Theme.fillCardPressed
+                 : card.hovered ? Theme.fillCardHover : Theme.fillCard
+            // Two pixels under the pointer as well, under high contrast: the
+            // edge is the whole of the hover state there.
+            border.width: card.activeFocus || (Theme.highContrast && card.hovered) ? 2 : 1
             border.color: card.activeFocus ? Theme.accent
                         : card.hovered ? Theme.strokeCardHover : Theme.strokeCard
 

@@ -54,6 +54,26 @@ class OmnuvAppearance : public QObject, public QAbstractNativeEventFilter
     // monochrome icon ends up dark-on-dark and invisible.
     Q_PROPERTY(bool darkSystemTheme READ darkSystemTheme NOTIFY changed)
 
+    // **A fourth, and it is not a theme.** High contrast is a person saying
+    // *draw me nothing but the system's own colours* — Windows replaces its
+    // whole palette with a handful of guaranteed-contrasting ones, and an
+    // application that goes on painting its own translucent fills, gradients
+    // and pictures over them has taken the setting away. So everything of ours
+    // that is decoration asks this and draws plainly instead.
+    //
+    // Read from Qt, which has had the answer since 6.10 and gets it from
+    // Windows itself — `SPI_GETHIGHCONTRAST` under
+    // `QStyleHints::accessibility()->contrastPreference()`. FluentWinUI3 reads
+    // the same property, so the style and our own drawing cannot disagree.
+    Q_PROPERTY(bool highContrast READ highContrast NOTIFY changed)
+
+    // True once the window is a sheet of glass over Windows' own backdrop, so
+    // the view can stop painting a background and let Mica through. Three
+    // things have to hold and each is checked rather than assumed — see
+    // `applyBackdrop()`. False everywhere it is not all three, and then the
+    // window stays as opaque as it has always been.
+    Q_PROPERTY(bool backdrop READ backdrop NOTIFY changed)
+
 public:
     explicit OmnuvAppearance(QObject* parent = nullptr);
     ~OmnuvAppearance() override;
@@ -78,6 +98,13 @@ public:
     bool animationsEnabled() const { return m_animations; }
     bool darkAppsTheme() const { return m_dark; }
     bool darkSystemTheme() const { return m_darkShell; }
+    bool highContrast() const { return m_contrast; }
+    bool backdrop() const { return m_backdropShown; }
+
+    // Whether a window may be given an alpha channel at all, asked before the
+    // first one exists because that is when Qt decides. Static for the same
+    // reason `animationsEnabledNow()` is: there is no instance yet.
+    static bool wantsAlpha();
 
     // The same reading, without an instance, asked now rather than recalled.
     //
@@ -122,6 +149,7 @@ private:
     bool m_animations;
     bool m_dark;
     bool m_darkShell;
+    bool m_contrast;
 
     // The native window Mica was last requested for, as a WId rather than an
     // HWND so this header stays free of <windows.h>. Zero until the window
@@ -129,4 +157,5 @@ private:
     // recreates a native window on some flag changes, and a window attribute
     // dies with the handle it was set on.
     quintptr m_backdrop = 0;
+    bool m_backdropShown = false;
 };

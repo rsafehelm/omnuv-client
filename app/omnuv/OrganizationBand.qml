@@ -52,7 +52,7 @@ RowLayout {
         Label {
             anchors.centerIn: parent
             text: bar.estate.organizationName.charAt(0).toUpperCase()
-            color: "white"
+            color: Theme.onTile
             font.family: Theme.displayFamily
             font.pixelSize: Theme.subtitleSize
             font.weight: Theme.strongWeight

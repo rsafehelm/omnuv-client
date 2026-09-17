@@ -192,9 +192,24 @@ QtObject {
     readonly property SystemPalette systemPalette: SystemPalette {
         colorGroup: SystemPalette.Active
     }
-    readonly property color accent: systemPalette.accent !== undefined
-                                    ? systemPalette.accent
-                                    : systemPalette.highlight
+
+    // **The palette the view's own controls are drawn from**, handed over by
+    // `OmnuvView`'s hidden Control, because that is the only thing that knows
+    // what the style and the system between them decided. `SystemPalette` is
+    // Qt's *other* answer to the same question and the two disagree — the
+    // Linux loop's container reports a light system palette under a dark
+    // style, which is what put near-white cards under white text on 17
+    // September, twice: once for the card fill and once for high contrast.
+    // One reader, and `systemPalette` only as the fallback before the view
+    // exists.
+    property var probe: null
+    function fromPalette(name, fallback) {
+        return probe !== null && probe[name] !== undefined ? probe[name] : fallback
+    }
+
+    readonly property color accent: highContrast ? fromPalette("highlight", systemPalette.highlight)
+                                  : systemPalette.accent !== undefined ? systemPalette.accent
+                                  : systemPalette.highlight
 
     // ---- Spacing --------------------------------------------------------
     //
@@ -262,19 +277,47 @@ QtObject {
     readonly property bool onDarkSurface: surface.a > 0 ? surface.hslLightness < 0.5
                                                         : Omnuv.appearance.darkAppsTheme
 
-    readonly property color fillCard: onDarkSurface ? "#0DFFFFFF" : "#B3FFFFFF"
-    readonly property color strokeCard: onDarkSurface ? "#19000000" : "#0F000000"
+    // **High contrast takes every one of these.** Windows replaces its whole
+    // palette with a handful of guaranteed-contrasting colours and expects an
+    // application to use nothing else; a translucent wash over those is a
+    // surface whose contrast nobody can promise. So under it every fill is a
+    // palette colour and every edge is drawn — a card is told from the window
+    // by its border, not by a shade — and what is only decoration (the cards'
+    // pictures, the window's glow, the shadows) is not drawn at all.
+    readonly property bool highContrast: Omnuv.appearance.highContrast
+
+    readonly property color fillCard: highContrast ? fromPalette("base", systemPalette.base)
+                                    : onDarkSurface ? "#0DFFFFFF" : "#B3FFFFFF"
+    readonly property color strokeCard: highContrast ? fromPalette("windowText", systemPalette.windowText)
+                                      : onDarkSurface ? "#19000000" : "#0F000000"
     // Pointer over a card: ControlFillColorSecondary, the fill WinUI gives a
-    // SettingsCard under the pointer, with ControlStrokeColorSecondary.
-    readonly property color fillCardHover: onDarkSurface ? "#15FFFFFF" : "#80F9F9F9"
-    readonly property color strokeCardHover: onDarkSurface ? "#18FFFFFF" : "#29000000"
+    // SettingsCard under the pointer, with ControlStrokeColorSecondary. Under
+    // high contrast that is the palette's own selected pair.
+    // Under high contrast a card keeps its fill and gains a *bright edge*
+    // under the pointer, which is how Windows itself shows hover there. A
+    // highlight *fill* would need every label on the card to switch to
+    // `highlightedText` in the same instant, and a card whose text did not
+    // follow is exactly the unreadable pair this is meant to avoid.
+    readonly property color fillCardHover: highContrast ? fillCard
+                                         : onDarkSurface ? "#15FFFFFF" : "#80F9F9F9"
+    readonly property color strokeCardHover: highContrast ? fromPalette("highlight", systemPalette.highlight)
+                                           : onDarkSurface ? "#18FFFFFF" : "#29000000"
+    // And pressed: ControlFillColorTertiary, which is *quieter* than either.
+    // A press that looked like rest is what this file had until somebody read
+    // it — pressing a card took its fill back to `fillCard`, so the one moment
+    // a person is told their press landed said nothing at all.
+    readonly property color fillCardPressed: highContrast ? fromPalette("window", systemPalette.window)
+                                           : onDarkSurface ? "#08FFFFFF" : "#4DF9F9F9"
     // LayerFillColorDefault: the quiet surface content sits on above Mica —
     // the rail and the messages bar. One step below a card, on purpose.
-    readonly property color fillLayer: onDarkSurface ? "#4C3A3A3A" : "#80FFFFFF"
+    readonly property color fillLayer: highContrast ? fromPalette("window", systemPalette.window)
+                                     : onDarkSurface ? "#4C3A3A3A" : "#80FFFFFF"
     // DividerStrokeColorDefault, for a rule between things on one surface.
-    readonly property color strokeDivider: onDarkSurface ? "#15FFFFFF" : "#0F000000"
+    readonly property color strokeDivider: highContrast ? fromPalette("windowText", systemPalette.windowText)
+                                         : onDarkSurface ? "#15FFFFFF" : "#0F000000"
     // SubtleFillColorSecondary: a chip, a skeleton, a track.
-    readonly property color fillSubtle: onDarkSurface ? "#0FFFFFFF" : "#09000000"
+    readonly property color fillSubtle: highContrast ? fromPalette("window", systemPalette.window)
+                                      : onDarkSurface ? "#0FFFFFFF" : "#09000000"
 
     // ---- The lit tile -----------------------------------------------------
     //
@@ -293,14 +336,27 @@ QtObject {
         var h = (c.hslHue < 0 ? 0.58 : c.hslHue) + turn
         return Qt.hsla(h - Math.floor(h), Math.min(0.85, Math.max(0.45, c.hslSaturation)), lightness, 1)
     }
-    readonly property color tileFrom: deep(accent, 0.42, 0)
-    readonly property color tileTo: deep(accent, 0.34, 0.14)
+    readonly property color tileFrom: highContrast ? fromPalette("highlight", systemPalette.highlight) : deep(accent, 0.42, 0)
+    readonly property color tileTo: highContrast ? fromPalette("highlight", systemPalette.highlight) : deep(accent, 0.34, 0.14)
+    // What sits on the tile. `highlightedText` is the palette's promise about
+    // exactly this pair; white is only right because the tile is always deep.
+    readonly property color onTile: highContrast ? fromPalette("highlightedText", systemPalette.highlightedText) : "white"
 
     // The four system fill colours a status is painted with — see above.
-    readonly property color fillSuccess: onDarkSurface ? "#6CCB5F" : "#0F7B0F"
-    readonly property color fillCaution: onDarkSurface ? "#FCE100" : "#9D5D00"
-    readonly property color fillCritical: onDarkSurface ? "#FF99A4" : "#C42B1C"
-    readonly property color fillNeutral: onDarkSurface ? "#8BFFFFFF" : "#72000000"
+    //
+    // **All four collapse to one under high contrast**, which is what
+    // Microsoft's own HighContrast dictionary does (it sets every
+    // SystemFillColor to the same value): colour stops carrying meaning
+    // there, and the word beside it is the only thing left. Every consumer of
+    // these draws that word, which is why the collapse costs nothing.
+    readonly property color fillSuccess: highContrast ? fromPalette("windowText", systemPalette.windowText)
+                                       : onDarkSurface ? "#6CCB5F" : "#0F7B0F"
+    readonly property color fillCaution: highContrast ? fromPalette("windowText", systemPalette.windowText)
+                                       : onDarkSurface ? "#FCE100" : "#9D5D00"
+    readonly property color fillCritical: highContrast ? fromPalette("windowText", systemPalette.windowText)
+                                        : onDarkSurface ? "#FF99A4" : "#C42B1C"
+    readonly property color fillNeutral: highContrast ? fromPalette("windowText", systemPalette.windowText)
+                                       : onDarkSurface ? "#8BFFFFFF" : "#72000000"
 
     // ---- Icons ----------------------------------------------------------
     //

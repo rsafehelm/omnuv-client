@@ -17,6 +17,9 @@ Canvas {
     id: aurora
 
     readonly property real accentHue: Theme.accent.hslHue < 0 ? 0.58 : Theme.accent.hslHue
+    // Decoration, and the first thing to go when somebody has asked for none.
+    visible: !Theme.highContrast
+
     readonly property string key: [width, height, Theme.onDarkSurface, accentHue].join("|")
     onKeyChanged: requestPaint()
 

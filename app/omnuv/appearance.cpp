@@ -3,7 +3,10 @@
 #include <QCoreApplication>
 #include <QGuiApplication>
 #include <QOperatingSystemVersion>
+#include <QAccessibilityHints>
 #include <QQuickStyle>
+#include <QQuickWindow>
+#include <QSGRendererInterface>
 #include <QStyleHints>
 #include <QWindow>
 
@@ -61,6 +64,26 @@ int forcedTheme()
 {
     const QByteArray forced = qgetenv("OMNUV_THEME");
     return forced == "dark" ? 1 : forced == "light" ? 0 : -1;
+}
+
+// `OMNUV_CONTRAST=on|off`, the sibling of `OMNUV_THEME`: high contrast cannot
+// be turned on from a program — Windows' own `SPI_SETHIGHCONTRAST` is
+// documented as unsupported and the supported way is applying a theme file to
+// the logged-on user — so this is how the loops photograph what our own
+// drawing does under it. It forces *our* decoration off; it cannot make the
+// style's palette a high-contrast one, and the picture has to be read knowing
+// that.
+bool queryContrast()
+{
+    const QByteArray forced = qgetenv("OMNUV_CONTRAST");
+    if (forced == "on") {
+        return true;
+    }
+    if (forced == "off") {
+        return false;
+    }
+    return QGuiApplication::styleHints()->accessibility()->contrastPreference()
+           == Qt::ContrastPreference::HighContrast;
 }
 
 bool queryDark()
@@ -127,7 +150,8 @@ OmnuvAppearance::OmnuvAppearance(QObject* parent)
     : QObject(parent),
       m_animations(queryAnimations()),
       m_dark(queryDark()),
-      m_darkShell(queryDarkShell())
+      m_darkShell(queryDarkShell()),
+      m_contrast(queryContrast())
 {
     announce();
 
@@ -144,6 +168,14 @@ OmnuvAppearance::OmnuvAppearance(QObject* parent)
     connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged,
             this, &OmnuvAppearance::refresh);
 #endif
+
+    // High contrast is Qt's to report on every platform — it has its own
+    // signal and does not come through `WM_SETTINGCHANGE`'s handler above, so
+    // it is connected on Windows too. Turning it on mid-session is exactly
+    // what somebody who needs it does.
+    connect(QGuiApplication::styleHints()->accessibility(),
+            &QAccessibilityHints::contrastPreferenceChanged,
+            this, &OmnuvAppearance::refresh);
 }
 
 OmnuvAppearance::~OmnuvAppearance()
@@ -206,27 +238,76 @@ void OmnuvAppearance::refresh()
     const bool animations = queryAnimations();
     const bool dark = queryDark();
     const bool darkShell = queryDarkShell();
-    if (animations == m_animations && dark == m_dark && darkShell == m_darkShell) {
+    const bool contrast = queryContrast();
+    if (animations == m_animations && dark == m_dark && darkShell == m_darkShell
+        && contrast == m_contrast) {
         return;
     }
 
     m_animations = animations;
     m_dark = dark;
     m_darkShell = darkShell;
+    m_contrast = contrast;
     announce();
     emit changed();
 }
 
 void OmnuvAppearance::announce() const
 {
-    qInfo("Omnuv appearance: motion=%s theme=%s taskbar=%s",
+    qInfo("Omnuv appearance: motion=%s theme=%s taskbar=%s contrast=%s",
           m_animations ? "on" : "off",
           m_dark ? "dark" : "light",
-          m_darkShell ? "dark" : "light");
+          m_darkShell ? "dark" : "light",
+          m_contrast ? "high" : "normal");
+}
+
+// **Mica needs a window that can be seen through, and Qt decides that before
+// the window exists.** A Quick window gets an alpha channel only if the
+// default was set before the first one is created; after that it is too late.
+//
+// **Off unless `OMNUV_MICA` asks for it, and that is a measurement rather than
+// caution.** Every link was proved on rig 9100 on 17 September — the attribute
+// accepted (`MICA=requested`), transparency effects on (`TRANSPARENCY=on`), a
+// hardware renderer with an alpha channel, the frame extended, the window's own
+// colour gone (`BACKDROP=shown`) — and DWM drew **flat white** behind it
+// instead of Mica. That rig's desktop runs on a Microsoft Basic Display
+// Adapter, because its only real GPU is passed through with no monitor, and
+// DWM does not draw backdrop material on one.
+//
+// Nothing in Windows reports that refusal: `DwmGetWindowAttribute` reads back
+// the value we set, and the documented list of conditions under which the
+// system silently substitutes a flat fill is aggregated nowhere. So a client
+// that turned this on by default would, on any machine DWM refuses, replace a
+// correct `#F3F3F3` window with a white one and have no way to notice. On
+// until somebody has seen it work:
+//
+//     OMNUV_MICA=on      alpha, the frame extended, the window transparent
+//     OMNUV_MICA=plain   the same without `DwmExtendFrameIntoClientArea`,
+//                        for telling the two apart on a machine where one
+//                        works and the other does not
+//     unset or anything else   what every build before this did
+//
+// Never under the software backend either: there a translucent window is a
+// layered GDI window, which DWM composes against the *desktop* rather than
+// against its own backdrop — the person would see their wallpaper through the
+// application rather than a blurred tint of it.
+bool OmnuvAppearance::wantsAlpha()
+{
+#ifdef Q_OS_WIN
+    const QByteArray want = qgetenv("OMNUV_MICA");
+    return (want == "on" || want == "plain")
+           && QQuickWindow::sceneGraphBackend() != QLatin1String("software");
+#else
+    return false;
+#endif
 }
 
 void OmnuvAppearance::applyStyle()
 {
+    if (wantsAlpha()) {
+        QQuickWindow::setDefaultAlphaBuffer(true);
+    }
+
     // `OMNUV_STYLE` wins on every platform, and it exists for one reason: an
     // explicit `setStyle` beats `QT_QUICK_CONTROLS_STYLE`, so without it the
     // Linux loop (`scripts/client-linux`) could only ever draw Material — and
@@ -374,6 +455,38 @@ void OmnuvAppearance::applyBackdrop()
         // than this one. Mica only shows through layers that are transparent.
         qInfo("Omnuv appearance: mica=requested hr=0x%08lx build=%d",
               static_cast<unsigned long>(hr), build);
+
+        // **And then the layer that was in the way.** The attribute above tells
+        // DWM to draw Mica behind this window; it does nothing while the window
+        // goes on painting an opaque background over it. Three things are
+        // checked rather than assumed: it is a Quick window; the renderer that
+        // actually came up is not the software one, because Qt falls back to it
+        // without a word when Direct3D cannot start; and the surface really has
+        // the alpha channel `wantsAlpha()` asked for. The view does the last
+        // step — it reads `backdrop` and makes the window's colour transparent.
+        //
+        // `DwmExtendFrameIntoClientArea` with -1 margins is what puts the
+        // backdrop behind the *whole* client area rather than behind the title
+        // bar alone — see `wantsAlpha()` for the switch and for what the rig
+        // measured.
+        auto* quick = qobject_cast<QQuickWindow*>(window);
+        const bool hardware = quick != nullptr && quick->rendererInterface() != nullptr
+            && quick->rendererInterface()->graphicsApi() != QSGRendererInterface::Software;
+        const bool alpha = quick != nullptr && quick->format().alphaBufferSize() > 0;
+        bool shown = hardware && alpha;
+        HRESULT frame = S_OK;
+        if (shown && qgetenv("OMNUV_MICA") != "plain") {
+            const MARGINS glass = { -1, -1, -1, -1 };
+            frame = DwmExtendFrameIntoClientArea(hwnd, &glass);
+            shown = SUCCEEDED(frame);
+        }
+        qInfo("Omnuv appearance: backdrop=%s hardware=%d alpha=%d frame=0x%08lx",
+              shown ? "shown" : "opaque", hardware ? 1 : 0, alpha ? 1 : 0,
+              static_cast<unsigned long>(frame));
+        if (shown != m_backdropShown) {
+            m_backdropShown = shown;
+            emit changed();
+        }
     } else {
         // Windows 10 lands here, and that is the specification rather than a
         // disappointment: the attribute is refused, DWM draws nothing behind

@@ -43,10 +43,13 @@ Canvas {
         var h = accentHue + ((hash % 9) - 4) * 0.022
         return h - Math.floor(h)
     }
-    // What the rest of the card is washed with.
-    readonly property color tint: Qt.hsla(hue, asleep ? 0.05 : 0.85, Theme.onDarkSurface ? 0.60 : 0.50, 1)
+    // What the rest of the card is washed with — nothing, under high
+    // contrast: a wash is a shade, and a shade is what that setting removes.
+    readonly property color tint: Theme.highContrast ? "transparent"
+                                 : Qt.hsla(hue, asleep ? 0.05 : 0.85, Theme.onDarkSurface ? 0.60 : 0.50, 1)
 
-    readonly property string key: [width, height, seed, asleep, Theme.onDarkSurface, accentHue].join("|")
+    readonly property string key: [width, height, seed, asleep, Theme.onDarkSurface,
+                                   accentHue, Theme.highContrast].join("|")
     onKeyChanged: requestPaint()
 
     function css(h, s, l, a) {
@@ -62,6 +65,26 @@ Canvas {
             return
         }
         var dark = Theme.onDarkSurface
+
+        // **Under high contrast there is no picture.** One flat palette fill
+        // with the border every edge gets there, so the card still has a top
+        // and the machine is still told apart — by its name, which is the
+        // only thing that was ever load-bearing here.
+        if (Theme.highContrast) {
+            ctx.fillStyle = Theme.fillCard
+            ctx.strokeStyle = Theme.strokeCard
+            ctx.lineWidth = 1
+            ctx.beginPath()
+            ctx.moveTo(0.5, h)
+            ctx.lineTo(0.5, r)
+            ctx.arcTo(0.5, 0.5, r, 0.5, r)
+            ctx.lineTo(w - r, 0.5)
+            ctx.arcTo(w - 0.5, 0.5, w - 0.5, r, r)
+            ctx.lineTo(w - 0.5, h)
+            ctx.fill()
+            ctx.stroke()
+            return
+        }
 
         // Rounded above, square below: the body of the card continues it.
         ctx.beginPath()

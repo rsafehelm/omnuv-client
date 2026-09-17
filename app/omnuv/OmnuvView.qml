@@ -868,7 +868,7 @@ Item {
                 anchors.centerIn: parent
                 icon: empty.icon
                 size: 32
-                color: "white"
+                color: Theme.onTile
             }
         }
         Label {
@@ -909,6 +909,31 @@ Item {
         target: Theme
         property: "surface"
         value: surfaceProbe.palette.window
+    }
+    // And the rest of it, for high contrast: see `Theme.probe`.
+    Binding {
+        target: Theme
+        property: "probe"
+        value: surfaceProbe.palette
+    }
+
+    // **Mica, where Windows will draw it.** The window stops painting its own
+    // background and DWM's backdrop — the person's wallpaper, blurred and
+    // tinted to the theme — is what the cards and the rail sit on, which is
+    // what Microsoft's translucent card and layer fills were published for.
+    // Only when `appearance.backdrop` says every part of it is in place (see
+    // `OmnuvAppearance::applyBackdrop`); otherwise this binding is inactive
+    // and the style's own `palette.window` stays, exactly as before.
+    //
+    // The style declares `color: window.palette.window` on its
+    // ApplicationWindow, so this has to be a Binding on the same property
+    // rather than an assignment somewhere: an assignment would be overwritten
+    // the next time the palette moved.
+    Binding {
+        target: root.Window.window
+        property: "color"
+        value: "transparent"
+        when: root.Window.window !== null && Omnuv.appearance.backdrop
     }
 
     // Light behind the top of the window, signed in or not.

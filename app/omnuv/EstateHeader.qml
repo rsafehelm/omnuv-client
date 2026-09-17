@@ -137,7 +137,11 @@ ColumnLayout {
         Layout.fillWidth: true
         Layout.maximumWidth: 520
         implicitHeight: 6
-        visible: header.meterTotal > 0
+        // **Not under high contrast**, where every fill collapses to one
+        // colour: five segments of the same white read as one long bar, which
+        // says something untrue. The legend below carries every number and
+        // every word, which is why the bar can simply go.
+        visible: header.meterTotal > 0 && !Theme.highContrast
         Accessible.ignored: true
 
         Row {
