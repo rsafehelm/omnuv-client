@@ -64,6 +64,11 @@ class OmnuvSession : public QObject
     Q_PROPERTY(QString projectId READ projectId WRITE selectProject NOTIFY projectsChanged)
     Q_PROPERTY(QString projectName READ projectName NOTIFY projectsChanged)
 
+    // `/v1/me` has answered and named no project at all — an organization
+    // whose last project was torn down. Nothing project-scoped can be asked
+    // then, so the window says so instead of waiting on reads never made.
+    Q_PROPERTY(bool noProject READ noProject NOTIFY projectsChanged)
+
     Q_PROPERTY(MachineModel* machines READ machines CONSTANT)
 
     // Everything else the window shows about the project in view: see
@@ -95,6 +100,7 @@ public:
     // until the identity has arrived.
     QString accountEmail() const { return m_accountEmail; }
     QString projectId() const { return m_projectId; }
+    bool noProject() const { return m_identityKnown && m_projectIds.isEmpty(); }
     QString projectName() const
     {
         const int at = m_projectIds.indexOf(m_projectId);
@@ -258,6 +264,11 @@ private:
     QStringList m_projectNames;
     QStringList m_projectIds;
     QString m_accountEmail;
+    bool m_identityKnown = false;
+    bool m_identityPending = false;
+
+    // Revoked in the console, or expired: forget the token and say so.
+    void accessTakenBack();
     QString m_projectId;
 
     QTimer m_pollTimer;

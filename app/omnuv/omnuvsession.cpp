@@ -123,15 +123,33 @@ OmnuvSession::OmnuvSession(QObject* parent)
 // nothing is worse than a default.
 void OmnuvSession::fetchIdentity()
 {
+    // One at a time: the constructor and the window's first refresh both ask.
+    if (m_identityPending) {
+        return;
+    }
+    m_identityPending = true;
     QNetworkReply* reply = m_net.get(request(QStringLiteral("/v1/me"), true));
     connect(reply, &QNetworkReply::finished, this, [this, reply]() {
         reply->deleteLater();
+        m_identityPending = false;
+        const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (code == 401 || code == 403) {
+            accessTakenBack();
+            return;
+        }
         if (reply->error() != QNetworkReply::NoError) {
+            // Asked again on the next refresh; meanwhile, said.
+            const QString said = QJsonDocument::fromJson(reply->readAll()).object()
+                                     .value(QStringLiteral("error")).toString().trimmed();
+            setStatus(code == 0 ? tr("Could not reach %1.").arg(m_coreUrl)
+                      : !said.isEmpty() ? tr("Omnuv could not say who this is: %1").arg(said)
+                      : tr("Omnuv could not say who this is just now."));
             return;
         }
         const QJsonObject o = QJsonDocument::fromJson(reply->readAll()).object();
         const QJsonArray projects = o[QStringLiteral("projects")].toArray();
         m_accountEmail = o[QStringLiteral("email")].toString();
+        m_identityKnown = true;
         m_estate->setIdentity(o[QStringLiteral("organization_name")].toString(),
                               o[QStringLiteral("organization_role")].toString());
 
@@ -147,6 +165,12 @@ void OmnuvSession::fetchIdentity()
             QSettings().setValue(QStringLiteral("omnuv/projectId"), m_projectId);
         }
         m_estate->setProject(m_projectId);
+        if (m_projectIds.isEmpty()) {
+            // Said once per identity read, for the person asking why the
+            // window is empty; the loop's grading reads it too.
+            qInfo() << "omnuv: signed in, no project";
+            m_machines->clear();
+        }
         emit projectsChanged();
         refresh();
     });
@@ -212,6 +236,11 @@ void OmnuvSession::setStatus(const QString& text)
 {
     if (m_status == text) {
         return;
+    }
+    // Logged, because it is the one sentence a person reads about what went
+    // wrong, and "what did it say" is the first question afterwards.
+    if (!text.isEmpty()) {
+        qInfo().noquote() << "omnuv: status:" << text;
     }
     m_status = text;
     emit statusChanged();
@@ -367,6 +396,7 @@ void OmnuvSession::signOut()
     // Signing out must not leave a token anywhere.
     OmnuvCredentials::clear();
     m_token.clear();
+    m_identityKnown = false;
     m_refreshTimer.stop();
     m_machines->clear();
     m_estate->clear();
@@ -375,16 +405,54 @@ void OmnuvSession::signOut()
     setStatus(tr("Signed out on this device. Revoke it in the console to take the access back for good."));
 }
 
+// Revoked in the console, or expired. Say so and stop pretending to be
+// signed in, rather than retrying a token that is dead.
+void OmnuvSession::accessTakenBack()
+{
+    OmnuvCredentials::clear();
+    m_token.clear();
+    m_identityKnown = false;
+    m_refreshTimer.stop();
+    m_machines->clear();
+    m_estate->clear();
+    emit signedInChanged();
+    setStatus(tr("This device's access was taken back. Sign in again."));
+}
+
 void OmnuvSession::refresh(bool everything)
 {
     if (!signedIn()) {
         return;
     }
 
+    // **Who, before what.** Every read below names a project, and a request
+    // made before `/v1/me` has answered names none — which Core reads as the
+    // default project, and which for an organization with no project is a
+    // 404. So the identity comes first, and is asked again on every tick
+    // until it arrives: a `/v1/me` that failed once must not leave the window
+    // empty for good.
+    if (!m_identityKnown) {
+        fetchIdentity();
+        return;
+    }
+
     // The estate follows the same tick, and only while somebody can see it:
-    // the tray reads machines and nothing else.
+    // the tray reads machines and nothing else. Before the project check,
+    // because the organization's own reads need no project.
     if (m_windowVisible) {
         m_estate->refresh(everything);
+    }
+
+    // **No project, nothing to ask.** Core answers a project-scoped read for
+    // an organization with none with 404, which used to arrive here as
+    // "could not reach" about a server that had answered. Asked again when a
+    // person refreshes or opens the window, because signing in to the console
+    // is what creates a new workspace and this is how the window notices.
+    if (noProject()) {
+        if (everything) {
+            fetchIdentity();
+        }
+        return;
     }
 
     QNetworkReply* reply = m_net.get(request(QStringLiteral("/v1/instances") + projectQuery(), true));
@@ -393,19 +461,17 @@ void OmnuvSession::refresh(bool everything)
 
         const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         if (code == 401 || code == 403) {
-            // Revoked in the console, or expired. Say so and stop pretending
-            // to be signed in, rather than retrying a token that is dead.
-            OmnuvCredentials::clear();
-            m_token.clear();
-            m_refreshTimer.stop();
-            m_machines->clear();
-            m_estate->clear();
-            emit signedInChanged();
-            setStatus(tr("This device's access was taken back. Sign in again."));
+            accessTakenBack();
             return;
         }
         if (reply->error() != QNetworkReply::NoError) {
-            setStatus(tr("Could not reach %1.").arg(m_coreUrl));
+            // Core's sentence when Core answered; "could not reach" only when
+            // nothing did. The two send a person to different places.
+            const QString said = QJsonDocument::fromJson(reply->readAll()).object()
+                                     .value(QStringLiteral("error")).toString().trimmed();
+            setStatus(code == 0 ? tr("Could not reach %1.").arg(m_coreUrl)
+                      : !said.isEmpty() ? tr("Omnuv could not list the machines: %1").arg(said)
+                      : tr("Omnuv could not list the machines just now."));
             return;
         }
 

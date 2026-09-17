@@ -836,8 +836,48 @@ Item {
             onAction: Omnuv.estate.retryAll()
         }
 
+        // An organization with no project: nothing project-scoped exists to
+        // read, so the window says what to do rather than showing a grid and
+        // a rail that would wait for ever.
+        Item {
+            visible: Omnuv.noProject
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+
+            ColumnLayout {
+                anchors.centerIn: parent
+                width: Math.min(parent.width, 460)
+                spacing: Theme.spacing
+
+                Label {
+                    Layout.fillWidth: true
+                    horizontalAlignment: Text.AlignHCenter
+                    text: qsTr("No project yet")
+                    font.family: Theme.textFamily
+                    font.pixelSize: Theme.subtitleSize
+                    font.weight: Theme.strongWeight
+                }
+                Label {
+                    Layout.fillWidth: true
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
+                    text: qsTr("This organization has no project to show. Signing in to the Omnuv console sets up a new workspace, and this window fills in once it exists.")
+                    font.family: Theme.textFamily
+                    font.pixelSize: Theme.bodySize
+                    opacity: 0.7
+                }
+                Button {
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.topMargin: Theme.spacing
+                    text: qsTr("Check again")
+                    onClicked: Omnuv.refresh(true)
+                }
+            }
+        }
+
         RowLayout {
             id: estateBody
+            visible: !Omnuv.noProject
             Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: Theme.padding + Theme.spacing
@@ -1027,6 +1067,7 @@ Item {
 
         // What Omnuv has to say, read-only, folded to one line until opened.
         MessagesPanel {
+            visible: !Omnuv.noProject
             Layout.fillWidth: true
             now: machineList.now
         }
