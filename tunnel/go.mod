@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/netbirdio/netbird v0.78.1
+	github.com/sirupsen/logrus v1.9.4
 	golang.org/x/sys v0.47.0
 )
 
@@ -95,7 +96,6 @@ require (
 	github.com/prometheus/procfs v0.19.2 // indirect
 	github.com/quic-go/quic-go v0.62.0 // indirect
 	github.com/shirou/gopsutil/v4 v4.25.8 // indirect
-	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/skratchdot/open-golang v0.0.0-20200116055534-eef842397966 // indirect
 	github.com/things-go/go-socks5 v0.0.4 // indirect
 	github.com/ti-mo/conntrack v0.5.1 // indirect
