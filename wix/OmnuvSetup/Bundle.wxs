@@ -50,7 +50,7 @@
                                               LaunchTarget="[InstallFolder]\OmnuvClient.exe"
                                               ThemeFile="RtfTheme.xml"
                                               Theme="rtfLicense" />
-      <Payload Name="Moonlight.ico" SourceFile="..\..\app\moonlight.ico" Compressed="yes" />
+      <Payload Name="Omnuv.ico" SourceFile="..\..\app\moonlight.ico" Compressed="yes" />
     </BootstrapperApplication>
 
     <!--
@@ -91,7 +91,7 @@
       </ExePackage>
 
       <MsiPackage Id="Omnuv_x64"
-                  SourceFile="$(env.BUILD_ROOT)\build-x64-$(env.BUILD_CONFIG)\Moonlight.msi"
+                  SourceFile="$(env.BUILD_ROOT)\build-x64-$(env.BUILD_CONFIG)\Omnuv.msi"
                   Name="Omnuv_x64.msi"
                   Vital="yes">
         <MsiProperty Name="INSTALLFOLDER" Value="[InstallFolder]" />

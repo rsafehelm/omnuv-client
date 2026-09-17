@@ -5,7 +5,7 @@
 #     scripts/fetch-vcredist          fetch if absent or wrong; print where
 #
 # **Why fetch them at all.** `Bundle.wxs` declares both redistributables with a
-# `DownloadUrl` and no local payload, so `MoonlightSetup.exe` is a *downloading*
+# `DownloadUrl` and no local payload, so `OmnuvSetup.exe` is a *downloading*
 # installer: it needs Microsoft reachable at install time, and a machine behind
 # a proxy, on a locked-down network, or simply offline gets a bundle that
 # cannot finish. Embedding them makes the one file actually contain everything
@@ -23,7 +23,7 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
-bundle="$here/wix/MoonlightSetup/Bundle.wxs"
+bundle="$here/wix/OmnuvSetup/Bundle.wxs"
 out="$here/build/redist"
 
 [ -f "$bundle" ] || { echo "FAIL: $bundle is missing" >&2; exit 1; }

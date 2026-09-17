@@ -9,7 +9,7 @@
 
   <Package Name="$(var.FullName)"
            Language="1033"
-           Version="!(bind.fileVersion.MoonlightExe)"
+           Version="!(bind.fileVersion.OmnuvClientExe)"
            Manufacturer="Omnuv"
            UpgradeCode="3c64f1f8-c43d-468a-ae92-7a6da2622ce2">
     <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." Schedule="afterInstallInitialize" />
@@ -21,7 +21,7 @@
       **A default, so the MSI can be installed on its own.** Nothing declared
       this property: the bundle sets it and the UI sets it, so every install
       anyone had ever run supplied a value. A bare `msiexec /i … /qn` does not,
-      and `MoonlightDesktopShortcutState` below writes it as an *integer* — an
+      and `OmnuvDesktopShortcutState` below writes it as an *integer* — an
       empty integer, which fails with `Error 1406. Could not write value
       DesktopShortcutInstallState … System error .` and rolls the whole
       installation back at InstallFinalize.
@@ -49,11 +49,11 @@
               Condition="Installed AND REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     </InstallExecuteSequence>
 
-    <Component Id="MoonlightShortcuts" Directory="INSTALLFOLDER">
+    <Component Id="OmnuvShortcuts" Directory="INSTALLFOLDER">
       <Shortcut Id="StartMenuShortcut"
                 Name="$(var.ShortcutName)"
                 Description="$(var.ShortcutDesc)"
-                Target="[#MoonlightExe]"
+                Target="[#OmnuvClientExe]"
                 Directory="ApplicationProgramsFolder"
                 WorkingDirectory="INSTALLFOLDER" />
       <RemoveFolder Id="CleanupStartMenuShortcut"
@@ -70,11 +70,11 @@
                      KeyPath="yes" />
     </Component>
 
-    <Component Id="MoonlightDesktopShortcut" Directory="INSTALLFOLDER" Condition="ADDDESKTOPSHORTCUT=1">
+    <Component Id="OmnuvDesktopShortcut" Directory="INSTALLFOLDER" Condition="ADDDESKTOPSHORTCUT=1">
       <Shortcut Id="DesktopShortcut"
                 Name="$(var.ShortcutName)"
                 Description="$(var.ShortcutDesc)"
-                Target="[#MoonlightExe]"
+                Target="[#OmnuvClientExe]"
                 Directory="DesktopFolder"
                 WorkingDirectory="INSTALLFOLDER" />
       <RemoveFolder Id="CleanupDesktopShortcut"
@@ -91,7 +91,7 @@
     <!-- Persist desktop shortcut's installed state to let Bundle.wxs know if
          the desktop shortcut should installed by default when upgrading the
          product -->
-    <Component Id="MoonlightDesktopShortcutState" Directory="INSTALLFOLDER">
+    <Component Id="OmnuvDesktopShortcutState" Directory="INSTALLFOLDER">
       <RegistryValue Root="HKCU"
                      Key="Software\Omnuv"
                      Name="DesktopShortcutInstallState"
@@ -101,12 +101,12 @@
     </Component>
 
     <DirectoryRef Id="INSTALLFOLDER">
-      <Component Id="Moonlight">
-        <File Id="MoonlightExe"
+      <Component Id="OmnuvClient">
+        <File Id="OmnuvClientExe"
               KeyPath="yes"
               Checksum="yes"
               Source="$(var.BuildDir)\app\$(var.Configuration)\OmnuvClient.exe">
-          <fire:FirewallException Id="MoonlightFirewallException"
+          <fire:FirewallException Id="OmnuvClientFirewallException"
                                   Scope="any"
                                   IgnoreFailure="yes"
                                   Name="$(var.FullName)" />
@@ -131,7 +131,7 @@
         back — the two are deliberately the same rule by name, and the daemon
         replaces one pointing at another binary rather than adding a second.
 
-        Sourced from outside DeployDir on purpose: `MoonlightDependencies`
+        Sourced from outside DeployDir on purpose: `OmnuvDependencies`
         below harvests that whole tree, and a file it generates a component for
         is a file nothing can attach a service or a firewall rule to.
       -->
@@ -182,7 +182,7 @@
       </Component>
     </DirectoryRef>
 
-    <ComponentGroup Id="MoonlightDependencies" Directory="INSTALLFOLDER">
+    <ComponentGroup Id="OmnuvDependencies" Directory="INSTALLFOLDER">
       <!--
         This harvests whatever is in the deploy directory, and the tunnel must
         not be in it *at this point in the build*. `build-arch.bat` copies the
@@ -199,14 +199,14 @@
       <Files Include="$(var.DeployDir)\**" />
     </ComponentGroup>
 
-    <Feature Id="ProductFeature" Title="Moonlight" Level="1" ConfigurableDirectory="INSTALLFOLDER">
-      <ComponentRef Id="Moonlight" />
-      <ComponentRef Id="MoonlightShortcuts" />
-      <ComponentRef Id="MoonlightDesktopShortcutState" />
-      <ComponentRef Id="MoonlightDesktopShortcut" />
+    <Feature Id="ProductFeature" Title="Omnuv Client" Level="1" ConfigurableDirectory="INSTALLFOLDER">
+      <ComponentRef Id="OmnuvClient" />
+      <ComponentRef Id="OmnuvShortcuts" />
+      <ComponentRef Id="OmnuvDesktopShortcutState" />
+      <ComponentRef Id="OmnuvDesktopShortcut" />
       <ComponentRef Id="OnvTunnel" />
       <ComponentRef Id="OnvWintun" />
-      <ComponentGroupRef Id="MoonlightDependencies" />
+      <ComponentGroupRef Id="OmnuvDependencies" />
     </Feature>
 
     <StandardDirectory Id="DesktopFolder" />

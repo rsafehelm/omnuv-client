@@ -188,7 +188,7 @@ if !ERRORLEVEL! EQU 0 (
     )
 )
 
-echo Compiling Moonlight in %BUILD_CONFIG% configuration
+echo Compiling Omnuv Client in %BUILD_CONFIG% configuration
 pushd %BUILD_FOLDER%
 !JOM_CMD! %BUILD_CONFIG%
 if !ERRORLEVEL! NEQ 0 goto Error
@@ -201,7 +201,7 @@ for /r "%BUILD_FOLDER%" %%f in (*.pdb) do (
 )
 copy %SOURCE_ROOT%\libs\windows\lib\%ARCH%\*.pdb %SYMBOLS_FOLDER%
 if !ERRORLEVEL! NEQ 0 goto Error
-7z a %SYMBOLS_FOLDER%\MoonlightDebuggingSymbols-%ARCH%-%VERSION%.zip %SYMBOLS_FOLDER%\*.pdb
+7z a %SYMBOLS_FOLDER%\OmnuvDebuggingSymbols-%ARCH%-%VERSION%.zip %SYMBOLS_FOLDER%\*.pdb
 if !ERRORLEVEL! NEQ 0 goto Error
 
 if "%ML_SYMBOL_STORE%" NEQ "" (
@@ -217,7 +217,7 @@ if "%ML_SYMBOL_STORE%" NEQ "" (
 
 if "%ML_SYMBOL_ARCHIVE%" NEQ "" (
     echo Copying PDB ZIP to symbol archive: %ML_SYMBOL_ARCHIVE%
-    copy %SYMBOLS_FOLDER%\MoonlightDebuggingSymbols-%ARCH%-%VERSION%.zip %ML_SYMBOL_ARCHIVE%
+    copy %SYMBOLS_FOLDER%\OmnuvDebuggingSymbols-%ARCH%-%VERSION%.zip %ML_SYMBOL_ARCHIVE%
     if !ERRORLEVEL! NEQ 0 goto Error
 ) else (
     if "%MUST_DEPLOY_SYMBOLS%"=="1" (
@@ -302,7 +302,7 @@ if "%ML_SYMBOL_STORE%" NEQ "" (
 )
 
 echo Building MSI
-cmd /c "set VERSION= && msbuild -Restore %SOURCE_ROOT%\wix\Moonlight\Moonlight.wixproj /p:Configuration=%BUILD_CONFIG% /p:Platform=%ARCH% /p:MSBuildProjectExtensionsPath=%BUILD_FOLDER%\"
+cmd /c "set VERSION= && msbuild -Restore %SOURCE_ROOT%\wix\Omnuv\Omnuv.wixproj /p:Configuration=%BUILD_CONFIG% /p:Platform=%ARCH% /p:MSBuildProjectExtensionsPath=%BUILD_FOLDER%\"
 if !ERRORLEVEL! NEQ 0 goto Error
 
 echo Copying application binary to deployment directory
@@ -343,7 +343,7 @@ if defined CI_VERSION (
     echo. > %DEPLOY_FOLDER%\portable.dat.inactive
     if !ERRORLEVEL! NEQ 0 goto Error
 ) else (
-    rem This file tells Moonlight that it's a portable installation
+    rem This file tells the client that it's a portable installation
     echo. > %DEPLOY_FOLDER%\portable.dat
     if !ERRORLEVEL! NEQ 0 goto Error
 )
