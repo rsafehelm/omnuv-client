@@ -198,6 +198,8 @@ Dialog {
 
             ComboBox {
                 id: resolution
+                Accessible.role: Accessible.ComboBox
+                Accessible.name: qsTr("Resolution")
                 Layout.fillWidth: true
                 textRole: "text"
 
@@ -257,6 +259,8 @@ Dialog {
 
             ComboBox {
                 id: frameRate
+                Accessible.role: Accessible.ComboBox
+                Accessible.name: qsTr("Frame rate")
                 textRole: "text"
 
                 function syncFromPreferences() {
@@ -330,6 +334,11 @@ Dialog {
 
         Slider {
             id: bitrate
+            Accessible.role: Accessible.Slider
+            Accessible.name: qsTr("Bitrate")
+            // Announced in the unit the label shows, not in kbps: a
+            // screen reader otherwise reads out five digits nobody uses.
+            Accessible.description: qsTr("%1 Mbps").arg(Math.round(StreamingPreferences.bitrateKbps / 100) / 10)
             Layout.fillWidth: true
             from: 500
             // Upstream's own ceiling, and its own escape hatch: the unlocked
@@ -374,6 +383,8 @@ Dialog {
 
             ComboBox {
                 id: displayMode
+                Accessible.role: Accessible.ComboBox
+                Accessible.name: qsTr("Display")
                 textRole: "text"
                 // Some renderers can only ever be fullscreen, and upstream
                 // disables the control rather than offering a choice that will
@@ -436,6 +447,8 @@ Dialog {
             }
 
             Switch {
+                Accessible.role: Accessible.CheckBox
+                Accessible.name: qsTr("Smooth motion")
                 // Upstream's gate, kept: frame pacing does nothing without
                 // V-Sync (`SettingsView.qml:840-841`), so the switch is
                 // disabled rather than allowed to claim something it cannot do.
@@ -461,6 +474,8 @@ Dialog {
 
             ComboBox {
                 id: audio
+                Accessible.role: Accessible.ComboBox
+                Accessible.name: qsTr("Audio")
                 textRole: "text"
 
                 // AudioConfig is reachable from QML as an enum on the
