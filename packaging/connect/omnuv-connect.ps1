@@ -61,8 +61,44 @@ function Start-Stream($HostName, $App) {
 
 function Start-Ssh($HostName, $User) {
     $target = if ($User) { "$User@$HostName" } else { $HostName }
-    # Windows ships OpenSSH, so this needs nothing installed.
+    # Windows ships OpenSSH, so this needs nothing installed. `cmd.exe` keeps
+    # the window open after ssh exits, and it parses its command line, which is
+    # why nothing reaches it that `Assert-Link*` has not already checked.
     Start-Process -FilePath 'cmd.exe' -ArgumentList @('/k', 'ssh', $target)
+}
+
+# **A link is input from any web page, not from the console.** Anything can
+# emit omnuv://, and the scheme is registered machine-wide, so every value is
+# checked against what the console actually sends before it reaches a program.
+# `omnuv://ssh?host=x%26calc` used to become `cmd.exe /k ssh x&calc`, and a
+# host starting with `-` becomes an ssh option (`-oProxyCommand=…`).
+# `-cmatch` with `\A…\z`: `-match` ignores case and lets `$` match before a
+# trailing newline.
+function Assert-LinkHost($HostName) {
+    $label = '[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?'
+    if ($HostName.Length -gt 253 -or $HostName -cnotmatch "\A$label(?:\.$label)*\z") {
+        Die "that link names a machine this will not open: $HostName"
+    }
+}
+function Assert-LinkUser($User) {
+    if ($User -and $User -cnotmatch '\A[A-Za-z_][A-Za-z0-9_.-]{0,31}\z') {
+        Die "that link names a user this will not open: $User"
+    }
+}
+function Assert-LinkApp($App) {
+    if ($App -and ($App.Length -gt 128 -or $App -cmatch '\A-|["\x00-\x1f\x7f]')) {
+        Die "that link names an application this will not open: $App"
+    }
+}
+
+# A link that enrols replaces this device's network membership, so a click is
+# not consent: the person is asked, and anything but Yes stops it.
+function Confirm-LinkEnrol {
+    Add-Type -AssemblyName PresentationFramework
+    $answer = [System.Windows.MessageBox]::Show(
+        "A link asks to join this device to an Omnuv network.`n`nThis replaces the network it is on now. Only continue if you started this from your Omnuv console.",
+        'Omnuv Connect', 'YesNo', 'Warning', 'No')
+    if ($answer -ne 'Yes') { Die 'joining was cancelled' }
 }
 
 # The console emits omnuv:// links so a person clicks a button instead of
@@ -82,14 +118,19 @@ function Invoke-Link($Url) {
     switch ($action.ToLower()) {
         { $_ -in 'enrol', 'enroll', 'join' } {
             if (-not $q['key']) { Die 'that link carries no key' }
+            Confirm-LinkEnrol
             & $PSCommandPath enrol $q['key']
         }
         'stream' {
             if (-not $q['host']) { Die 'that link names no machine' }
+            Assert-LinkHost $q['host']
+            Assert-LinkApp $q['app']
             Start-Stream $q['host'] $q['app']
         }
         'ssh' {
             if (-not $q['host']) { Die 'that link names no machine' }
+            Assert-LinkHost $q['host']
+            Assert-LinkUser $q['user']
             Start-Ssh $q['host'] $q['user']
         }
         default { Die "unknown link: omnuv://$action" }

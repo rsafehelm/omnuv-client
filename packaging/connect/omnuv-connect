@@ -83,14 +83,31 @@ install_gaming() {
 #   omnuv://ssh?host=<name>.internal&user=<user>
 
 urldecode() {
-    # %20 and friends, and + for a space, without depending on python.
-    printf '%b' "$(printf '%s' "$1" | sed 's/+/ /g; s/%\(..\)/\\x\1/g')"
+    # %20 and friends, and + for a space, without depending on python. Octal,
+    # not `printf '%b'` with `\x`: dash, which is /bin/sh on Ubuntu, has no
+    # `\x`, so `%26` came out as the text `\x26`. A `%` not followed by two hex
+    # digits stays as it is.
+    s="$(printf '%s' "$1" | sed 's/+/ /g')"; out=''
+    while :; do
+        case "$s" in *%*) ;; *) break ;; esac
+        out="$out${s%%\%*}"; s="${s#*%}"
+        case "$s" in
+            [0-9A-Fa-f][0-9A-Fa-f]*)
+                h="${s%"${s#??}"}"; s="${s#??}"
+                # The x keeps a decoded newline from being eaten by $( ).
+                c="$(printf "\\$(printf '%03o' "0x$h")x")"; out="$out${c%x}" ;;
+            *) out="$out%" ;;
+        esac
+    done
+    printf '%s' "$out$s"
 }
 
 # One parameter out of a query string, decoded. Missing is empty, which every
 # caller checks.
+# The trailing newline matters: `read` fails on a last line without one, so the
+# last parameter was dropped, and a one-parameter link named no machine at all.
 param() {
-    printf '%s' "$2" | tr '&' '\n' | while IFS= read -r pair; do
+    printf '%s\n' "$2" | tr '&' '\n' | while IFS= read -r pair; do
         case "$pair" in
             "$1"=*) urldecode "${pair#*=}"; return ;;
         esac
@@ -112,6 +129,48 @@ launch_stream() {
     fi
     [ -d /Applications/Moonlight.app ] && exec open -a Moonlight --args stream "$host" "$app"
     die "the game streaming client is not installed: run omnuv-connect enrol <key> --gaming"
+}
+
+# **A link is input from any web page, not from the console.** Anything can
+# emit omnuv://, so every value is checked against what the console actually
+# sends before it reaches a program: a host starting with `-` is an ssh option
+# (`-oProxyCommand=…`), and gnome-terminal's `-e` re-parses its argument.
+# `case` rather than grep: grep matches per line, so a value with a newline in
+# it passes if any one line does.
+valid_host() {
+    case "$1" in
+        ''|*[!A-Za-z0-9.-]*|[.-]*|*[.-]|*..*|*.-*|*-.*) return 1 ;;
+    esac
+    [ "${#1}" -le 253 ]
+}
+valid_user() {
+    case "$1" in
+        '') return 0 ;;
+        *[!A-Za-z0-9_.-]*|[!A-Za-z_]*) return 1 ;;
+    esac
+    [ "${#1}" -le 32 ]
+}
+valid_app() {
+    case "$1" in
+        -*|*'"'*|*[[:cntrl:]]*) return 1 ;;
+    esac
+    [ "${#1}" -le 128 ]
+}
+
+# A link that enrols replaces this device's network membership, so a click is
+# not consent. The person is asked in a dialog; with no way to ask, the link is
+# refused and the command to run by hand is named instead.
+confirm_link_enrol() {
+    msg="A link asks to join this device to an Omnuv network. This replaces the network it is on now. Only continue if you started this from your Omnuv console."
+    if have zenity; then
+        zenity --question --title='Omnuv Connect' --text="$msg" 2>/dev/null
+    elif have kdialog; then
+        kdialog --title 'Omnuv Connect' --warningyesno "$msg" 2>/dev/null
+    elif [ "$(os)" = macos ]; then
+        osascript -e "display dialog \"$msg\" with title \"Omnuv Connect\" buttons {\"Cancel\", \"Join\"} default button \"Cancel\" with icon caution" >/dev/null 2>&1
+    else
+        die "joining from a link needs a dialog to ask you first. Run: omnuv-connect enrol <key>"
+    fi || die "joining was cancelled"
 }
 
 launch_ssh() {
@@ -142,17 +201,24 @@ handle() {
         enrol|enroll|join)
             key="$(param key "$query")"
             [ -n "$key" ] || die "that link carries no key"
+            confirm_link_enrol
             enrol "$key"
             ;;
         stream)
             host="$(param host "$query")"
             [ -n "$host" ] || die "that link names no machine"
-            launch_stream "$host" "$(param app "$query")"
+            valid_host "$host" || die "that link names a machine this will not open: $host"
+            app="$(param app "$query")"
+            valid_app "$app" || die "that link names an application this will not open: $app"
+            launch_stream "$host" "$app"
             ;;
         ssh)
             host="$(param host "$query")"
             [ -n "$host" ] || die "that link names no machine"
-            launch_ssh "$host" "$(param user "$query")"
+            valid_host "$host" || die "that link names a machine this will not open: $host"
+            user="$(param user "$query")"
+            valid_user "$user" || die "that link names a user this will not open: $user"
+            launch_ssh "$host" "$user"
             ;;
         *) die "unknown link: omnuv://$action" ;;
     esac
