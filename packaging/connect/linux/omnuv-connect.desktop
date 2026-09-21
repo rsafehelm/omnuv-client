@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Omnuv Connect
+Comment=Join this device to your Omnuv private network, and open your machines
+Exec=omnuv-connect handle %u
+Icon=network-workgroup
+Terminal=true
+NoDisplay=true
+Categories=Network;
+MimeType=x-scheme-handler/omnuv;

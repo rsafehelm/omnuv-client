@@ -1,0 +1,4 @@
+#!/bin/sh
+# macOS hands a URL to an application, not to a command. This is the smallest
+# application that can accept one and pass it to the command that does the work.
+exec /usr/local/bin/omnuv-connect handle "$1"

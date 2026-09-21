@@ -1,0 +1,243 @@
+#!/bin/sh
+# Omnuv Connect — joins this device to your private network.
+#
+# One command, on Linux and macOS. It does three things and nothing else:
+# installs the tunnel client if it is missing, joins the network with the key
+# from your Omnuv console, and tells you whether it worked.
+#
+#   omnuv-connect enrol <key>            join the private network
+#   omnuv-connect enrol <key> --gaming   and install the game streaming client
+#   omnuv-connect status                 is it connected?
+#   omnuv-connect leave                  disconnect this device
+#   omnuv-connect sign-in <core-url>     approve this device in a browser
+#   omnuv-connect handle omnuv://…       what the console's buttons open
+#
+# We install the tunnel and streaming clients from their own publishers rather
+# than shipping copies inside this package. That way you get the current
+# version, security updates come from the people who write them, and we are not
+# redistributing somebody else's software.
+set -eu
+
+# Replaced at build time. Override with --management-url for another deployment.
+MANAGEMENT_URL="@MANAGEMENT_URL@"
+CORE_URL="@CORE_URL@"
+VERSION="@VERSION@"
+
+say()  { printf '%s\n' "$*"; }
+die()  { printf 'omnuv-connect: %s\n' "$*" >&2; exit 1; }
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# sudo only where it is actually needed, and never silently.
+as_root() {
+    if [ "$(id -u)" = 0 ]; then "$@"; else
+        have sudo || die "this step needs administrator rights and sudo is not installed"
+        sudo "$@"
+    fi
+}
+
+os() {
+    case "$(uname -s)" in
+        Linux)  echo linux ;;
+        Darwin) echo macos ;;
+        *) die "this installer supports Linux and macOS. On Windows use the Omnuv Connect installer." ;;
+    esac
+}
+
+install_tunnel() {
+    have netbird && return 0
+    say "Installing the tunnel client from its publisher…"
+    # The publisher's own installer, used unchanged. It places the client and
+    # its background service, which is what lets a name like gpu-1.internal
+    # resolve on this device.
+    curl -fsSL https://pkgs.netbird.io/install.sh | sh || die "the tunnel client would not install"
+    have netbird || die "the tunnel client installed but is not on PATH; open a new terminal and try again"
+}
+
+install_gaming() {
+    have moonlight || have moonlight-qt || [ -d /Applications/Moonlight.app ] || {
+        say "Installing the game streaming client…"
+        case "$(os)" in
+            macos)
+                have brew || die "install Homebrew, or download Moonlight from moonlight-stream.org"
+                brew install --cask moonlight
+                ;;
+            linux)
+                if have flatpak; then
+                    flatpak install -y --noninteractive flathub com.moonlight_stream.Moonlight
+                else
+                    say "Flatpak is not installed. Get Moonlight from https://moonlight-stream.org"
+                fi
+                ;;
+        esac
+    }
+}
+
+# ---- omnuv:// links ----
+#
+# The console emits these so a person clicks a button instead of copying a key
+# or remembering a machine's name. Everything the link carries is already
+# theirs; nothing here is a secret they did not already have on screen.
+#
+#   omnuv://enrol?key=<key>
+#   omnuv://stream?host=<name>.internal&app=<application>
+#   omnuv://ssh?host=<name>.internal&user=<user>
+
+urldecode() {
+    # %20 and friends, and + for a space, without depending on python.
+    printf '%b' "$(printf '%s' "$1" | sed 's/+/ /g; s/%\(..\)/\\x\1/g')"
+}
+
+# One parameter out of a query string, decoded. Missing is empty, which every
+# caller checks.
+param() {
+    printf '%s' "$2" | tr '&' '\n' | while IFS= read -r pair; do
+        case "$pair" in
+            "$1"=*) urldecode "${pair#*=}"; return ;;
+        esac
+    done
+}
+
+launch_stream() {
+    host="$1"; app="$2"
+    for m in moonlight moonlight-qt; do
+        if have "$m"; then
+            # Verified against the client's own parser: stream <host> "<app>".
+            [ -n "$app" ] && exec "$m" stream "$host" "$app"
+            exec "$m" stream "$host"
+        fi
+    done
+    if have flatpak && flatpak info com.moonlight_stream.Moonlight >/dev/null 2>&1; then
+        [ -n "$app" ] && exec flatpak run com.moonlight_stream.Moonlight stream "$host" "$app"
+        exec flatpak run com.moonlight_stream.Moonlight stream "$host"
+    fi
+    [ -d /Applications/Moonlight.app ] && exec open -a Moonlight --args stream "$host" "$app"
+    die "the game streaming client is not installed: run omnuv-connect enrol <key> --gaming"
+}
+
+launch_ssh() {
+    host="$1"; user="${2:-}"
+    target="$host"
+    [ -n "$user" ] && target="$user@$host"
+    # A terminal, because a link click has no terminal of its own.
+    for t in x-terminal-emulator gnome-terminal konsole xterm; do
+        have "$t" && exec "$t" -e ssh "$target"
+    done
+    [ "$(os)" = macos ] && exec open -a Terminal "ssh://$target"
+    die "no terminal found. Run: ssh $target"
+}
+
+handle() {
+    url="${1:-}"
+    case "$url" in
+        omnuv://*) ;;
+        *) die "not an omnuv link: $url" ;;
+    esac
+    rest="${url#omnuv://}"
+    action="${rest%%\?*}"
+    action="${action%%/*}"
+    query=""
+    case "$rest" in *\?*) query="${rest#*\?}" ;; esac
+
+    case "$action" in
+        enrol|enroll|join)
+            key="$(param key "$query")"
+            [ -n "$key" ] || die "that link carries no key"
+            enrol "$key"
+            ;;
+        stream)
+            host="$(param host "$query")"
+            [ -n "$host" ] || die "that link names no machine"
+            launch_stream "$host" "$(param app "$query")"
+            ;;
+        ssh)
+            host="$(param host "$query")"
+            [ -n "$host" ] || die "that link names no machine"
+            launch_ssh "$host" "$(param user "$query")"
+            ;;
+        *) die "unknown link: omnuv://$action" ;;
+    esac
+}
+
+enrol() {
+    key=""
+    gaming=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --gaming) gaming=1; shift ;;
+            --management-url) MANAGEMENT_URL="${2:-}"; shift 2 ;;
+            -*) die "unknown option $1" ;;
+            *) key="$1"; shift ;;
+        esac
+    done
+    [ -n "$key" ] || die "usage: omnuv-connect enrol <key>   (copy it from your Omnuv console)"
+    [ -n "$MANAGEMENT_URL" ] && [ "$MANAGEMENT_URL" != "@MANAGEMENT_URL@" ] \
+        || die "no network address was built into this package; pass --management-url"
+
+    install_tunnel
+    [ "$gaming" = 1 ] && install_gaming
+
+    say "Joining your private network…"
+    # The key spends itself: it enrols this one device and cannot be reused.
+    as_root netbird up --management-url "$MANAGEMENT_URL" --setup-key "$key" \
+        || die "the device did not join. Check the key has not already been used."
+
+    say ""
+    say "Connected. Your machines are reachable by name, for example:"
+    say "    ssh gpu-1.internal"
+    [ "$gaming" = 1 ] && say "    Open Moonlight and point it at <machine>.internal"
+    say ""
+    say "This device now appears in your Omnuv console under Network, where you can revoke it."
+}
+
+# ---- signing in ----
+#
+# P8's first step, usable before the application exists: the command shows a
+# short code, the person approves it in a browser where they are already signed
+# in, and this collects a token. No password is ever typed into software the
+# person downloaded.
+sign_in() {
+    core="${1:-$CORE_URL}"
+    [ -n "$core" ] || die "usage: omnuv-connect sign-in <https://core-address>"
+    have curl || die "curl is required"
+    start=$(curl -fsS -H 'content-type: application/json' \
+        -d "{\"client\":\"Omnuv Connect $VERSION on $(uname -s)\"}" \
+        "$core/v1/auth/device") || die "could not reach $core"
+    code=$(printf '%s' "$start" | sed -n 's/.*"user_code":"\([^"]*\)".*/\1/p')
+    device=$(printf '%s' "$start" | sed -n 's/.*"device_code":"\([^"]*\)".*/\1/p')
+    uri=$(printf '%s' "$start" | sed -n 's/.*"verification_uri":"\([^"]*\)".*/\1/p')
+    say ""
+    say "  Open $uri and enter this code:"
+    say ""
+    say "      $code"
+    say ""
+    say "  Waiting…"
+    # Polled at the interval the server asked for, not one this guessed.
+    while :; do
+        sleep 3
+        body=$(curl -sS -o /dev/null -w '%{http_code}' -H 'content-type: application/json' \
+            -d "{\"device_code\":\"$device\"}" "$core/v1/auth/device/token")
+        case "$body" in
+            202) continue ;;
+            200) break ;;
+            *) die "that request was refused or expired" ;;
+        esac
+    done
+    token=$(curl -fsS -H 'content-type: application/json' \
+        -d "{\"device_code\":\"$device\"}" "$core/v1/auth/device/token" \
+        | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+    [ -n "$token" ] || die "the token was already collected; run sign-in again"
+    umask 077
+    mkdir -p "$HOME/.config/omnuv"
+    printf '%s\n' "$token" > "$HOME/.config/omnuv/token"
+    say "Signed in. Take this access back any time in the console, under Network."
+}
+
+case "${1:-}" in
+    handle) shift; handle "$@" ;;
+    sign-in|signin|login) shift; sign_in "$@" ;;
+    enrol|enroll|join) shift; enrol "$@" ;;
+    status) have netbird || die "not installed yet: run omnuv-connect enrol <key>"; netbird status ;;
+    leave|disconnect) as_root netbird down && say "Disconnected. Revoke the device in the console to remove it for good." ;;
+    version|--version) say "omnuv-connect $VERSION" ;;
+    *) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' ;;
+esac
