@@ -1,0 +1,38 @@
+# The marketplace from a terminal — the buyer's third front end, beside the
+# window and the web console.
+#
+# **It lives here and not in `rsafehelm/omnuv` because a buyer has to be able
+# to get it.** It sat in the private repository until 21 September 2026, built
+# by nothing and packaged by nothing, which made it a buyer tool nobody had.
+#
+# **At the root rather than under `app/`, for the reason `tunnel/` is.** Every
+# subdirectory of `app/` is qmake-built and listed in `app.pro`; this is a
+# separate binary with its own toolchain, and it arrives beside
+# `OmnuvClient.exe` rather than inside it.
+#
+# **Apache-2.0 stays.** This is a standalone binary that links nothing in this
+# repository: it speaks HTTP to Core and prints. Aggregating it here does not
+# make it part of the GPL-3.0 work, and relicensing a grant that was already
+# given buys nothing. `tunnel/` is the same shape — Go, its own module, no
+# header claiming the application's licence.
+[package]
+name = "omnuv-terminal"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Command line client for the Omnuv marketplace."
+
+[[bin]]
+name = "omnuv"
+path = "src/main.rs"
+
+# Concrete versions: this was a member of Core's cargo workspace and took four
+# of these with `workspace = true`. It is its own crate now.
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "fs"] }
+clap = { version = "4", features = ["derive"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
