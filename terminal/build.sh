@@ -8,12 +8,23 @@
 # release does not depend on what is installed on the machine you are sitting
 # at, and the Windows build rig never needs a Rust toolchain.
 #
-# **macOS is not cross-compiled here, and that is not an oversight.** `tunnel/`
-# cross-compiles to all three because Go does it with two environment
-# variables. This crate depends on `ring` through rustls, which needs a C
-# toolchain per target: mingw covers Windows from Linux, and Apple's does not
-# leave the platform. A macOS binary is built on `onv-dev-mac`, and saying so
-# is better than a target that fails on somebody else's afternoon.
+# **macOS is not built anywhere yet, and this script does not pretend
+# otherwise.** `tunnel/` reaches all three targets because Go cross-compiles
+# with two environment variables. This crate pulls `ring` through rustls, which
+# wants a C toolchain per target: mingw covers Windows from Linux, and Apple's
+# does not leave the platform.
+#
+# The obvious answer -- build it on `onv-dev-mac` -- is wrong twice, and this
+# comment said it for an afternoon before anybody checked. That rig's toolchain
+# is clang, the macOS SDK, node, create-dmg and Qt; there is no Rust on it. And
+# `docs/lab-macos.md` in the private repository is explicit that the rig is for
+# running what it builds, never for building a release: no paid Apple Developer
+# Program means no notarised artefact, and an artefact built there would carry
+# the host that produced it.
+#
+# A `macos-*` GitHub runner builds this natively and free, which is what a CLI
+# wants -- it is one binary, not a `.dmg` that Gatekeeper quarantines. Queued
+# in the private repository rather than guessed at here.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 out="$here/dist"; mkdir -p "$out"
