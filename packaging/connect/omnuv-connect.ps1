@@ -30,7 +30,10 @@
 param(
     [Parameter(Position = 0)][string]$Command = 'help',
     [Parameter(Position = 1)][string]$Key,
-    [string]$ManagementUrl = '@MANAGEMENT_URL@'
+    [string]$ManagementUrl = '@MANAGEMENT_URL@',
+    # Anything left over. A link is exactly one argument; one that arrives as
+    # several had a quote in it that ended its own (H3c).
+    [Parameter(ValueFromRemainingArguments = $true)][string[]]$Extra
 )
 
 $ErrorActionPreference = 'Stop'
@@ -151,7 +154,10 @@ function Invoke-Link($Url) {
 }
 
 switch ($Command.ToLower()) {
-    'handle'  { Invoke-Link $Key }
+    'handle'  {
+        if ($Extra -or $PSBoundParameters.ContainsKey('ManagementUrl')) { Die 'that link is malformed: it arrived as more than one argument' }
+        Invoke-Link $Key
+    }
     { $_ -in 'enrol', 'enroll', 'join' } {
         if (-not $Key) { Die 'usage: omnuv-connect enrol <key>   (copy it from your Omnuv console)' }
         if (-not $ManagementUrl -or $ManagementUrl -eq '@MANAGEMENT_URL@') {

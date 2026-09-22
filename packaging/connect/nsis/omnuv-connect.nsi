@@ -171,8 +171,12 @@ Section "Install"
   WriteRegStr HKLM "SOFTWARE\Classes\omnuv" "" "URL:Omnuv"
   WriteRegStr HKLM "SOFTWARE\Classes\omnuv" "URL Protocol" ""
   WriteRegStr HKLM "SOFTWARE\Classes\omnuv\DefaultIcon" "" "$SYSDIR\shell32.dll,13"
+  ; **PowerShell directly, never the .cmd (H3c, 22 September 2026).** A URL
+  ; handler that is a batch file hands the URL to cmd, which expands %VAR%
+  ; inside it and lets a raw quote end the argument. -File passes the URL to
+  ; the script as it arrived, and the script refuses one that became two.
   WriteRegStr HKLM "SOFTWARE\Classes\omnuv\shell\open\command" "" \
-    '"$INSTDIR\omnuv-connect.cmd" handle "%1"'
+    '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\omnuv-connect.ps1" handle "%1"'
 
   WriteUninstaller "$INSTDIR\uninstall.exe"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\OmnuvConnect" \
