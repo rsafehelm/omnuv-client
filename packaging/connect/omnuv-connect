@@ -268,9 +268,13 @@ sign_in() {
     start=$(curl -fsS -H 'content-type: application/json' \
         -d "{\"client\":\"Omnuv Connect $VERSION on $(uname -s)\"}" \
         "$core/v1/auth/device") || die "could not reach $core"
-    code=$(printf '%s' "$start" | sed -n 's/.*"user_code":"\([^"]*\)".*/\1/p')
-    device=$(printf '%s' "$start" | sed -n 's/.*"device_code":"\([^"]*\)".*/\1/p')
-    uri=$(printf '%s' "$start" | sed -n 's/.*"verification_uri":"\([^"]*\)".*/\1/p')
+    # Optional spaces around the colon: Core sends compact JSON, but a proxy or
+    # a later serializer need not.
+    code=$(printf '%s' "$start" | sed -n 's/.*"user_code" *: *"\([^"]*\)".*/\1/p')
+    device=$(printf '%s' "$start" | sed -n 's/.*"device_code" *: *"\([^"]*\)".*/\1/p')
+    uri=$(printf '%s' "$start" | sed -n 's/.*"verification_uri" *: *"\([^"]*\)".*/\1/p')
+    interval=$(printf '%s' "$start" | sed -n 's/.*"interval" *: *\([0-9][0-9]*\).*/\1/p')
+    [ -n "$device" ] || die "$core did not start a sign-in: $start"
     say ""
     say "  Open $uri and enter this code:"
     say ""
@@ -278,20 +282,26 @@ sign_in() {
     say ""
     say "  Waiting…"
     # Polled at the interval the server asked for, not one this guessed.
+    #
+    # **One request per poll, and its body is kept.** The status used to be
+    # read with the body sent to /dev/null, and a second request made for the
+    # token once the status said 200. But the token is issued once: the 200
+    # was the token, and it was thrown away, so the second collect was refused
+    # and every sign-in failed while leaving a live token nobody held.
     while :; do
-        sleep 3
-        body=$(curl -sS -o /dev/null -w '%{http_code}' -H 'content-type: application/json' \
-            -d "{\"device_code\":\"$device\"}" "$core/v1/auth/device/token")
-        case "$body" in
+        sleep "${interval:-5}"
+        reply=$(curl -sS -w '\n%{http_code}' -H 'content-type: application/json' \
+            -d "{\"device_code\":\"$device\"}" "$core/v1/auth/device/token") \
+            || die "could not reach $core"
+        status=$(printf '%s' "$reply" | tail -n 1)
+        case "$status" in
             202) continue ;;
             200) break ;;
             *) die "that request was refused or expired" ;;
         esac
     done
-    token=$(curl -fsS -H 'content-type: application/json' \
-        -d "{\"device_code\":\"$device\"}" "$core/v1/auth/device/token" \
-        | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
-    [ -n "$token" ] || die "the token was already collected; run sign-in again"
+    token=$(printf '%s' "$reply" | sed '$d' | sed -n 's/.*"token" *: *"\([^"]*\)".*/\1/p')
+    [ -n "$token" ] || die "$core approved the sign-in but sent no token"
     umask 077
     mkdir -p "$HOME/.config/omnuv"
     printf '%s\n' "$token" > "$HOME/.config/omnuv/token"
