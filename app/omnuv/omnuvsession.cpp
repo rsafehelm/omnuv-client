@@ -647,6 +647,14 @@ void OmnuvSession::invalidateContext()
 
 void OmnuvSession::signOut()
 {
+    // **Revoked at Core, not only forgotten here (H5, 22 September 2026).**
+    // Deleting the token locally left it valid at Core, with no expiry, so any
+    // copy of it still worked. Asked before the token is dropped, and not
+    // waited for: signing out on this device never depends on the network.
+    // A fixture's token is not a credential, and no request goes to a fixture.
+    QNetworkReply* revocation = (!m_token.isEmpty() && !m_fixture && OmnuvCredentials::secureCore(m_coreUrl))
+        ? m_net.deleteResource(request(QStringLiteral("/v1/devices/tokens/current"), true))
+        : nullptr;
     invalidateContext();
     // Both the credential store and any file an older version left behind.
     // Signing out must not leave a token anywhere.
@@ -660,7 +668,23 @@ void OmnuvSession::signOut()
     m_estate->clear();
     clearPending();
     emit signedInChanged();
-    setStatus(tr("Signed out on this device. Revoke it in the console to take the access back for good."));
+    setStatus(revocation ? tr("Signing out…")
+                         : tr("Signed out on this device. Revoke it in the console to take the access back for good."));
+    if (!revocation) return;
+    const auto context = m_context;
+    connect(revocation, &QNetworkReply::finished, this, [this, revocation, context]() {
+        revocation->deleteLater();
+        const int code = revocation->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        // 401: already not a token, which is the outcome asked for.
+        const bool revoked = code == 204 || code == 401;
+        if (revoked) qInfo("omnuv: the token was revoked at Core");
+        else qWarning().noquote() << "omnuv: Core did not revoke the token:" << code << revocation->errorString();
+        // A later sign-in has its own status; this one is no longer news.
+        if (context != m_context || signedIn()) return;
+        setStatus(revoked
+            ? tr("Signed out. This device's access was revoked.")
+            : tr("Signed out on this device, but Omnuv could not revoke its access. Revoke it in the console, under your account's applications."));
+    });
 }
 
 // Revoked in the console, or expired. Say so and stop pretending to be
