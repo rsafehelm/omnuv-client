@@ -335,6 +335,11 @@ void start(const QStringList& args, QObject* parent)
     // it, because the wrong one is the failure this line exists to catch.
     fact("core-url", session->coreUrl());
 
+    if (session->coreUrl().isEmpty() && !session->refusedCoreUrl().isEmpty()) {
+        complain(QStringLiteral("%1 is not an https:// address, and a sign-in is never sent over "
+                                "plain http. Use its https:// address.").arg(session->refusedCoreUrl()));
+        ::exit(1);
+    }
     if (session->coreUrl().isEmpty()) {
         complain(QStringLiteral(
             "No Omnuv deployment to sign in to. Set OMNUV_CORE_URL, or sign in "

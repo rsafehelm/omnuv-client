@@ -136,6 +136,8 @@ OmnuvSession::OmnuvSession(QObject* parent)
       // proxy policy, and the machine's certificate decision is per-request.
       m_pairing(new OmnuvPairing(&m_net, this))
 {
+    // Honour a Core's Strict-Transport-Security, as the update checker does.
+    m_net.setStrictTransportSecurityEnabled(true);
     QSettings settings;
     if (m_fixture) {
         // **A guest in somebody else's house.** `OMNUV_FIXTURE_URL` is how the
@@ -162,6 +164,18 @@ OmnuvSession::OmnuvSession(QObject* parent)
         if (m_coreUrl.isEmpty()) {
             // Set at build time for a packaged client; typed in by hand otherwise.
             m_coreUrl = QString::fromLocal8Bit(qgetenv("OMNUV_CORE_URL"));
+        }
+        // H2: whichever of the three it came from, an address the token cannot
+        // safely go to is not used, so no token is loaded for it either. One
+        // saved by an earlier version is where this bites.
+        if (!m_coreUrl.isEmpty() && !OmnuvCredentials::secureCore(m_coreUrl)) {
+            qWarning().noquote() << "omnuv: refusing the Core address" << m_coreUrl << "- not https";
+            m_insecureCoreUrl = m_coreUrl;
+            m_coreUrl.clear();
+            m_coreUrlOverridden = false;
+            // Held, and read by the window when it binds: the one place a
+            // person sees why the address they saved is gone.
+            m_status = tr("%1 is not an https:// address, so Omnuv will not sign in there. Enter its https:// address.").arg(m_insecureCoreUrl);
         }
 
         loadToken();
@@ -393,6 +407,11 @@ void OmnuvSession::setCoreUrl(const QString& url)
     if (trimmed == m_coreUrl) {
         return;
     }
+    // H2: a Core the token cannot safely be sent to is refused, not saved.
+    if (!OmnuvCredentials::secureCore(trimmed)) {
+        setStatus(tr("Use an https:// address. Omnuv will not send your sign-in over plain http."));
+        return;
+    }
 
     // **Switching, not signing out (22 September 2026).** This used to call
     // `signOut()`, which deleted the only token there was: moving to the test
@@ -457,7 +476,14 @@ QNetworkRequest OmnuvSession::request(const QString& path, bool authenticated) c
     QNetworkRequest req(QUrl(m_coreUrl + path));
     req.setTransferTimeout(15000);
     req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
-    if (authenticated) {
+    // H2b: a redirect is an answer, not an instruction. Qt follows https to
+    // https by default and may carry the Authorization header to whatever host
+    // the redirect names; Core never redirects an API call, so a 3xx arrives
+    // as the error it is.
+    req.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
+    // The last line of H2: whatever set the address, a token never goes out
+    // in the clear. The fixture's token is not a credential.
+    if (authenticated && (m_fixture || OmnuvCredentials::secureCore(m_coreUrl))) {
         req.setRawHeader("authorization", QStringLiteral("Bearer %1").arg(m_token).toUtf8());
     }
     return req;
@@ -465,6 +491,10 @@ QNetworkRequest OmnuvSession::request(const QString& path, bool authenticated) c
 
 void OmnuvSession::signIn()
 {
+    if (m_coreUrl.isEmpty() && !m_insecureCoreUrl.isEmpty()) {
+        setStatus(tr("%1 is not an https:// address, so Omnuv will not sign in there. Enter its https:// address.").arg(m_insecureCoreUrl));
+        return;
+    }
     if (m_coreUrl.isEmpty()) {
         setStatus(tr("Enter the address of your Omnuv deployment first."));
         return;

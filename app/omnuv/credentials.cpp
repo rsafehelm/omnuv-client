@@ -176,6 +176,29 @@ QString OmnuvCredentials::origin(const QString& coreUrl)
     return core.toString(QUrl::RemoveUserInfo | QUrl::StripTrailingSlash);
 }
 
+bool OmnuvCredentials::secureCore(const QString& coreUrl)
+{
+    const QUrl core(coreUrl.trimmed());
+    const QString scheme = core.scheme().toLower();
+    const QString host = core.host().toLower();
+    if (host.isEmpty()) return false;
+    if (scheme == QLatin1String("https")) return true;
+    if (scheme != QLatin1String("http")) return false;
+    // Loopback only, by address rather than by name: `localhost` is a name a
+    // resolver could answer otherwise, and 127.0.0.0/8 and ::1 are not. Parsed
+    // here rather than with QHostAddress, which is QtNetwork: the credentials
+    // checks on the Mac and Windows rigs link QtCore alone.
+    if (host == QLatin1String("::1")) return true;
+    const QStringList octets = host.split(QLatin1Char('.'));
+    if (octets.size() != 4 || octets.first() != QLatin1String("127")) return false;
+    for (const QString& octet : octets) {
+        bool ok = false;
+        const int value = octet.toInt(&ok);
+        if (!ok || value < 0 || value > 255 || octet.isEmpty() || octet.size() > 3) return false;
+    }
+    return true;
+}
+
 QString OmnuvCredentials::load(const QString& origin, const QString& legacyOwner)
 {
     if (origin.isEmpty()) return QString();

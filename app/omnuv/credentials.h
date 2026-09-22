@@ -42,6 +42,14 @@ namespace OmnuvCredentials
     // address that is not http(s) with a host.
     QString origin(const QString& coreUrl);
 
+    // Whether a token may be sent to this Core (H2, 22 September 2026):
+    // https with a host, or plain http to this machine's own loopback, which
+    // is where the fixtures and a Core started by hand listen. Anything else
+    // would put a token that never expires on the wire in the clear, and the
+    // front door's redirect to https would then make it work, so nothing
+    // would look wrong.
+    bool secureCore(const QString& coreUrl);
+
     // The token stored for this origin, or an empty string. When there is none
     // and `legacyOwner` equals `origin`, a token in the old single slot is
     // moved here first: written to this origin's slot, then the old one

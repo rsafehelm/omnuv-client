@@ -44,6 +44,25 @@ private slots:
         QVERIFY(OmnuvCredentials::origin(QString()).isEmpty());
     }
 
+    // H2: a token goes over https, or in the clear only to this machine.
+    void onlyASecureCoreGetsAToken() {
+        QVERIFY(OmnuvCredentials::secureCore("https://api.omnuv.com"));
+        QVERIFY(OmnuvCredentials::secureCore("HTTPS://api.test.omnuv.com:8443/"));
+        QVERIFY(OmnuvCredentials::secureCore("http://127.0.0.1:8090"));
+        QVERIFY(OmnuvCredentials::secureCore("http://127.1.2.3"));
+        QVERIFY(OmnuvCredentials::secureCore("http://[::1]:8090"));
+        // The nearest things that must be refused.
+        QVERIFY(!OmnuvCredentials::secureCore("http://api.omnuv.com"));
+        QVERIFY(!OmnuvCredentials::secureCore("http://localhost:8090"));
+        QVERIFY(!OmnuvCredentials::secureCore("http://127.0.0.1.attacker.example"));
+        QVERIFY(!OmnuvCredentials::secureCore("http://128.0.0.1"));
+        QVERIFY(!OmnuvCredentials::secureCore("http://127.0.0.256"));
+        QVERIFY(!OmnuvCredentials::secureCore("http://192.168.100.85"));
+        QVERIFY(!OmnuvCredentials::secureCore("ftp://api.omnuv.com"));
+        QVERIFY(!OmnuvCredentials::secureCore("https://"));
+        QVERIFY(!OmnuvCredentials::secureCore(QString()));
+    }
+
     void actualStoreRoundTripAndRepeatedClear() {
         QVERIFY(OmnuvCredentials::clear(kProd));
         QVERIFY(OmnuvCredentials::store(kProd, QString::fromUtf8("fixture-\xc3\xa9-token")));

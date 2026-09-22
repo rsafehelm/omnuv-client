@@ -100,6 +100,8 @@ public:
     static void setCoreUrlOverride(const QString& url);
 
     QString coreUrl() const { return m_coreUrl; }
+    // An address refused at startup for not being https (H2); empty otherwise.
+    QString refusedCoreUrl() const { return m_insecureCoreUrl; }
     void setCoreUrl(const QString& url);
     QString enrollmentRecovery() const;
     bool enrollmentCleanupBusy() const { return m_cleanupInFlight; }
@@ -343,6 +345,9 @@ private:
     // True while the address came from `setCoreUrlOverride`: nothing then
     // writes it to the saved settings.
     bool m_coreUrlOverridden = false;
+    // An address refused at startup for not being https (H2), kept only to
+    // say so when somebody tries to sign in.
+    QString m_insecureCoreUrl;
     // The origin this session's token is read from and written to.
     QString tokenOrigin() const;
     QString m_token;
