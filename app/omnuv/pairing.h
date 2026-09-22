@@ -21,6 +21,7 @@
 
 #include <QList>
 #include <QObject>
+#include <QPointer>
 #include <QSslError>
 #include <QString>
 
@@ -62,6 +63,8 @@ public:
     // signal. The same shape as OmnuvTunnel::giveUp().
     void cancel();
     void giveUp(const QString& why, const QString& detail = QString());
+    /// The first address in the overlay's range, or empty (BUYER-12).
+    static QString overlayAddress(const QList<class QHostAddress>& addresses);
 
 signals:
     // The machine took the PIN. Whether the pairing itself then completed is

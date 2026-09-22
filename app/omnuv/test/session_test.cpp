@@ -3,6 +3,7 @@
 #include "../../backend/nvpairingmanager.h"
 #include "../../backend/nvcomputer.h"
 #include <QElapsedTimer>
+#include <QHostAddress>
 #include <cmath>
 #include <QNetworkReply>
 #include <QApplication>
@@ -635,8 +636,10 @@ private slots:
     void pendingPairingCanArriveLateAndCancellationStopsRetries() {
         ControlledNetwork net; OmnuvPairing pairing(&net);
         QSignalSpy delivered(&pairing,&OmnuvPairing::delivered);
-        pairing.deliver("fixture.invalid","1234","test","10.0.0.1","test","fixture-only");
-        QCOMPARE(net.calls.size(),1);
+        // An overlay address: since BUYER-12 the login is sent to nothing else,
+        // and the name is resolved first, so the request is asynchronous.
+        pairing.deliver("10.208.0.9","1234","test","10.0.0.1","test","fixture-only");
+        QTRY_COMPARE(net.calls.size(),1);
         net.calls[0]->complete(200,R"({"pairings":[]})");
         QTRY_COMPARE(net.calls.size(),2);
         net.calls[1]->complete(200,R"({"pairings":[{"id":"0123456789abcdef0123456789abcdef","address":"10.0.0.1"}]})");
@@ -644,8 +647,8 @@ private slots:
         QCOMPARE(net.calls[2]->operation(),QNetworkAccessManager::PostOperation);
         net.calls[2]->complete(200,R"({"status":true})");
         QCOMPARE(delivered.count(),1);
-        pairing.deliver("fixture.invalid","5678","test","10.0.0.1","test","fixture-only");
-        QCOMPARE(net.calls.size(),4);
+        pairing.deliver("10.208.0.9","5678","test","10.0.0.1","test","fixture-only");
+        QTRY_COMPARE(net.calls.size(),4);
         net.calls[3]->complete(200,R"({"pairings":[]})");
         pairing.cancel(); QTest::qWait(600); QCOMPARE(net.calls.size(),4);
     }
@@ -653,9 +656,14 @@ private slots:
         ControlledNetwork net; OmnuvPairing pairing(&net);
         QSignalSpy delivered(&pairing,&OmnuvPairing::delivered);
         QSignalSpy failed(&pairing,&OmnuvPairing::failed);
-        pairing.deliver("fixture.invalid","1234","test","","test","fixture-only");
+        pairing.deliver("10.208.0.9","1234","test","","test","fixture-only");
+        QTRY_COMPARE(net.calls.size(),1);
         auto reply=net.calls[0]; pairing.cancel();
         QVERIFY(reply->aborted); QCOMPARE(delivered.count(),0); QCOMPARE(failed.count(),0);
+        // And cancelled while the name is still resolving: nothing is ever sent.
+        pairing.deliver("10.208.0.9","1234","test","","test","fixture-only");
+        pairing.cancel(); QTest::qWait(200);
+        QCOMPARE(net.calls.size(),1);
     }
     void cancelledStartCannotReappear() {
         HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s;
@@ -731,6 +739,29 @@ private slots:
         QVERIFY2(daemon.commands.contains("stop-v1"),"a device whose access was taken back stayed on the network");
         QTest::qWait(80);
         QCOMPARE(server.find("/v1/networks/network-a/devices/device-a"),-1);
+    }
+    // BUYER-12: the machine's admin login goes only to an address on the
+    // project network, and a name that resolves anywhere else is refused before
+    // any request is made.
+    void pairingLoginGoesOnlyToAnOverlayAddress() {
+        QCOMPARE(OmnuvPairing::overlayAddress({QHostAddress("10.208.0.7")}),QString("10.208.0.7"));
+        QCOMPARE(OmnuvPairing::overlayAddress({QHostAddress("192.168.1.9"),QHostAddress("10.215.255.254")}),QString("10.215.255.254"));
+        for (const auto* outside : {"10.207.255.255","10.216.0.0","127.0.0.1","192.168.100.85","100.64.0.1"})
+            QVERIFY2(OmnuvPairing::overlayAddress({QHostAddress(outside)}).isEmpty(),outside);
+        QVERIFY(OmnuvPairing::overlayAddress({}).isEmpty());
+    }
+    void pairingToANameOffTheOverlaySendsNothing() {
+        // A network that records every request, so "nothing was sent" is a
+        // count of what the pairing itself asked, not of a server it would
+        // never have reached.
+        ControlledNetwork net; OmnuvPairing pairing(&net);
+        QSignalSpy failed(&pairing,&OmnuvPairing::failed);
+        // Resolves, and resolves to loopback — off the overlay.
+        pairing.deliver("localhost","1234","test-client","10.208.0.9","sunshine","admin-secret");
+        QTRY_COMPARE_WITH_TIMEOUT(failed.count(),1,5000);
+        QVERIFY(failed.first().at(0).toString().contains("private network"));
+        QTest::qWait(100);
+        QCOMPARE(net.calls.size(),0);
     }
     void identityReplyCannotRestoreSignedOutSession_data() {
         QTest::addColumn<int>("status"); QTest::newRow("success")<<200; QTest::newRow("revocation")<<401;

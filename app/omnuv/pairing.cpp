@@ -6,6 +6,8 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QHostAddress>
+#include <QHostInfo>
 #include <QTimer>
 #include <QUrl>
 
@@ -200,7 +202,42 @@ void OmnuvPairing::deliver(const QString& host,
 {
     cancel();
     m_scope = new QObject(this);
-    findPendingPairing(host, pin, clientName, fromAddress, user, password, kFindTries);
+    // **Only to an address on the project network (BUYER-12).** The request
+    // below accepts a self-signed certificate — the machine's own Sunshine
+    // leaf, which no CA signed and which names the host, not the marketplace
+    // name — and then sends the machine's admin login as Basic auth. That is
+    // safe only because the overlay has already authenticated the peer. But
+    // it dialled a *name*, and a name that resolved anywhere else — a LAN
+    // resolver answering first, a stale hosts entry — handed the login to
+    // whoever presented any self-signed certificate. So the name is resolved
+    // here, only an address in the overlay's range is accepted, and that
+    // address is what is dialled: there is then no second resolution for
+    // anything to get between.
+    const QPointer<QObject> scope = m_scope;
+    QHostInfo::lookupHost(host, m_scope, [this, scope, host, pin, clientName, fromAddress, user, password](const QHostInfo& info) {
+        if (!scope || scope != m_scope) return;
+        const QString address = overlayAddress(info.addresses());
+        if (address.isEmpty()) {
+            giveUp(QObject::tr("This machine's name did not resolve to your private network, so its login was not sent. "
+                               "Join this device to the network and try again."),
+                   QObject::tr("%1 resolved to %2").arg(host,
+                       info.addresses().isEmpty() ? QObject::tr("nothing") : info.addresses().first().toString()));
+            return;
+        }
+        findPendingPairing(address, pin, clientName, fromAddress, user, password, kFindTries);
+    });
+}
+
+// The first address inside the overlay's range, or none. The range is the
+// marketplace's (Core's `names::OVERLAY_RANGE`), and a peer inside it was
+// authenticated by the overlay before any byte reached it.
+QString OmnuvPairing::overlayAddress(const QList<QHostAddress>& addresses)
+{
+    const auto range = QHostAddress::parseSubnet(QStringLiteral("10.208.0.0/13"));
+    for (const QHostAddress& a : addresses) {
+        if (a.protocol() == QAbstractSocket::IPv4Protocol && a.isInSubnet(range)) return a.toString();
+    }
+    return {};
 }
 
 // **The order is the machine's, and it is the opposite of the obvious one.**
