@@ -90,7 +90,8 @@ void OmnuvPairCli::start(const QStringList& args, QObject* parent)
     // machine, and only a signed-in device may collect it. Without one this
     // action is upstream's `pair` with extra steps.
     auto* session = new OmnuvSession(parent);
-    QObject::connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, session, &OmnuvSession::finishPairing);
+    QObject::connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, session,
+                     [session]() { session->finishPairing(); });
     if (!session->signedIn()) {
         emitLine(QStringLiteral("state=failed  reason=sign in first, so this device can collect "
                                 "the machine's own login"));

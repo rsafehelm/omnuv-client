@@ -1120,7 +1120,7 @@ int OmnuvSession::targetRow(const QVariantMap& target) const
     return -1;
 }
 
-void OmnuvSession::finishPairing()
+void OmnuvSession::finishPairing(bool delivered)
 {
     m_pairing->cancel();
     auto scope = m_pairScope;
@@ -1128,7 +1128,8 @@ void OmnuvSession::finishPairing()
     delete scope;
     if (!m_claimDeployment.isEmpty() && signedIn()) {
         auto reply = m_net.post(request(QStringLiteral("/v1/deployments/%1/stream-credentials/complete")
-            .arg(m_claimDeployment), true), QJsonDocument(QJsonObject{{"attempt_id",m_claimAttempt}}).toJson());
+            .arg(m_claimDeployment), true),
+            QJsonDocument(QJsonObject{{"attempt_id", m_claimAttempt}, {"delivered", delivered}}).toJson());
         connect(reply, &QNetworkReply::finished, reply, &QObject::deleteLater);
         // A lost acknowledgement is bounded by Core's non-renewable expiry.
     }

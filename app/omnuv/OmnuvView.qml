@@ -179,7 +179,9 @@ Item {
         pairing.target = null
         delivering = false
         pairing.close()
-        Omnuv.finishPairing()
+        // Spent only by a pairing that worked; any other ending gives the
+        // login back for the next attempt (BUYER-11).
+        Omnuv.finishPairing(error === undefined)
         if (!validTarget(target)) return
         if (error !== undefined) {
             activeTarget = null

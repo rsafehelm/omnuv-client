@@ -227,7 +227,11 @@ public:
     Q_INVOKABLE QVariantMap connectionTarget(int row) const;
     Q_INVOKABLE int targetRow(const QVariantMap& target) const;
     Q_INVOKABLE void deliverPin(const QVariantMap& target, const QString& pin);
-    Q_INVOKABLE void finishPairing();
+    // Ends a pairing attempt. `delivered` only when the whole pairing worked,
+    // which the view learns last: then Core spends the login. Every other
+    // ending releases the claim and keeps the login for the next attempt
+    // (BUYER-11).
+    Q_INVOKABLE void finishPairing(bool delivered = false);
     Q_INVOKABLE void watchPairing(QObject* manager);
 
 
