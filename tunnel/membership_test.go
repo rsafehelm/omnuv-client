@@ -146,7 +146,7 @@ func TestEnrollmentCASAndDurableIdentityBinding(t *testing.T) {
 	if got := viewOf(t, restarted); !got.Verified || got.Revision != old.Revision {
 		t.Fatalf("restart lost binding: %+v", got)
 	}
-	if err := writeIdentity(filepath.Join(tn.dir, "config.json"), "external-different-private-key"); err != nil {
+	if err := writeIdentity(filepath.Join(tn.dirFor(scope().CoreURL), "config.json"), "external-different-private-key"); err != nil {
 		t.Fatal(err)
 	}
 	changed := viewOf(t, tn)
@@ -358,5 +358,133 @@ func TestRunningLibraryIdentityMustMatchPersistedIdentity(t *testing.T) {
 	}
 	if viewOf(t, tn).Verified {
 		t.Fatal("disk key was falsely bound to the running library's scope")
+	}
+}
+
+func otherScope() membership {
+	m := scope()
+	m.CoreURL = "https://api.test.omnuv.com"
+	m.DeviceID = "00000000-0000-4000-8000-000000000005"
+	return m
+}
+
+func enrollAt(t *testing.T, tn *tunnel, m membership, key string) {
+	t.Helper()
+	var view membershipView
+	if err := json.Unmarshal([]byte(answer(tn, "membership-v1 "+m.CoreURL)), &view); err != nil {
+		t.Fatal(err)
+	}
+	request := enrolRequest{m, "https://netbird.lab.omnuv.com", key, view.Revision}
+	if got := answer(tn, "enrol-v1 "+payload(request)); got != "ok" {
+		t.Fatal(got)
+	}
+	finish(t, tn)
+}
+
+func identityAt(t *testing.T, tn *tunnel, coreURL string) string {
+	t.Helper()
+	id, err := readIdentity(filepath.Join(tn.dirFor(coreURL), "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// **The point of the change.** Two Cores, two identities; moving between them
+// keeps both, and moving back resumes the saved one without a key.
+func TestEachDeploymentKeepsItsOwnIdentity(t *testing.T) {
+	tn := testTunnel(t)
+	enrollAt(t, tn, scope(), "prod-key")
+	prod := identityAt(t, tn, scope().CoreURL)
+	enrollAt(t, tn, otherScope(), "test-key")
+	if identityAt(t, tn, scope().CoreURL) != prod {
+		t.Fatal("enrolling another deployment replaced this one's identity")
+	}
+	if identityAt(t, tn, otherScope().CoreURL) == "" || identityAt(t, tn, otherScope().CoreURL) == prod {
+		t.Fatal("the second deployment has no identity of its own")
+	}
+	var calls atomic.Int32
+	factory := tn.factory
+	tn.factory = func(opts netbird.Options) (tunnelClient, error) {
+		if opts.SetupKey != "" {
+			calls.Add(1)
+		}
+		return factory(opts)
+	}
+	if got := answer(tn, "resume-v1 "+payload(scope())); got != "ok" {
+		t.Fatal(got)
+	}
+	finish(t, tn)
+	if state, _ := tn.snapshot(); state != stateRunning || calls.Load() != 0 {
+		t.Fatalf("switching back did not resume the saved identity without a key: state %d, keys %d", state, calls.Load())
+	}
+	if active := viewOf(t, tn); active.Membership == nil || *active.Membership != scope() {
+		t.Fatalf("the running deployment is not the one resumed: %+v", active)
+	}
+}
+
+// Reading another deployment does not switch to it, and reports it stopped.
+func TestReadingADeploymentDoesNotSwitchToIt(t *testing.T) {
+	tn := testTunnel(t)
+	enrollAt(t, tn, otherScope(), "test-key")
+	enrollAt(t, tn, scope(), "prod-key")
+	var other membershipView
+	if err := json.Unmarshal([]byte(answer(tn, "membership-v1 "+otherScope().CoreURL)), &other); err != nil {
+		t.Fatal(err)
+	}
+	if !other.Verified || other.Membership == nil || *other.Membership != otherScope() || other.State != stateStopped {
+		t.Fatalf("the other deployment read wrong: %+v", other)
+	}
+	if active := viewOf(t, tn); active.Membership == nil || *active.Membership != scope() || active.State != stateRunning {
+		t.Fatalf("reading switched the running deployment: %+v", active)
+	}
+	if got := answer(tn, "membership-v1 not-a-url"); !strings.HasPrefix(got, "err ") {
+		t.Fatal(got)
+	}
+}
+
+// An identity from before this version moves into the Core its record names,
+// once; one with no record stays in the base, never guessed into a deployment.
+func TestAnEarlierIdentityMovesOnlyWhereItsRecordSays(t *testing.T) {
+	base := t.TempDir()
+	first := &tunnel{dir: base}
+	first.factory = testTunnel(t).factory
+	enrollAt(t, first, scope(), "old-key")
+	saved := identityAt(t, first, scope().CoreURL)
+	_ = first.stop()
+	// Put it back where an earlier version kept it: the base, with no active file.
+	for _, name := range []string{"config.json", "state.json", "membership.json"} {
+		from := filepath.Join(first.dirFor(scope().CoreURL), name)
+		if _, err := os.Stat(from); err == nil {
+			if err := os.Rename(from, filepath.Join(base, name)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := os.Remove(filepath.Join(base, "active")); err != nil {
+		t.Fatal(err)
+	}
+	upgraded := &tunnel{dir: base}
+	view := viewOf(t, upgraded)
+	if !view.Verified || view.Membership == nil || *view.Membership != scope() {
+		t.Fatalf("the earlier identity was not found in its deployment: %+v", view)
+	}
+	if identityAt(t, upgraded, scope().CoreURL) != saved {
+		t.Fatal("the identity changed while it was moved")
+	}
+	if _, err := os.Stat(filepath.Join(base, "config.json")); !os.IsNotExist(err) {
+		t.Fatal("a copy stayed in the base")
+	}
+
+	legacyBase := t.TempDir()
+	if err := writeIdentity(filepath.Join(legacyBase, "config.json"), "legacy-with-no-record"); err != nil {
+		t.Fatal(err)
+	}
+	legacy := &tunnel{dir: legacyBase}
+	if view := viewOf(t, legacy); !view.HasIdentity || view.Verified || view.Membership != nil {
+		t.Fatalf("an unnamed identity was labelled: %+v", view)
+	}
+	if _, err := os.Stat(filepath.Join(legacyBase, "deployments")); !os.IsNotExist(err) {
+		t.Fatal("an unnamed identity was moved into a deployment")
 	}
 }

@@ -115,6 +115,11 @@ type tunnel struct {
 	done       chan struct{}
 	dir        string
 	factory    func(netbird.Options) (tunnelClient, error)
+	// The deployment whose identity is in use: a Core origin, or "" for the
+	// base directory (an identity no membership ever named). Read lazily from
+	// <base>/active and migrated on first use; see deployments.go.
+	active       string
+	activeLoaded bool
 }
 
 func (t *tunnel) setFailed(err error) {

@@ -95,11 +95,11 @@ func hashText(value string) string {
 	return hex.EncodeToString(digest[:])
 }
 
+// The directory of the identity in use: the active deployment's own, or the
+// base for an identity no membership names. Caller holds t.mu or operations.
 func (t *tunnel) directory() string {
-	if t.dir != "" {
-		return t.dir
-	}
-	return configDir()
+	t.loadActive()
+	return t.dirFor(t.active)
 }
 
 func readIdentity(path string) (string, error) {
@@ -120,13 +120,22 @@ func readIdentity(path string) (string, error) {
 // Caller holds t.mu. Readers never see a new scope bound to an old key: the
 // record's fingerprint must agree with the config, including after a crash.
 func (t *tunnel) membershipLocked() (membershipView, *membershipRecord, error) {
-	view := membershipView{Version: 1, Revision: "empty", State: t.state, Error: t.lastError}
-	identity, err := readIdentity(filepath.Join(t.directory(), "config.json"))
+	return t.membershipAt(t.directory(), true)
+}
+
+// The membership stored in one deployment's directory. Only the active one is
+// running, so another reports stopped and no error of its own.
+func (t *tunnel) membershipAt(dir string, active bool) (membershipView, *membershipRecord, error) {
+	view := membershipView{Version: 1, Revision: "empty", State: stateStopped}
+	if active {
+		view.State, view.Error = t.state, t.lastError
+	}
+	identity, err := readIdentity(filepath.Join(dir, "config.json"))
 	if err != nil {
 		return view, nil, err
 	}
 	view.HasIdentity = identity != ""
-	raw, err := os.ReadFile(filepath.Join(t.directory(), "membership.json"))
+	raw, err := os.ReadFile(filepath.Join(dir, "membership.json"))
 	if os.IsNotExist(err) {
 		if identity != "" {
 			view.Revision = hashText("legacy\x00" + identity)
@@ -218,6 +227,9 @@ func (t *tunnel) resumeMembership(wanted membership) error {
 	}
 	t.operations.Lock()
 	defer t.operations.Unlock()
+	if err := t.selectLocked(wanted.CoreURL); err != nil {
+		return err
+	}
 	t.mu.Lock()
 	view, record, err := t.membershipLocked()
 	t.mu.Unlock()
@@ -236,6 +248,9 @@ func (t *tunnel) enrolMembership(request enrolRequest) error {
 	}
 	t.operations.Lock()
 	defer t.operations.Unlock()
+	if err := t.selectLocked(request.Membership.CoreURL); err != nil {
+		return err
+	}
 	t.mu.Lock()
 	view, _, err := t.membershipLocked()
 	if err != nil {

@@ -38,7 +38,7 @@ QString serverName()
 QString request(const QString& line)
 {
     if (qEnvironmentVariableIsSet("OMNUV_FIXTURE_URL")
-        && line != QLatin1String("state") && line != QLatin1String("membership-v1"))
+        && line != QLatin1String("state") && !line.startsWith(QLatin1String("membership-v1")))
         return QStringLiteral("err Fixture sessions cannot change this device's network membership.");
     QLocalSocket socket;
     socket.connectToServer(serverName());
@@ -291,7 +291,17 @@ bool OmnuvTunnel::membershipMatches(const QJsonObject& scope) const
 
 bool OmnuvTunnel::readMembership()
 {
-    const auto reply = m_request(QStringLiteral("membership-v1"));
+    // **This Core's identity, not whichever is running** (22 September 2026).
+    // The daemon keeps one identity per deployment and runs one at a time, so
+    // after a move between Cores the running one is the other Core's: read
+    // unqualified, it looked like "another network" and offered a move, which
+    // re-enrolled a device whose identity for this Core was saved all along.
+    // An older daemon answers "takes no arguments", and is asked the old way.
+    const QString core = m_scope.value(QStringLiteral("core_url")).toString();
+    QString reply = m_request(core.isEmpty() ? QStringLiteral("membership-v1")
+                                             : QStringLiteral("membership-v1 ") + core);
+    if (!core.isEmpty() && reply.startsWith(QLatin1String("err membership-v1 takes no arguments")))
+        reply = m_request(QStringLiteral("membership-v1"));
     const auto document = QJsonDocument::fromJson(reply.toUtf8());
     const auto value = document.object();
     m_membershipSnapshot = value;

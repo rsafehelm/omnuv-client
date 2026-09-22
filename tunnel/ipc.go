@@ -21,7 +21,7 @@ import (
 //	enrol <url> <key>      → ok | err <sentence>
 //	stop                   → ok | err <sentence>
 //	state                  → state <0-3> <address|-> <name|-> <sentence, possibly empty>
-//	membership-v1          → JSON public scope, identity presence and CAS revision
+//	membership-v1 [origin] → JSON public scope, identity presence and CAS revision
 //	resume-v1 <payload>    → ok | err <sentence> (exact verified membership)
 //	enrol-v1 <payload>     → ok | err <sentence> (confirmed revision replacement)
 //	stop-v1 <payload>      → ok | err <sentence> (matching membership + revision)
@@ -84,10 +84,18 @@ func answer(t *tunnel, line string) string {
 
 	switch fields[0] {
 	case "membership-v1":
-		if len(fields) != 1 {
-			return "err membership-v1 takes no arguments"
+		// With no argument, the deployment in use; with a Core origin, that
+		// deployment's, read without switching to it (deployments.go).
+		if len(fields) > 2 {
+			return "err membership-v1 takes at most a Core origin"
 		}
-		view, err := t.membershipSnapshot()
+		var view membershipView
+		var err error
+		if len(fields) == 2 {
+			view, err = t.membershipOf(fields[1])
+		} else {
+			view, err = t.membershipSnapshot()
+		}
 		if err != nil {
 			return "err " + err.Error()
 		}
