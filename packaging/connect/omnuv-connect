@@ -200,7 +200,10 @@ handle() {
     case "$action" in
         enrol|enroll|join)
             key="$(param key "$query")"
-            [ -n "$key" ] || die "that link carries no key"
+            # A link without a key asks the app to join with its own sign-in
+            # (see omnuv-connect.ps1). There is no app in this package yet, so
+            # say what to do instead of failing on a missing parameter.
+            [ -n "$key" ] || die "this device has no Omnuv app to join with its sign-in. In the console, use \"Get command\" and run the command it shows."
             confirm_link_enrol
             enrol "$key"
             ;;

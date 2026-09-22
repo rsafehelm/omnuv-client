@@ -117,9 +117,20 @@ function Invoke-Link($Url) {
     }
     switch ($action.ToLower()) {
         { $_ -in 'enrol', 'enroll', 'join' } {
-            if (-not $q['key']) { Die 'that link carries no key' }
             Confirm-LinkEnrol
-            & $PSCommandPath enrol $q['key']
+            # **No key: the app joins with its own sign-in** (22 September
+            # 2026). The console's links carried a key, which the legacy
+            # `enrol <key>` spent without writing a membership record, so the
+            # app then called its own network "another or unverified" and
+            # offered to move it. Without a key the client asks Core for one as
+            # the signed-in account, exactly as its Join button does, and
+            # records the membership. A key is still accepted, for a device
+            # where no one has signed in to the app.
+            if ($q['key']) { & $PSCommandPath enrol $q['key'] }
+            else {
+                & (Client-Path) enrol
+                if ($LASTEXITCODE -ne 0) { Die 'the device did not join. Open Omnuv and sign in, then use Join this device.' }
+            }
         }
         'stream' {
             if (-not $q['host']) { Die 'that link names no machine' }
