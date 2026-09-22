@@ -645,6 +645,35 @@ void OmnuvSession::invalidateContext()
     emit projectsChanged();
 }
 
+// **Off the buyer's network when the person signs out (BUYER-13).** Signing
+// out, or having access taken back, left this device a peer of the project's
+// private network: the tunnel stayed up and anyone at the keyboard could still
+// reach the buyer's machines without being signed in. The only caller of
+// `stopMembership` was enrollment cleanup.
+//
+// The device is removed at Core when Core can still be asked — the token is
+// needed for that, so this runs before it is dropped — and the membership is
+// stopped here always, without waiting: signing out on this device never
+// depends on the network.
+void OmnuvSession::leaveNetwork(bool askCore)
+{
+    const auto membership = m_tunnel->membership();
+    if (membership.isEmpty()) return;
+    const auto network = membership.value("network_id").toString();
+    const auto device = membership.value("device_id").toString();
+    if (askCore && !m_token.isEmpty() && !m_fixture && OmnuvCredentials::secureCore(m_coreUrl)
+        && !network.isEmpty() && !device.isEmpty()) {
+        auto reply = m_net.deleteResource(request(QStringLiteral("/v1/networks/%1/devices/%2").arg(network, device), true));
+        connect(reply, &QNetworkReply::finished, reply, [reply]() {
+            reply->deleteLater();
+            const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            if (code == 204 || code == 404) qInfo("omnuv: this device was removed from its network at Core");
+            else qWarning().noquote() << "omnuv: Core did not remove this device from its network:" << code << reply->errorString();
+        });
+    }
+    m_tunnel->stopMembership(membership);
+}
+
 void OmnuvSession::signOut()
 {
     // **Revoked at Core, not only forgotten here (H5, 22 September 2026).**
@@ -652,6 +681,8 @@ void OmnuvSession::signOut()
     // copy of it still worked. Asked before the token is dropped, and not
     // waited for: signing out on this device never depends on the network.
     // A fixture's token is not a credential, and no request goes to a fixture.
+    // The network first, while the token that can ask Core still exists.
+    leaveNetwork(true);
     QNetworkReply* revocation = (!m_token.isEmpty() && !m_fixture && OmnuvCredentials::secureCore(m_coreUrl))
         ? m_net.deleteResource(request(QStringLiteral("/v1/devices/tokens/current"), true))
         : nullptr;
@@ -691,6 +722,8 @@ void OmnuvSession::signOut()
 // signed in, rather than retrying a token that is dead.
 void OmnuvSession::accessTakenBack()
 {
+    // The token is dead, so Core cannot be asked; the membership still stops.
+    leaveNetwork(false);
     invalidateContext();
     clearPending();
     if (!m_clearToken()) {

@@ -104,7 +104,10 @@ public:
     QStringList commands;
     QString answer(const QString& line) {
         commands << line.section(' ', 0, 0); // never retain setup key payloads
-        if (line == "membership-v1") return QString::fromUtf8(QJsonDocument(QJsonObject{
+        // Qualified by deployment since 22 September (`membership-v1 <core>`); the
+        // bare form is what an older client asks. Answering only the bare form
+        // made every enrollment test here fail with "update the network service".
+        if (line == "membership-v1" || line.startsWith("membership-v1 ")) return QString::fromUtf8(QJsonDocument(QJsonObject{
             {"version",1},{"state",state},{"error",""},{"address","10.210.0.10"},{"has_identity",hasIdentity},{"verified",verified},{"pending",false},
             {"revision",revision},{"membership",membership.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(membership)}}).toJson(QJsonDocument::Compact));
         if (line == "state") return QString("state %1 10.210.0.10 fixture.internal").arg(state);
@@ -697,6 +700,38 @@ private slots:
         server.answer(old,status,QJsonDocument(QJsonArray{machine("a","a.internal")}).toJson());
         QTest::qWait(80); QCOMPARE(s.projectId(),QString("b")); QCOMPARE(s.machines()->idAt(0),QString("b")); QVERIFY(s.signedIn());
     }
+    // BUYER-13: signing out takes this device off the buyer's network, at Core
+    // (while the token still works) and locally; access taken back stops it
+    // locally without asking a Core that no longer accepts the token.
+    void signingOutTakesThisDeviceOffItsNetwork() {
+        // A real session against the held server rather than a fixture one: a
+        // fixture session sends nothing to Core on sign-out, by design.
+        HeldServer server; qunsetenv("OMNUV_FIXTURE_URL"); OmnuvSession s; s.setCoreUrl(QString::fromUtf8(server.url())); prepare(s);
+        FixtureTunnel daemon; daemon.hasIdentity=daemon.verified=true; daemon.state=2; daemon.revision="joined";
+        // Stated in full: a real session's scope depends on sign-in state this
+        // test does not build, and the tunnel refuses a membership missing any of
+        // these five — rightly, since it would not know which one it is stopping.
+        daemon.membership=QJsonObject{{"core_url",QString::fromUtf8(server.url())},{"account_id","account-a"},
+            {"project_id","a"},{"network_id","network-a"},{"device_id","device-a"}};
+        s.m_tunnel->m_request=[&](const QString& line) { return daemon.answer(line); };
+        s.m_tunnel->check(); QCOMPARE(s.m_tunnel->membership(),daemon.membership);
+        s.m_token="fixture-token";
+        s.signOut();
+        QVERIFY2(daemon.commands.contains("stop-v1"),"the tunnel was left on the buyer's network after sign-out");
+        QTRY_VERIFY2(server.find("/v1/networks/network-a/devices/device-a")>=0,"Core was not asked to remove this device");
+        QVERIFY(server.find("/v1/devices/tokens/current")>=0);
+    }
+    void accessTakenBackStopsTheMembershipWithoutAskingCore() {
+        HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
+        FixtureTunnel daemon; daemon.hasIdentity=daemon.verified=true; daemon.state=2; daemon.revision="joined";
+        daemon.membership=s.networkScope(); daemon.membership["network_id"]="network-a"; daemon.membership["device_id"]="device-a";
+        s.m_tunnel->m_request=[&](const QString& line) { return daemon.answer(line); };
+        s.m_tunnel->check();
+        s.m_token="dead-token"; s.accessTakenBack();
+        QVERIFY2(daemon.commands.contains("stop-v1"),"a device whose access was taken back stayed on the network");
+        QTest::qWait(80);
+        QCOMPARE(server.find("/v1/networks/network-a/devices/device-a"),-1);
+    }
     void identityReplyCannotRestoreSignedOutSession_data() {
         QTest::addColumn<int>("status"); QTest::newRow("success")<<200; QTest::newRow("revocation")<<401;
     }
@@ -735,7 +770,14 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(server.find(path,first+1)>=0,7000);
         int second=server.find(path,first+1); QCOMPARE(server.calls[first].body,server.calls[second].body);
         s.finishPairing(); QTRY_VERIFY(server.find("/v1/deployments/d/stream-credentials/complete")>=0);
-        QCOMPARE(server.calls[server.find("/v1/deployments/d/stream-credentials/complete")].body,server.calls[first].body);
+        // The same attempt closes, and says it was not delivered: since BUYER-11
+        // (22 September) a pairing that did not work gives the login back rather
+        // than spending it. This compared the whole body with the claim's, which
+        // predates `delivered`.
+        const auto claimed=QJsonDocument::fromJson(server.calls[first].body).object();
+        const auto completed=QJsonDocument::fromJson(server.calls[server.find("/v1/deployments/d/stream-credentials/complete")].body).object();
+        QCOMPARE(completed.value("attempt_id"),claimed.value("attempt_id"));
+        QCOMPARE(completed.value("delivered"),QJsonValue(false));
         QVERIFY(!s.m_pairScope);
     }
 };
