@@ -116,23 +116,17 @@ build_exe() {
         # without them, and a buyer discovers it at the first join. They are
         # put beside the binary on the rig (`omnuv-build.ps1`); this is the
         # claim that they survived the trip.
-        for lib in onvtunneld.exe wintun.dll; do
+        # WINTUN-LICENSE.txt with them: the rig build keeps it beside the DLL,
+        # because Wintun may be redistributed only with its notices (clauses
+        # 3(c) and 3(d)), so it travels in the same folder rather than being
+        # fetched again here.
+        for lib in onvtunneld.exe wintun.dll WINTUN-LICENSE.txt; do
             [ -f "$stage/client/$lib" ] || {
                 echo "  exe    FAILED: $lib is missing from OMNUV_CLIENT_DIR=$OMNUV_CLIENT_DIR" >&2
                 echo "         The client would install and report itself unable to reach the network." >&2
                 return 1
             }
         done
-        # Wintun's licence travels with Wintun: redistribution is permitted
-        # only alongside software that uses its published API, and only with
-        # its notices intact (clauses 3(c) and 3(d)).
-        if [ -f "$ROOT/dist/vendor/wintun/WINTUN-LICENSE.txt" ]; then
-            cp "$ROOT/dist/vendor/wintun/WINTUN-LICENSE.txt" "$stage/client/"
-        else
-            echo "  exe    FAILED: dist/vendor/wintun/WINTUN-LICENSE.txt is missing — run scripts/fetch-wintun" >&2
-            return 1
-        fi
-
         client_files="-DCLIENT_DIR=client"
         echo "  exe    including the client from $OMNUV_CLIENT_DIR ($(du -sh "$stage/client" | cut -f1))"
         echo "  exe    with onvtunneld.exe $(stat -c%s "$stage/client/onvtunneld.exe") and wintun.dll $(stat -c%s "$stage/client/wintun.dll")"
@@ -147,7 +141,16 @@ build_exe() {
         apt-get -qq update >/dev/null 2>&1
         DEBIAN_FRONTEND=noninteractive apt-get -qq install -y nsis >/dev/null 2>&1
         makensis -DVERSION=$VERSION $client_files -DOUTFILE=/out/OmnuvConnect-${VERSION}${suffix}-setup.exe omnuv-connect.nsi
-    " >/dev/null 2>&1 || { echo "  exe    SKIPPED (inputs left in $OUT/.nsis)"; return 0; }
+    " >/dev/null 2>&1 || {
+        # **Only the wrapper-only build may be skipped.** A shippable installer
+        # was asked for with OMNUV_CLIENT_DIR, and reporting SKIPPED with exit 0
+        # there let a run that produced nothing read as green.
+        if [ -n "${OMNUV_CLIENT_DIR:-}" ]; then
+            echo "  exe    FAILED: makensis did not build the installer (inputs left in $OUT/.nsis)" >&2
+            return 1
+        fi
+        echo "  exe    SKIPPED (inputs left in $OUT/.nsis)"; return 0;
+    }
     rm -rf "$stage"
     echo "  exe    OmnuvConnect-${VERSION}${suffix}-setup.exe"
 }
