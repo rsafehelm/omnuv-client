@@ -37,13 +37,15 @@ import (
 // worked arrives through `state`, because a join takes tens of seconds and the
 // caller is a user interface.
 //
-// **What this does not do is authenticate.** The socket's own permissions are
-// the whole access control: on Windows the pipe grants Administrators and
+// **Who may ask is owner.go's (H4, 22 September 2026).** Until then this did
+// not authenticate at all, and the socket's own permissions were the whole
+// access control: on Windows the pipe grants Administrators and
 // authenticated users, on Unix the socket is 0660 and root-owned. On a
-// single-person machine that is the right boundary — anyone who can reach it
-// can already read the buyer's files. On a shared machine it means any local
-// user can take the tunnel down or join it to a network whose key they hold,
-// and that is worth knowing before this ships anywhere multi-user.
+// single-person machine that is the right boundary, but on a shared one any
+// local user could take the tunnel down, join it to a network whose key they
+// held, or read the other's account and project ids. The pipe still admits
+// every authenticated user, so another one is told why rather than refused
+// at the door.
 func serve(t *tunnel) error {
 	ln, err := listen()
 	if err != nil {
@@ -70,12 +72,35 @@ func handle(t *tunnel, conn net.Conn) {
 	if err != nil && line == "" {
 		return
 	}
-	fmt.Fprintln(conn, answer(t, strings.TrimSpace(line)))
+	fmt.Fprintln(conn, answerFor(t, peerOf(conn), strings.TrimSpace(line)))
 }
 
 // Split out from the connection so it can be tested without a socket, which is
 // the difference between a protocol with a check and one with a comment saying
 // what it would do.
+func answerFor(t *tunnel, who caller, line string) string {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return "err empty request"
+	}
+	// `state` is the one thing anybody on the machine may ask: whether the
+	// network is up, and its address. Everything else is the owner's (owner.go).
+	if fields[0] != "state" {
+		if err := t.mayAct(who); err != nil {
+			return "err " + err.Error()
+		}
+		reply := answer(t, line)
+		if strings.HasPrefix(reply, "ok") && fields[0] != "membership-v1" {
+			if err := t.claim(who); err != nil {
+				log.Printf("onv-tunnel: could not record the tunnel's owner: %v", err)
+			}
+		}
+		return reply
+	}
+	return answer(t, line)
+}
+
+// The request itself, once the caller may make it.
 func answer(t *tunnel, line string) string {
 	fields := strings.Fields(line)
 	if len(fields) == 0 {
