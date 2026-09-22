@@ -31,6 +31,11 @@ SetCompressor /SOLID lzma
 
 !include "nsDialogs.nsh"
 !include "LogicLib.nsh"
+!include "FileFunc.nsh"
+
+; Written into the install folder, so the uninstaller can tell a folder this
+; package made from one the buyer pointed it at.
+!define MARKER ".omnuv-connect-installed"
 
 Var KeyBox
 Var Key
@@ -61,7 +66,19 @@ Function KeyPageLeave
 FunctionEnd
 
 Section "Install"
+  ; **The folder is always ours.** The directory page, and `/D=` on the
+  ; command line, let the buyer pick any folder, and the uninstaller removes
+  ; the folder with everything in it. Picking `C:\Tools` would have deleted
+  ; every tool on uninstall. So a folder not already called "Omnuv Connect"
+  ; gets one of that name inside it.
+  ${GetFileName} "$INSTDIR" $0
+  ${If} $0 != "${NAME}"
+    StrCpy $INSTDIR "$INSTDIR\${NAME}"
+  ${EndIf}
   SetOutPath "$INSTDIR"
+  FileOpen $1 "$INSTDIR\${MARKER}" w
+  FileWrite $1 "Installed by ${NAME} ${VERSION}. The uninstaller removes this folder only while this file is here.$\r$\n"
+  FileClose $1
   File "omnuv-connect.ps1"
 
   ; **Our client, beside the wrapper.** `build.sh` stages it when it is given
@@ -194,8 +211,18 @@ Section "Uninstall"
   Delete "$INSTDIR\uninstall.exe"
   ; The client shipped inside this package, so it goes with it — unlike the
   ; tunnel client above, which the buyer may be using for something else.
-  ; `RMDir /r` on $INSTDIR only, never on a path the buyer chose parts of.
-  RMDir /r "$INSTDIR"
+  ; **Recursively only when the folder is provably ours**: named "Omnuv
+  ; Connect" and holding the marker the installer wrote. An install made
+  ; before the marker existed, or a folder somebody else owns, loses only the
+  ; files named above, and the folder stays if anything else is in it.
+  ${GetFileName} "$INSTDIR" $0
+  ${If} $0 == "${NAME}"
+  ${AndIf} ${FileExists} "$INSTDIR\${MARKER}"
+    RMDir /r "$INSTDIR"
+  ${Else}
+    DetailPrint "Left $INSTDIR in place: it is not a folder this installer made."
+    RMDir "$INSTDIR"
+  ${EndIf}
   Delete "$SMPROGRAMS\Omnuv\Omnuv Connect.lnk"
   RMDir  "$SMPROGRAMS\Omnuv"
   DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\OmnuvConnect"
