@@ -104,13 +104,34 @@ private slots:
         QVERIFY(OmnuvCredentials::clear(QString()));
     }
 
-    // The old single slot moves into the origin it was saved beside, once,
-    // and is gone from the old place afterwards.
-    void theOldSlotMovesToItsOwnCore() {
+    // On Windows the old single slot was the app's alone, so it moves into
+    // the origin it was saved beside, once, and is gone from the old place.
+    // Elsewhere `omnuv-connect sign-in <core>` wrote the same file for any
+    // Core, so nothing proves its origin: it is removed, never sent (H16).
+    void theOldSlotMovesToItsOwnCoreOnlyWhereThatIsProvable() {
         QVERIFY(writeLegacy(*m_directory, "legacy-token"));
+#ifdef Q_OS_WIN
         QCOMPARE(OmnuvCredentials::load(kProd, kProd), QString("legacy-token"));
-        QVERIFY(!QFile::exists(m_directory->filePath("token")));
         QCOMPARE(OmnuvCredentials::load(kProd), QString("legacy-token"));
+#else
+        QVERIFY(OmnuvCredentials::load(kProd, kProd).isEmpty());
+        QVERIFY(OmnuvCredentials::load(kProd).isEmpty());
+        QVERIFY(!QFile::exists(slotFile(*m_directory, kProd)));
+#endif
+        QVERIFY(!QFile::exists(m_directory->filePath("token")));
+    }
+
+    // H16: signing out removes the old slot too, when it was this Core's or
+    // nobody's; one saved beside another address is that address's.
+    void signingOutTakesTheOldSlotUnlessItIsAnotherCores() {
+        QVERIFY(writeLegacy(*m_directory, "legacy-token"));
+        QVERIFY(OmnuvCredentials::clear(kTest, kProd));
+        QVERIFY(QFile::exists(m_directory->filePath("token")));
+        QVERIFY(OmnuvCredentials::clear(kProd, kProd));
+        QVERIFY(!QFile::exists(m_directory->filePath("token")));
+        QVERIFY(writeLegacy(*m_directory, "orphan-token"));
+        QVERIFY(OmnuvCredentials::clear(kTest));
+        QVERIFY(!QFile::exists(m_directory->filePath("token")));
     }
 
     // **And never into another.** The token was saved beside production's

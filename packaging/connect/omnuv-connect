@@ -247,9 +247,38 @@ enrol() {
 # short code, the person approves it in a browser where they are already signed
 # in, and this collects a token. No password is ever typed into software the
 # person downloaded.
+# The Core a token is kept for, spelled as the app spells it
+# (OmnuvCredentials::origin): scheme and host lower-cased, no user info, path,
+# query or fragment, and no default port. Empty for anything not http(s).
+origin_of() {
+    scheme=$(printf '%s' "$1" | sed -n 's#^\([A-Za-z][A-Za-z0-9+.-]*\)://.*#\1#p' | tr 'A-Z' 'a-z')
+    case "$scheme" in http|https) ;; *) return 0 ;; esac
+    hostport="${1#*://}"; hostport="${hostport%%/*}"; hostport="${hostport%%\?*}"; hostport="${hostport%%#*}"
+    hostport="${hostport##*@}"; hostport=$(printf '%s' "$hostport" | tr 'A-Z' 'a-z')
+    case "$scheme:$hostport" in https:*:443) hostport="${hostport%:443}" ;; http:*:80) hostport="${hostport%:80}" ;; esac
+    [ -n "${hostport%%:*}" ] || return 0
+    printf '%s://%s' "$scheme" "$hostport"
+}
+
+# Where the app reads that Core's token (credentials.cpp, filePath): the first
+# 16 hex of sha256(origin), under tokens/.
+token_slot() {
+    if have sha256sum; then digest=$(printf '%s' "$1" | sha256sum)
+    else digest=$(printf '%s' "$1" | shasum -a 256); fi
+    printf '%s/.config/omnuv/tokens/%s' "$HOME" "$(printf '%s' "$digest" | cut -c1-16)"
+}
+
 sign_in() {
     core="${1:-$CORE_URL}"
     [ -n "$core" ] || die "usage: omnuv-connect sign-in <https://core-address>"
+    origin=$(origin_of "$core")
+    [ -n "$origin" ] || die "$core is not an http(s) address"
+    # A token that never expires is not sent in the clear, except to this
+    # machine (H2; the app's OmnuvCredentials::secureCore).
+    case "$origin" in
+        https://*|http://127.*|'http://[::1]'*) ;;
+        *) die "$core is not an https:// address, and a sign-in is never sent over plain http" ;;
+    esac
     have curl || die "curl is required"
     start=$(curl -fsS -H 'content-type: application/json' \
         -d "{\"client\":\"Omnuv Connect $VERSION on $(uname -s)\"}" \
@@ -288,9 +317,13 @@ sign_in() {
     done
     token=$(printf '%s' "$reply" | sed '$d' | sed -n 's/.*"token" *: *"\([^"]*\)".*/\1/p')
     [ -n "$token" ] || die "$core approved the sign-in but sent no token"
+    # **This Core's own slot, never the old single one (H16, 22 September
+    # 2026).** The single file carried no Core, so an app whose saved address
+    # was another moved this token into that Core's slot and sent it there.
     umask 077
-    mkdir -p "$HOME/.config/omnuv"
-    printf '%s\n' "$token" > "$HOME/.config/omnuv/token"
+    slot=$(token_slot "$origin")
+    mkdir -p "${slot%/*}"
+    printf '%s\n' "$token" > "$slot"
     say "Signed in. Take this access back any time in the console, under Network."
 }
 

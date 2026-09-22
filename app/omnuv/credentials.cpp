@@ -217,10 +217,24 @@ QString OmnuvCredentials::load(const QString& origin, const QString& legacyOwner
     if (legacyOwner.isEmpty() || legacyOwner != origin) return QString();
     const QString legacy = readLegacy();
     if (legacy.isEmpty()) return QString();
+#ifndef Q_OS_WIN
+    // **Only the app's own slot is evidence (H16, 22 September 2026).** On
+    // Windows the old slot was written by this app alone, beside the address
+    // it was for. Elsewhere `omnuv-connect sign-in <core>` wrote the same file
+    // for whatever Core it was given, so the saved address proves nothing,
+    // and moving the token would send it to a Core that did not issue it. It
+    // is removed instead: signing in again costs a minute, and a token at the
+    // wrong Core is a credential handed to somebody else.
+    if (clearLegacy()) {
+        qWarning("Omnuv: removed a token from the old single slot: nothing records which Core issued it. Sign in again.");
+    }
+    return QString();
+#else
     if (store(origin, legacy)) {
         if (clearLegacy()) qInfo("Omnuv: moved the saved token into its Core's own slot");
     }
     return legacy;
+#endif
 }
 
 bool OmnuvCredentials::store(const QString& origin, const QString& token)
@@ -251,7 +265,7 @@ bool OmnuvCredentials::store(const QString& origin, const QString& token)
 #endif
 }
 
-bool OmnuvCredentials::clear(const QString& origin)
+bool OmnuvCredentials::clear(const QString& origin, const QString& legacyOwner)
 {
     if (origin.isEmpty()) return true;
     bool cleared = true;
@@ -260,5 +274,10 @@ bool OmnuvCredentials::clear(const QString& origin)
 #endif
     // Try both even if one fails. Absence is success; unreadability is not.
     const bool fileCleared = removeFile(origin);
-    return cleared && fileCleared;
+    // The old single slot goes too when it was this origin's, or nobody's
+    // (H16): a sign-out that left it would leave a token on the disk that no
+    // later sign-in could ever move, and so nothing would ever remove. One
+    // saved beside another address still belongs to that one.
+    const bool legacyCleared = (!legacyOwner.isEmpty() && legacyOwner != origin) || clearLegacy();
+    return cleared && fileCleared && legacyCleared;
 }

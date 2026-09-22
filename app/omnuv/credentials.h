@@ -61,8 +61,9 @@ namespace OmnuvCredentials
     bool store(const QString& origin, const QString& token);
 
     // True only when this origin's slot is absent afterwards. Other origins'
-    // slots are untouched.
-    bool clear(const QString& origin);
+    // slots are untouched. The old single slot is removed too unless it was
+    // saved beside another address (`legacyOwner`), which it still belongs to.
+    bool clear(const QString& origin, const QString& legacyOwner = QString());
 
     // Whether this build uses the platform store rather than the file. The
     // About box and any support conversation should be able to say which.

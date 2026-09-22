@@ -122,7 +122,10 @@ OmnuvSession::OmnuvSession(QObject* parent)
       // The slot of the Core this session talks to, and no other: see
       // credentials.h.
       m_storeToken([this](const QString& token) { return m_fixture || OmnuvCredentials::store(tokenOrigin(), token); }),
-      m_clearToken([this]() { return m_fixture || OmnuvCredentials::clear(tokenOrigin()); }),
+      m_clearToken([this]() {
+          return m_fixture || OmnuvCredentials::clear(tokenOrigin(), OmnuvCredentials::origin(
+              QSettings().value(QStringLiteral("omnuv/coreUrl")).toString()));
+      }),
       m_machines(new MachineModel(this)),
       m_estate(new OmnuvEstate([this](const QString& path) { return m_net.get(request(path, true)); }, this)),
       m_tunnel(new OmnuvTunnel(this)),
