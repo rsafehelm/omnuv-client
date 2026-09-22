@@ -90,6 +90,7 @@ void OmnuvPairCli::start(const QStringList& args, QObject* parent)
     // machine, and only a signed-in device may collect it. Without one this
     // action is upstream's `pair` with extra steps.
     auto* session = new OmnuvSession(parent);
+    QObject::connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, session, &OmnuvSession::finishPairing);
     if (!session->signedIn()) {
         emitLine(QStringLiteral("state=failed  reason=sign in first, so this device can collect "
                                 "the machine's own login"));
@@ -154,8 +155,9 @@ void OmnuvPairCli::start(const QStringList& args, QObject* parent)
     // machine this is.
     auto deliver = std::make_shared<std::function<void()>>();
     auto delivered = std::make_shared<bool>(false);
-    *deliver = [session, host, pin, delivered]() {
-        if (*delivered) {
+    auto started = std::make_shared<bool>(false);
+    *deliver = [session, host, pin, delivered, started]() {
+        if (*delivered || !*started) {
             return;
         }
         MachineModel* machines = session->machines();
@@ -164,14 +166,15 @@ void OmnuvPairCli::start(const QStringList& args, QObject* parent)
             if (machines->hostAt(i).compare(host, Qt::CaseInsensitive) == 0
                 || machines->nameAt(i).compare(bare, Qt::CaseInsensitive) == 0) {
                 *delivered = true;
-                session->deliverPin(i, pin);
+                session->deliverPin(session->connectionTarget(i), pin);
                 return;
             }
         }
     };
 
     QObject::connect(launcher, &CliPair::Launcher::pairing, session,
-                     [deliver](const QString& name, const QString&) {
+                     [deliver, started](const QString& name, const QString&) {
+                         *started = true;
                          emitLine(QStringLiteral("state=pairing  machine=%1").arg(name));
                          (*deliver)();
                      });

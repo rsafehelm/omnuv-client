@@ -27,7 +27,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -58,11 +57,64 @@ const (
 // nothing to resume and somebody has to fetch it one.
 var errNeverEnrolled = errors.New("this device has not joined a network yet")
 
+type tunnelClient interface {
+	Start(context.Context) error
+	Stop(context.Context) error
+	Address() (string, string)
+	Identity() (string, error)
+}
+
+type embeddedClient struct {
+	*netbird.Client
+	stopError error
+}
+
+func (c *embeddedClient) Stop(ctx context.Context) error {
+	// NetBird clears its internal pointer even when Stop times out. A second
+	// "not started" would not prove that the earlier cleanup finished.
+	if c.stopError != nil {
+		return fmt.Errorf("previous tunnel stop is unresolved; restart the daemon before replacing identity: %w", c.stopError)
+	}
+	err := c.Client.Stop(ctx)
+	if errors.Is(err, netbird.ErrClientNotStarted) {
+		return nil
+	}
+	if err != nil {
+		c.stopError = err
+	}
+	return err
+}
+
+func (c *embeddedClient) Address() (string, string) {
+	status, err := c.Status()
+	if err != nil {
+		return "", ""
+	}
+	ip, _, _ := strings.Cut(status.LocalPeerState.IP, "/")
+	return ip, status.LocalPeerState.FQDN
+}
+
+func (c *embeddedClient) Identity() (string, error) {
+	config, err := c.GetConfig()
+	if err != nil {
+		return "", err
+	}
+	return config.PrivateKey, nil
+}
+
 type tunnel struct {
-	mu        sync.Mutex
-	client    *netbird.Client
-	state     int
-	lastError string
+	// operations serializes accepted start/stop changes; mu protects observation
+	// and completion. A stopped generation can never publish a later success.
+	operations sync.Mutex
+	mu         sync.Mutex
+	client     tunnelClient
+	state      int
+	lastError  string
+	generation uint64
+	cancel     context.CancelFunc
+	done       chan struct{}
+	dir        string
+	factory    func(netbird.Options) (tunnelClient, error)
 }
 
 func (t *tunnel) setFailed(err error) {
@@ -80,198 +132,178 @@ func (t *tunnel) snapshot() (int, string) {
 	return t.state, t.lastError
 }
 
-// This device's address on the network, and the name it answers to, as the
-// client itself has them.
-//
-// **Asked of the library, never inferred from the machine.** The client keeps a
-// status recorder — `Status().LocalPeerState` — holding the address the
-// management server assigned and the FQDN it published, and that is the
-// authority for both. Reading the operating system's interface list instead
-// looked equivalent and is not: the adapter is configured a moment *after* the
-// engine is up, so a caller that asked at the wrong instant got an empty string
-// from a tunnel that was working. Measured on 16 September, when the rig
-// reported `state=joined  address=` and the guest agent showed `wt0` holding
-// `10.210.219.11` in the same minute.
-//
-// The general rule, and it is the operator's: where a library answers the
-// question, ask the library. An observation of a side effect is a different
-// fact arriving later.
+// The library's status recorder is authoritative; an OS adapter may lag it.
 func (t *tunnel) address() (string, string) {
 	t.mu.Lock()
-	c := t.client
+	c, state := t.client, t.state
 	t.mu.Unlock()
-	if c == nil {
+	if c == nil || state != stateRunning {
 		return "", ""
 	}
-	st, err := c.Status()
-	if err != nil {
-		return "", ""
-	}
-	// **The recorder carries the prefix length; an address field carries an
-	// address.** It reported `10.210.219.11/13` on the rig, which is true and
-	// is not what a caller that wants to connect to something needs — the
-	// window renders it, and the `enrol` action hands it to a harness that
-	// compares it with what the machine says. `/13` is the network's, not this
-	// peer's, and it is already implied by the network.
-	ip, _, _ := strings.Cut(st.LocalPeerState.IP, "/")
-	return ip, st.LocalPeerState.FQDN
+	return c.Address()
 }
 
-// The identity this machine already holds, or "".
-//
-// **Why this is read here rather than passed in.** A device that has enrolled
-// before must come back up without creating anything — getting it wrong means
-// a fresh peer in the buyer's network on every start, which is the "one orphan
-// peer per machine that ever booted" entry in the Inconsistencies list. But
-// `validateCredentials` demands one of SetupKey, JWT or PrivateKey *in the
-// options* on every call, and a setup key spends itself, so it cannot be the
-// thing that is replayed. The stored private key is.
-//
-// **The one place here that reads a library's state instead of asking it, and
-// it is checked rather than assumed.** `Client.GetConfig()` would answer this
-// exactly, and cannot be reached: it is a method on a client, `New()` refuses
-// to build one without a credential, and the credential is what is being
-// looked for. `profilemanager` is an `internal` package, so the type cannot be
-// imported either. There is no accessor — which is the narrow exception in
-// *Where a Library Answers the Question, Ask the Library*, named here so the
-// next reader does not have to re-derive it.
-//
-// So the config is read as what it is on disk: JSON with an untagged
-// `PrivateKey` field. If they rename it this returns "" and the device asks to
-// be enrolled again rather than silently making a second peer — wrong, but
-// wrong in the direction that is visible.
-func storedIdentity(configPath string) string {
-	raw, err := os.ReadFile(configPath)
-	if err != nil {
-		return ""
-	}
-	var cfg struct {
-		PrivateKey string
-	}
-	if err := json.Unmarshal(raw, &cfg); err != nil {
-		return ""
-	}
-	return cfg.PrivateKey
-}
-
-// Accepts the join and returns at once; the outcome arrives through the state.
-// An empty key means *resume*, which must create nothing.
+// Legacy callers and service startup can resume an existing identity, but
+// cannot label it with a project. Versioned clients require its stored binding.
 func (t *tunnel) start(mgmt, key string) error {
-	t.mu.Lock()
-	if t.state == stateStarting || t.state == stateRunning {
-		// **A key is a request to join *that* network, even from here.**
-		//
-		// Returning "already up" is right for a resume — the machine is on its
-		// network and there is nothing to do. It is wrong for an enrolment: a
-		// one-time key names a network, and a device that is already connected
-		// to a *different* one must move rather than report success and stay.
-		//
-		// Measured on 16 September: the rig was joined from an earlier run, an
-		// end-to-end run minted it a key for a new network, the daemon answered
-		// `ok`, and the client reported `state=joined` with the address it
-		// already had. Core saw the device it had issued the key for stay
-		// `Pending` for ever, because no peer ever appeared in its group.
-		if key == "" {
-			t.mu.Unlock()
-			return nil
-		}
+	t.operations.Lock()
+	defer t.operations.Unlock()
+	if key != "" && !origin(mgmt) {
+		return errors.New("enrollment requires a management HTTPS origin")
+	}
+	var record *membershipRecord
+	if key == "" {
+		t.mu.Lock()
+		view, saved, err := t.membershipLocked()
 		t.mu.Unlock()
-		if err := t.stop(); err != nil {
+		if err != nil {
 			return err
 		}
-		t.mu.Lock()
+		if saved != nil && !view.Verified {
+			return errors.New("membership-unverified: incomplete enrollment needs confirmation")
+		}
+		if view.Verified {
+			record = saved
+			mgmt = saved.ManagementURL
+		}
 	}
-	t.state = stateStarting
-	t.lastError = ""
-	t.mu.Unlock()
+	return t.startLocked(mgmt, key, record)
+}
 
-	dir := configDir()
-	// **Persisted, always.** With an empty ConfigPath the library keeps its
-	// config in memory and nothing survives the process, so every start would
-	// enrol again and leave the last peer behind in the buyer's network.
-	configPath := filepath.Join(dir, "config.json")
-	statePath := filepath.Join(dir, "state.json")
+// Caller holds operations. Removal failures stop the transition; an old key
+// must never silently win over a newly supplied setup key.
+func (t *tunnel) startLocked(mgmt, key string, record *membershipRecord) error {
+	t.mu.Lock()
+	active := t.state == stateStarting || t.state == stateRunning
+	t.mu.Unlock()
+	if key == "" && active {
+		return nil
+	}
+	if err := t.stopLocked(); err != nil {
+		return err
+	}
+	dir := t.directory()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.setFailed(err)
 		return err
 	}
-
-	host, _ := os.Hostname()
-	opts := netbird.Options{
-		DeviceName:    host,
-		ManagementURL: mgmt,
-		ConfigPath:    configPath,
-		StatePath:     statePath,
-		NoUserspace:   true,
-	}
-
-	// **A key means a new identity, so the old one is cleared first.**
-	//
-	// `client/embed` loads the configuration at `ConfigPath` and keeps the
-	// private key in it. With a stored identity present, NetBird logs in as
-	// *the peer it already is* and never spends the setup key — so a device
-	// asked to join a different network reconnected to its old one, in two
-	// seconds instead of twenty, and reported success. Core watched the device
-	// it had issued that key for stay `Pending` for ever, because the peer
-	// never appeared in the group the key named. Read out of this daemon's own
-	// log on 16 September: `key=true stored-identity=true` followed by
-	// `running` a heartbeat later.
-	//
-	// So the identity is removed before the library reads it. That is what a
-	// key asks for: this device, on that network, as a new peer. What it costs
-	// is stated plainly — the old peer is left behind in the old network and
-	// whoever moved the device revokes it there. Losing the identity on a
-	// *failed* enrolment is the honest outcome too: the device then has none,
-	// which is exactly what it needs a key for.
+	configPath, statePath := filepath.Join(dir, "config.json"), filepath.Join(dir, "state.json")
 	if key != "" {
-		if err := os.Remove(configPath); err != nil && !os.IsNotExist(err) {
-			log.Printf("onv-tunnel: could not clear the old identity: %v", err)
+		// Invalidate the binding before touching identity. A partial removal
+		// leaves an unverified old key, never a false claim about its scope.
+		for _, path := range []string{filepath.Join(dir, "membership.json"), configPath, statePath} {
+			if err := removeIfPresent(path); err != nil {
+				t.setFailed(err)
+				return err
+			}
 		}
-		_ = os.Remove(statePath)
+		if record != nil {
+			if err := t.writeMembership(*record); err != nil {
+				t.setFailed(err)
+				return err
+			}
+		}
 	}
-
-	// Exactly one of the two, and which one decides whether a peer is made.
+	host, _ := os.Hostname()
+	opts := netbird.Options{DeviceName: host, ManagementURL: mgmt, ConfigPath: configPath, StatePath: statePath, NoUserspace: true}
 	if key != "" {
 		opts.SetupKey = key
-	} else if stored := storedIdentity(configPath); stored != "" {
-		opts.PrivateKey = stored
 	} else {
-		t.mu.Lock()
-		t.state = stateStopped
-		t.lastError = errNeverEnrolled.Error()
-		t.mu.Unlock()
-		return errNeverEnrolled
+		identity, err := readIdentity(configPath)
+		if err != nil {
+			t.setFailed(err)
+			return err
+		}
+		if identity == "" {
+			t.mu.Lock()
+			t.state = stateStopped
+			t.lastError = errNeverEnrolled.Error()
+			t.mu.Unlock()
+			return errNeverEnrolled
+		}
+		opts.PrivateKey = identity
+		if record != nil && record.IdentityHash != hashText(identity) {
+			err := errors.New("membership-changed: stored private identity no longer matches its scope")
+			t.setFailed(err)
+			return err
+		}
 	}
-
-	// Said before the attempt, because the attempt is what fails silently.
-	// `key != ""` rather than the key itself: a setup key is a credential and
-	// this file is written to disk.
-	log.Printf("onv-tunnel: starting mgmt=%q key=%t stored-identity=%t dir=%s",
-		mgmt, key != "", storedIdentity(configPath) != "", dir)
-
-	c, err := netbird.New(opts)
+	factory := t.factory
+	if factory == nil {
+		factory = func(options netbird.Options) (tunnelClient, error) {
+			client, err := netbird.New(options)
+			if err != nil {
+				return nil, err
+			}
+			return &embeddedClient{Client: client}, nil
+		}
+	}
+	log.Printf("onv-tunnel: starting key=%t verified-scope=%t", key != "", record != nil)
+	client, err := factory(opts)
 	if err != nil {
-		log.Printf("onv-tunnel: refused the options: %v", err)
 		t.setFailed(err)
 		return err
 	}
-
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	t.mu.Lock()
+	t.generation++
+	generation := t.generation
+	done := make(chan struct{})
+	t.client, t.cancel, t.done = client, cancel, done
+	t.state, t.lastError = stateStarting, ""
+	t.mu.Unlock()
 	go func() {
-		// Generous, because a first enrolment contacts the management server,
-		// registers the peer and brings an adapter up. The caller polls a
-		// state rather than waiting on this.
-		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer close(done)
 		defer cancel()
-		if err := c.Start(ctx); err != nil {
-			log.Printf("onv-tunnel: start failed: %v", err)
-			t.setFailed(classify(err))
+		err := client.Start(ctx)
+		t.mu.Lock()
+		if generation != t.generation {
+			t.mu.Unlock()
 			return
 		}
-		log.Printf("onv-tunnel: running")
-		t.mu.Lock()
-		t.client = c
+		if err == nil {
+			err = ctx.Err()
+		}
+		if err == nil && record != nil {
+			identity, readErr := client.Identity()
+			if readErr != nil {
+				err = readErr
+			} else if identity == "" {
+				err = errors.New("successful tunnel start did not report its identity")
+			} else {
+				stored, storedErr := readIdentity(configPath)
+				if storedErr != nil {
+					err = storedErr
+				} else if stored != identity {
+					err = errors.New("stored identity differs from the running tunnel; refusing a false scope binding")
+				} else {
+					record.IdentityHash, record.Verified = hashText(identity), true
+					err = t.writeMembership(*record)
+				}
+			}
+		}
+		if err != nil {
+			t.state, t.lastError = stateFailed, classify(err).Error()
+			t.mu.Unlock()
+			// A scope persistence error after Start succeeded must not leave
+			// an unverified adapter running. stopLocked waits for done before
+			// touching this client, so this cleanup cannot overlap another Stop.
+			cleanup, cancelCleanup := context.WithTimeout(context.Background(), 30*time.Second)
+			stopErr := client.Stop(cleanup)
+			cancelCleanup()
+			if stopErr != nil {
+				t.mu.Lock()
+				if generation == t.generation {
+					t.lastError += "; tunnel cleanup failed: " + stopErr.Error()
+				}
+				t.mu.Unlock()
+			}
+			log.Printf("onv-tunnel: start failed: %v", err)
+			return
+		}
 		t.state = stateRunning
 		t.mu.Unlock()
+		log.Printf("onv-tunnel: running")
 	}()
 	return nil
 }
@@ -311,23 +343,42 @@ func classify(err error) error {
 	return err
 }
 
-func (t *tunnel) stop() error {
+// Caller holds operations. Wait for the canceled start before stopping the
+// library, so an old goroutine cannot revive the adapter after a newer start.
+func (t *tunnel) stopLocked() error {
 	t.mu.Lock()
-	c := t.client
-	t.client = nil
-	t.state = stateStopped
+	t.generation++
+	client, cancel, done := t.client, t.cancel, t.done
+	if cancel != nil {
+		cancel()
+	}
 	t.mu.Unlock()
-
-	if c == nil {
-		return nil
+	ctx, cancelStop := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelStop()
+	if done != nil {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			err := errors.New("previous tunnel start did not stop; refusing overlapping transition")
+			t.setFailed(err)
+			return err
+		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := c.Stop(ctx); err != nil {
-		t.mu.Lock()
-		t.lastError = err.Error()
-		t.mu.Unlock()
-		return err
+	if client != nil {
+		if err := client.Stop(ctx); err != nil {
+			t.setFailed(err)
+			return err
+		}
 	}
+	t.mu.Lock()
+	t.client, t.cancel, t.done = nil, nil, nil
+	t.state, t.lastError = stateStopped, ""
+	t.mu.Unlock()
 	return nil
+}
+
+func (t *tunnel) stop() error {
+	t.operations.Lock()
+	defer t.operations.Unlock()
+	return t.stopLocked()
 }

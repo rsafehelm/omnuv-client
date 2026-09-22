@@ -4,6 +4,11 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QLoggingCategory>
+#include <QSaveFile>
+#ifndef Q_OS_WIN
+#include <cerrno>
+#include <sys/stat.h>
+#endif
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -15,13 +20,24 @@ namespace {
 // The name the credential appears under in Credential Manager. A person
 // looking at that list should be able to tell what it is and delete it, so it
 // says the product name rather than an opaque identifier.
-const wchar_t* kTargetName = L"Omnuv Connect";
+#ifdef OMNUV_CREDENTIALS_TESTING
+const wchar_t* credentialTarget()
+{
+    static const std::wstring name = (QStringLiteral("Omnuv Connect test ")
+        + qEnvironmentVariable("OMNUV_CREDENTIAL_TEST_DIR")).toStdWString();
+    return name.c_str();
+}
+#else
+const wchar_t* credentialTarget() { return L"Omnuv Connect"; }
+#endif
 
 // Where the token used to live, and still does on platforms without an
 // implementation here.
 QString filePath()
 {
-#ifdef Q_OS_WIN
+#ifdef OMNUV_CREDENTIALS_TESTING
+    return qEnvironmentVariable("OMNUV_CREDENTIAL_TEST_DIR") + QStringLiteral("/token");
+#elif defined(Q_OS_WIN)
     return QDir::homePath() + QStringLiteral("/AppData/Roaming/Omnuv/token");
 #else
     return QDir::homePath() + QStringLiteral("/.config/omnuv/token");
@@ -40,16 +56,34 @@ QString readFile()
 bool writeFile(const QString& token)
 {
     const QString path = filePath();
-    QDir().mkpath(QFileInfo(path).absolutePath());
-
-    QFile f(path);
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+    if (!QDir().mkpath(QFileInfo(path).absolutePath())) return false;
+    QSaveFile file(path);
+    file.setDirectWriteFallback(false);
+    if (!file.open(QIODevice::WriteOnly)) return false;
+    const QByteArray bytes = token.toUtf8();
+    if (!file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
+            || file.write(bytes) != bytes.size() || !file.flush()) {
+        file.cancelWriting();
         return false;
     }
-    // Before anything is written, so the token is never briefly world-readable.
-    f.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-    f.write(token.toUtf8());
-    return true;
+    return file.commit();
+}
+
+bool removeFile()
+{
+    const QString path = filePath();
+    if (QFile::remove(path)) return true;
+#ifdef Q_OS_WIN
+    if (GetFileAttributesW(reinterpret_cast<LPCWSTR>(path.utf16())) == INVALID_FILE_ATTRIBUTES) {
+        const DWORD error = GetLastError();
+        if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) return true;
+    }
+#else
+    struct stat status;
+    if (::lstat(QFile::encodeName(path).constData(), &status) < 0 && errno == ENOENT) return true;
+#endif
+    qWarning("Omnuv: could not remove the saved credential file");
+    return false;
 }
 
 } // namespace
@@ -67,7 +101,7 @@ QString OmnuvCredentials::load()
 {
 #ifdef Q_OS_WIN
     PCREDENTIALW cred = nullptr;
-    if (CredReadW(kTargetName, CRED_TYPE_GENERIC, 0, &cred) && cred != nullptr) {
+    if (CredReadW(credentialTarget(), CRED_TYPE_GENERIC, 0, &cred) && cred != nullptr) {
         const QString token = QString::fromUtf8(
             reinterpret_cast<const char*>(cred->CredentialBlob),
             static_cast<int>(cred->CredentialBlobSize)).trimmed();
@@ -84,8 +118,7 @@ QString OmnuvCredentials::load()
     const QString fromFile = readFile();
     if (!fromFile.isEmpty()) {
         if (store(fromFile)) {
-            QFile::remove(filePath());
-            qInfo("Omnuv: moved the saved token into Credential Manager");
+            if (removeFile()) qInfo("Omnuv: moved the saved token into Credential Manager");
         }
         return fromFile;
     }
@@ -103,7 +136,7 @@ bool OmnuvCredentials::store(const QString& token)
     CREDENTIALW cred;
     ZeroMemory(&cred, sizeof(cred));
     cred.Type = CRED_TYPE_GENERIC;
-    cred.TargetName = const_cast<wchar_t*>(kTargetName);
+    cred.TargetName = const_cast<wchar_t*>(credentialTarget());
     cred.CredentialBlobSize = static_cast<DWORD>(utf8.size());
     cred.CredentialBlob = reinterpret_cast<LPBYTE>(const_cast<char*>(utf8.constData()));
     // Survives a reboot, which is the entire point for a program that starts
@@ -121,12 +154,16 @@ bool OmnuvCredentials::store(const QString& token)
 #endif
 }
 
-void OmnuvCredentials::clear()
+bool OmnuvCredentials::clear()
 {
+    bool cleared = true;
 #ifdef Q_OS_WIN
-    CredDeleteW(kTargetName, CRED_TYPE_GENERIC, 0);
+    if (!CredDeleteW(credentialTarget(), CRED_TYPE_GENERIC, 0) && GetLastError() != ERROR_NOT_FOUND) {
+        qWarning("Omnuv: could not delete the token from Credential Manager (%lu)", GetLastError());
+        cleared = false;
+    }
 #endif
-    // The file too, on every platform: signing out must not leave a token
-    // behind anywhere, including one an older version wrote.
-    QFile::remove(filePath());
+    // Try both stores even if one fails. Absence is success; unreadability is not.
+    const bool legacyCleared = removeFile();
+    return cleared && legacyCleared;
 }

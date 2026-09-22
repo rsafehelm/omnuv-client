@@ -7,7 +7,7 @@ import "testing"
 // for, a device on a stranger's network, or a state that reads as "off the
 // network" when it means "nobody looked".
 func TestAnswer(t *testing.T) {
-	tn := &tunnel{state: stateStopped}
+	tn := &tunnel{state: stateStopped, dir: t.TempDir()}
 
 	// Four fields before the sentence, and the two placeholders are the point:
 	// a daemon with no client yet has no address and no name, and `-` keeps
@@ -60,7 +60,8 @@ func TestAnswer(t *testing.T) {
 // happened on 16 September, and it kept a device `Pending` for ever because no
 // peer ever appeared in the group its key named.
 func TestAnEnrolmentMovesAConnectedTunnel(t *testing.T) {
-	tn := &tunnel{state: stateRunning}
+	tn := testTunnel(t)
+	tn.state = stateRunning
 
 	if got := answer(tn, "resume"); got != "ok" {
 		t.Fatalf("a resume on a running tunnel is a no-op, got %q", got)
@@ -69,11 +70,18 @@ func TestAnEnrolmentMovesAConnectedTunnel(t *testing.T) {
 		t.Fatalf("a resume must not disturb a running tunnel, state is now %d", state)
 	}
 
-	// The enrolment tears the old membership down before starting. With no
-	// real client behind it the start then fails, which is fine: what this
-	// asserts is that it did *not* short-circuit and leave it running.
-	_ = answer(tn, "enrol https://example.invalid somekey")
-	if state, _ := tn.snapshot(); state == stateRunning {
-		t.Fatal("an enrolment with a key must not leave the previous membership running")
+	// A fake client records the accepted transition without contacting a server
+	// or creating an adapter. The old test accidentally invoked a real library.
+	if got := answer(tn, "enrol https://example.invalid somekey"); got != "ok" {
+		t.Fatal(got)
+	}
+	tn.mu.Lock()
+	client := tn.client
+	tn.mu.Unlock()
+	if client == nil {
+		t.Fatal("enrollment returned without constructing the new membership client")
+	}
+	if err := tn.stop(); err != nil {
+		t.Fatal(err)
 	}
 }

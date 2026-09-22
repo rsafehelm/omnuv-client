@@ -18,9 +18,11 @@
 
 #include <QNetworkAccessManager>
 #include <QObject>
+#include <QPointer>
 
 #include <QString>
 #include <QTimer>
+#include <functional>
 
 // Included rather than forward-declared: moc needs the full type to expose
 // MachineModel* as a Q_PROPERTY.
@@ -29,6 +31,7 @@
 #include "appearance.h"
 #include "autostart.h"
 #include "tunnel.h"
+#include "enrollmentjournal.h"
 
 class OmnuvPairing;
 
@@ -48,6 +51,11 @@ class OmnuvSession : public QObject
     // One line, in a person's words, about what just happened. The view shows
     // it verbatim; nothing here composes a sentence out of an error code.
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
+    Q_PROPERTY(QString credentialWarning READ credentialWarning NOTIFY credentialWarningChanged)
+    Q_PROPERTY(QString readProblem READ readProblem NOTIFY readProblemChanged)
+    Q_PROPERTY(bool enrollmentCleanupBusy READ enrollmentCleanupBusy NOTIFY enrollmentChanged)
+    Q_PROPERTY(QString enrollmentRecovery READ enrollmentRecovery NOTIFY enrollmentChanged)
+    Q_PROPERTY(QString networkMovePrompt READ networkMovePrompt NOTIFY enrollmentChanged)
 
     // **The projects this person is a member of, and the one in view.**
     //
@@ -87,11 +95,22 @@ public:
 
     QString coreUrl() const { return m_coreUrl; }
     void setCoreUrl(const QString& url);
+    QString enrollmentRecovery() const;
+    bool enrollmentCleanupBusy() const { return m_cleanupInFlight; }
+    QString networkMovePrompt() const { return m_networkMovePrompt; }
+    Q_INVOKABLE void confirmNetworkMove();
+    Q_INVOKABLE void cancelNetworkMove();
+    Q_INVOKABLE void revokePendingEnrollment();
     bool signedIn() const { return !m_token.isEmpty(); }
     bool busy() const { return m_busy; }
     QString userCode() const { return m_userCode; }
     QString verificationUri() const { return m_verificationUri; }
     QString status() const { return m_status; }
+    QString credentialWarning() const { return m_credentialWarning; }
+    QString readProblem() const {
+        return m_identityProblem.isEmpty() ? m_machineProblem
+            : m_machineProblem.isEmpty() ? m_identityProblem : m_identityProblem + QLatin1Char('\n') + m_machineProblem;
+    }
     QStringList projectNames() const { return m_projectNames; }
     QStringList projectIds() const { return m_projectIds; }
     // **Whose token this is.** `/v1/me` has always returned it and the client
@@ -154,6 +173,7 @@ public:
     // which the timer reads only every few ticks: a person who pressed
     // Refresh, or just opened the window, means all of it.
     Q_INVOKABLE void refresh(bool everything = false);
+    Q_INVOKABLE void retryReads();
 
     // Open a terminal on an ordinary machine. Returns false when no terminal
     // could be started, which the view turns into a command to copy rather
@@ -194,18 +214,28 @@ public:
     // a PIN is addressed to does not exist until the client's own pairing
     // request is waiting. See `pairing.cpp`.
     //
-    // Exactly one of pairingSucceeded() or pairingFailed() follows, always.
-    Q_INVOKABLE void deliverPin(int row, const QString& pin);
+    // Cancellation suppresses obsolete delivery callbacks. Upstream reports
+    // handshake completion separately, with the host identity.
+    Q_INVOKABLE QVariantMap connectionTarget(int row) const;
+    Q_INVOKABLE int targetRow(const QVariantMap& target) const;
+    Q_INVOKABLE void deliverPin(const QVariantMap& target, const QString& pin);
+    Q_INVOKABLE void finishPairing();
+    Q_INVOKABLE void watchPairing(QObject* manager);
 
 
 
 signals:
+    void hostPairingFinished(const QString& address, const QVariant& error);
+    void connectionContextChanged();
     void projectsChanged();
     void coreUrlChanged();
     void signedInChanged();
     void busyChanged();
     void pendingChanged();
     void statusChanged();
+    void credentialWarningChanged();
+    void readProblemChanged();
+    void enrollmentChanged();
 
     // The machine took the code. Whether the pairing then completed is
     // ComputerModel::pairingCompleted's answer; this only says the delivery
@@ -218,15 +248,35 @@ signals:
     void pairingFailed(const QString& why, const QString& detail);
 
 private:
+    friend class OmnuvSessionTest;
+    void invalidateContext();
+    quint64 m_context = 0;
+    quint64 m_identityRequest = 0;
+    quint64 m_machineRequest = 0;
+    quint64 m_authAttempt = 0;
+    bool m_pollPending = false;
+
     // Answers the tunnel's needsKey(): asks Core for a one-time enrolment key
     // for this device, then hands it back.
     void fetchDeviceKey();
+    void updateNetworkScope();
+    void observeEnrollment();
+    QJsonObject networkScope() const;
+    QJsonObject pendingEnrollment() const;
+    OmnuvEnrollmentJournal m_enrollmentJournal {qEnvironmentVariableIsSet("OMNUV_FIXTURE_URL")};
+    QJsonObject m_networkScope;
+    QString m_accountId, m_networkMovePrompt, m_networkMoveRevision, m_authorizedMoveRevision;
+    quint64 m_networkMoveContext = 0, m_enrollmentRequest = 0;
+    bool m_observingEnrollment = false, m_cleanupInFlight = false;
 
-    // The second half of deliverPin(): collect the one-time streaming login
-    // for a deployment and spend it. Separate because `waiting` is a normal
+    // The second half of deliverPin(): claim the streaming login for this
+    // bounded attempt. Separate because `waiting` is a normal
     // answer that is asked again, not a failure.
-    void collectStreamLogin(int row, const QString& deploymentId,
-                            const QString& pin, int triesLeft);
+    void collectStreamLogin(const QVariantMap& target, const QString& pin, int triesLeft);
+    QObject* m_pairScope = nullptr;
+    QPointer<QObject> m_pairManager;
+    QString m_claimAttempt;
+    QString m_claimDeployment;
 
     void poll();
     void collect();
@@ -250,6 +300,11 @@ private:
     void remember(const QString& key, const QString& value);
     const bool m_fixture = qEnvironmentVariableIsSet("OMNUV_FIXTURE_URL");
     void saveToken(const QString& token);
+    void setCredentialWarning(const QString& warning);
+    void setReadProblem(bool identity, const QString& problem);
+    QString m_credentialWarning, m_identityProblem, m_machineProblem;
+    std::function<bool(const QString&)> m_storeToken;
+    std::function<bool()> m_clearToken;
 
     QNetworkAccessManager m_net;
     MachineModel* m_machines;

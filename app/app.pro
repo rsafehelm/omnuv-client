@@ -62,6 +62,18 @@ TEMPLATE = app
 # deprecated API in order to know how to port your code away from it.
 DEFINES += QT_DEPRECATED_WARNINGS
 
+# **A credential scope for tests, switched on by the environment.**
+# `credentials.cpp` has carried `#ifdef OMNUV_CREDENTIALS_TESTING` since it
+# was written, and nothing defined it — a test affordance that was never
+# wired up, so it read as available and was not. With it, Credential Manager
+# is keyed on `Omnuv Connect test <OMNUV_CREDENTIAL_TEST_DIR>` and a sign-in
+# test cannot disturb the credential a real person is signed in with.
+#
+# An environment variable rather than `CONFIG+=`, because `build-arch.bat` is
+# upstream's and passes qmake nothing: a switch here costs that file no
+# changes at all.
+!isEmpty($$(OMNUV_CREDENTIALS_TESTING)): DEFINES += OMNUV_CREDENTIALS_TESTING
+
 # You can also make your code fail to compile if you use deprecated APIs.
 # In order to do so, uncomment the following line.
 # You can also select to disable deprecated APIs only up to a certain version of Qt.

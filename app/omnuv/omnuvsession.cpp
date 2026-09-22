@@ -5,6 +5,7 @@
 #include "autostart.h"
 #include "credentials.h"
 #include "pairing.h"
+#include <QUuid>
 
 #include "backend/computermanager.h"
 #include "backend/nvcomputer.h"
@@ -14,6 +15,7 @@
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QSet>
 #include <QJsonObject>
 #include <QNetworkReply>
 #include <QNetworkRequest>
@@ -57,8 +59,53 @@ static const int kRefreshHiddenMs = 60 * 1000;
 static const int kLoginTries = 12;
 static const int kLoginIntervalMs = 5 * 1000;
 
+namespace {
+bool nonemptyString(const QJsonObject& object, const char* key)
+{
+    return object.value(QLatin1String(key)).isString()
+        && !object.value(QLatin1String(key)).toString().trimmed().isEmpty();
+}
+
+// Validate the identity fields used for scoping before changing any state.
+// Unknown fields and future status/role values remain compatible.
+bool validProjects(const QJsonValue& projects)
+{
+    if (!projects.isArray()) return false;
+    QSet<QString> ids;
+    for (const auto& value : projects.toArray()) {
+        if (!value.isObject()) return false;
+        const auto project = value.toObject();
+        if (!nonemptyString(project, "id") || !nonemptyString(project, "name")
+            || ids.contains(project["id"].toString())) return false;
+        ids.insert(project["id"].toString());
+    }
+    return true;
+}
+
+bool validMachines(const QJsonDocument& doc)
+{
+    if (!doc.isArray()) return false;
+    QSet<QString> ids;
+    for (const auto& value : doc.array()) {
+        if (!value.isObject()) return false;
+        const auto machine = value.toObject();
+        if (!nonemptyString(machine, "id") || !nonemptyString(machine, "name")
+            || !nonemptyString(machine, "status") || ids.contains(machine["id"].toString())) return false;
+        ids.insert(machine["id"].toString());
+        // These fields can be absent or null while a machine is being placed.
+        for (const auto key : {"private_name", "private_ip", "stream_app", "default_user", "last_error"}) {
+            const auto field = machine.value(QLatin1String(key));
+            if (!field.isUndefined() && !field.isNull() && !field.isString()) return false;
+        }
+    }
+    return true;
+}
+}
+
 OmnuvSession::OmnuvSession(QObject* parent)
     : QObject(parent),
+      m_storeToken([this](const QString& token) { return m_fixture || OmnuvCredentials::store(token); }),
+      m_clearToken([this]() { return m_fixture || OmnuvCredentials::clear(); }),
       m_machines(new MachineModel(this)),
       m_estate(new OmnuvEstate([this](const QString& path) { return m_net.get(request(path, true)); }, this)),
       m_tunnel(new OmnuvTunnel(this)),
@@ -86,7 +133,7 @@ OmnuvSession::OmnuvSession(QObject* parent)
         // loaded.
         m_coreUrl = qEnvironmentVariable("OMNUV_FIXTURE_URL");
         m_token = QStringLiteral("fixture-token");
-        qInfo() << "omnuv: fixture session against" << m_coreUrl << "- nothing saved is read or written";
+        qInfo() << "omnuv: fixture session against" << m_coreUrl << "- saved account and startup state are bypassed";
     } else {
         m_coreUrl = settings.value(QStringLiteral("omnuv/coreUrl")).toString();
         if (m_coreUrl.isEmpty()) {
@@ -99,6 +146,8 @@ OmnuvSession::OmnuvSession(QObject* parent)
 
     // The tunnel asks for a key only when the device has never enrolled.
     connect(m_tunnel, &OmnuvTunnel::needsKey, this, &OmnuvSession::fetchDeviceKey);
+    connect(m_tunnel, &OmnuvTunnel::changed, this, &OmnuvSession::observeEnrollment);
+    connect(m_tunnel, &OmnuvTunnel::observationExpired, this, [this]() { ++m_enrollmentRequest; });
 
     // Every ending of a pairing attempt arrives on one pair of signals,
     // whether it ended at Core or at the machine. The view has one place to
@@ -147,9 +196,12 @@ void OmnuvSession::fetchIdentity()
         return;
     }
     m_identityPending = true;
+    const auto context = m_context;
+    const auto sequence = ++m_identityRequest;
     QNetworkReply* reply = m_net.get(request(QStringLiteral("/v1/me"), true));
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, context, sequence]() {
         reply->deleteLater();
+        if (context != m_context || sequence != m_identityRequest) return;
         m_identityPending = false;
         const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         if (code == 401 || code == 403) {
@@ -160,14 +212,30 @@ void OmnuvSession::fetchIdentity()
             // Asked again on the next refresh; meanwhile, said.
             const QString said = QJsonDocument::fromJson(reply->readAll()).object()
                                      .value(QStringLiteral("error")).toString().trimmed();
-            setStatus(code == 0 ? tr("Could not reach %1.").arg(m_coreUrl)
+            setReadProblem(true, code == 0 ? tr("Could not reach %1.").arg(m_coreUrl)
                       : !said.isEmpty() ? tr("Omnuv could not say who this is: %1").arg(said)
                       : tr("Omnuv could not say who this is just now."));
             return;
         }
-        const QJsonObject o = QJsonDocument::fromJson(reply->readAll()).object();
+        QJsonParseError parsed;
+        const auto doc = QJsonDocument::fromJson(reply->readAll(), &parsed);
+        const auto o = doc.object();
+        if (parsed.error != QJsonParseError::NoError || !doc.isObject()
+            || !nonemptyString(o, "email") || !nonemptyString(o, "organization_name")
+            || !nonemptyString(o, "organization_role") || !validProjects(o["projects"])) {
+            setReadProblem(true, tr("Omnuv returned account details this version cannot read. Your previous account view has been kept."));
+            return;
+        }
+        setReadProblem(true, QString());
         const QJsonArray projects = o[QStringLiteral("projects")].toArray();
+        if (m_identityKnown && !m_accountId.isEmpty() && m_accountId != o.value("user_id").toString()) {
+            finishPairing(); ++m_context; ++m_machineRequest;
+            m_machines->clear();
+            if (m_tunnel->busy()) m_tunnel->giveUp(tr("Network enrollment was cancelled because the account changed."));
+            emit connectionContextChanged();
+        }
         m_accountEmail = o[QStringLiteral("email")].toString();
+        m_accountId = o[QStringLiteral("user_id")].toString();
         m_identityKnown = true;
         m_estate->setIdentity(o[QStringLiteral("organization_name")].toString(),
                               o[QStringLiteral("organization_role")].toString());
@@ -180,9 +248,18 @@ void OmnuvSession::fetchIdentity()
             m_projectNames << p[QStringLiteral("name")].toString();
         }
         if (!m_projectIds.contains(m_projectId)) {
+            finishPairing();
+            ++m_context;
+            ++m_machineRequest;
+            m_machines->clear();
+            setReadProblem(false, QString());
+            m_tunnel->clearOperationError();
+            if (m_tunnel->busy()) m_tunnel->giveUp(tr("Network enrollment was cancelled because the account or project changed."));
             m_projectId = m_projectIds.value(0);
+            emit connectionContextChanged();
             remember(QStringLiteral("omnuv/projectId"), m_projectId);
         }
+        updateNetworkScope();
         m_estate->setProject(m_projectId);
         if (m_projectIds.isEmpty()) {
             // Said once per identity read, for the person asking why the
@@ -200,7 +277,17 @@ void OmnuvSession::selectProject(const QString& id)
     if (id == m_projectId || !m_projectIds.contains(id)) {
         return;
     }
+    finishPairing();
+    ++m_context;
+    ++m_machineRequest;
+    ++m_identityRequest;
+    m_identityPending = false;
+    m_tunnel->clearOperationError();
+    if (m_tunnel->busy()) m_tunnel->giveUp(tr("Network enrollment was cancelled because the account or project changed."));
     m_projectId = id;
+    updateNetworkScope();
+    setReadProblem(false, QString());
+    emit connectionContextChanged();
     remember(QStringLiteral("omnuv/projectId"), m_projectId);
     emit projectsChanged();
     // The machines on screen belong to the project that was chosen a moment
@@ -233,14 +320,34 @@ void OmnuvSession::loadToken()
     m_token = OmnuvCredentials::load();
 }
 
+void OmnuvSession::setCredentialWarning(const QString& warning)
+{
+    if (m_credentialWarning == warning) return;
+    m_credentialWarning = warning;
+    if (!warning.isEmpty()) qWarning().noquote() << "omnuv:" << warning;
+    emit credentialWarningChanged();
+}
+
 void OmnuvSession::saveToken(const QString& token)
 {
-    // Says so when it could not. A client that signs in, fails to remember it,
-    // and says nothing sends the person through the whole browser dance again
-    // at the next launch with no idea why.
-    if (!m_fixture && !OmnuvCredentials::store(token)) {
-        setStatus(tr("Signed in, but this device could not remember it."));
-    }
+    setCredentialWarning(m_storeToken(token) ? QString()
+        : tr("Signed in for this session, but this device could not save your login. You may need to sign in again after closing the app."));
+}
+
+void OmnuvSession::setReadProblem(bool identity, const QString& problem)
+{
+    auto& previous = identity ? m_identityProblem : m_machineProblem;
+    if (previous == problem) return;
+    previous = problem;
+    if (!problem.isEmpty()) qWarning().noquote() << "omnuv:" << problem;
+    emit readProblemChanged();
+}
+
+void OmnuvSession::retryReads()
+{
+    if (!signedIn()) return;
+    fetchIdentity();
+    refresh(true);
 }
 
 void OmnuvSession::setCoreUrl(const QString& url)
@@ -253,6 +360,7 @@ void OmnuvSession::setCoreUrl(const QString& url)
         return;
     }
 
+    signOut();
     m_coreUrl = trimmed;
     remember(QStringLiteral("omnuv/coreUrl"), m_coreUrl);
     emit coreUrlChanged();
@@ -283,6 +391,9 @@ void OmnuvSession::setBusy(bool busy)
 
 void OmnuvSession::clearPending()
 {
+    ++m_authAttempt;
+    m_pollPending = false;
+    setBusy(false);
     m_pollTimer.stop();
     m_deviceCode.clear();
     m_userCode.clear();
@@ -293,6 +404,7 @@ void OmnuvSession::clearPending()
 QNetworkRequest OmnuvSession::request(const QString& path, bool authenticated) const
 {
     QNetworkRequest req(QUrl(m_coreUrl + path));
+    req.setTransferTimeout(15000);
     req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
     if (authenticated) {
         req.setRawHeader("authorization", QStringLiteral("Bearer %1").arg(m_token).toUtf8());
@@ -308,6 +420,7 @@ void OmnuvSession::signIn()
     }
 
     clearPending();
+    const auto attempt = m_authAttempt;
     setBusy(true);
     setStatus(tr("Asking for a code…"));
 
@@ -320,8 +433,9 @@ void OmnuvSession::signIn()
 
     QNetworkReply* reply = m_net.post(request(QStringLiteral("/v1/auth/device"), false),
                                       QJsonDocument(body).toJson(QJsonDocument::Compact));
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, attempt]() {
         reply->deleteLater();
+        if (attempt != m_authAttempt) return;
         setBusy(false);
 
         if (reply->error() != QNetworkReply::NoError) {
@@ -362,11 +476,16 @@ void OmnuvSession::poll()
         return;
     }
 
+    if (m_pollPending) return;
+    m_pollPending = true;
+    const auto attempt = m_authAttempt;
     const QJsonObject body { { QStringLiteral("device_code"), m_deviceCode } };
     QNetworkReply* reply = m_net.post(request(QStringLiteral("/v1/auth/device/token"), false),
                                       QJsonDocument(body).toJson(QJsonDocument::Compact));
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, attempt]() {
         reply->deleteLater();
+        if (attempt != m_authAttempt) return;
+        m_pollPending = false;
 
         const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         if (code == 202) {
@@ -393,6 +512,7 @@ void OmnuvSession::poll()
             return;
         }
 
+        invalidateContext();
         m_token = token;
         saveToken(token);
 
@@ -416,12 +536,37 @@ void OmnuvSession::poll()
     });
 }
 
+void OmnuvSession::invalidateContext()
+{
+    m_tunnel->clearOperationError();
+    setCredentialWarning(QString());
+    setReadProblem(true, QString());
+    setReadProblem(false, QString());
+    finishPairing();
+    if (m_tunnel->busy()) m_tunnel->giveUp(tr("Network enrollment was cancelled because the account or project changed."));
+    ++m_context;
+    emit connectionContextChanged();
+    ++m_identityRequest;
+    ++m_machineRequest;
+    m_identityPending = false;
+    m_identityKnown = false;
+    m_accountEmail.clear();
+    m_accountId.clear();
+    updateNetworkScope();
+    m_projectNames.clear();
+    m_projectIds.clear();
+    m_machines->clear();
+    m_estate->clear();
+    emit projectsChanged();
+}
+
 void OmnuvSession::signOut()
 {
+    invalidateContext();
     // Both the credential store and any file an older version left behind.
     // Signing out must not leave a token anywhere.
-    if (!m_fixture) {
-        OmnuvCredentials::clear();
+    if (!m_clearToken()) {
+        setCredentialWarning(tr("The saved sign-in could not be removed. It may return when you reopen the app. Revoke this device in the console and retry signing out."));
     }
     m_token.clear();
     m_identityKnown = false;
@@ -437,8 +582,10 @@ void OmnuvSession::signOut()
 // signed in, rather than retrying a token that is dead.
 void OmnuvSession::accessTakenBack()
 {
-    if (!m_fixture) {
-        OmnuvCredentials::clear();
+    invalidateContext();
+    clearPending();
+    if (!m_clearToken()) {
+        setCredentialWarning(tr("The expired or revoked sign-in could not be removed from this device. Retry signing out to remove the saved copy."));
     }
     m_token.clear();
     m_identityKnown = false;
@@ -485,9 +632,12 @@ void OmnuvSession::refresh(bool everything)
         return;
     }
 
+    const auto context = m_context;
+    const auto sequence = ++m_machineRequest;
     QNetworkReply* reply = m_net.get(request(QStringLiteral("/v1/instances") + projectQuery(), true));
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, context, sequence]() {
         reply->deleteLater();
+        if (context != m_context || sequence != m_machineRequest) return;
 
         const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         if (code == 401 || code == 403) {
@@ -499,14 +649,21 @@ void OmnuvSession::refresh(bool everything)
             // nothing did. The two send a person to different places.
             const QString said = QJsonDocument::fromJson(reply->readAll()).object()
                                      .value(QStringLiteral("error")).toString().trimmed();
-            setStatus(code == 0 ? tr("Could not reach %1.").arg(m_coreUrl)
+            setReadProblem(false, code == 0 ? tr("Could not reach %1.").arg(m_coreUrl)
                       : !said.isEmpty() ? tr("Omnuv could not list the machines: %1").arg(said)
                       : tr("Omnuv could not list the machines just now."));
             return;
         }
 
-        const QJsonArray machines = QJsonDocument::fromJson(reply->readAll()).array();
+        QJsonParseError parsed;
+        const auto doc = QJsonDocument::fromJson(reply->readAll(), &parsed);
+        if (parsed.error != QJsonParseError::NoError || !validMachines(doc)) {
+            setReadProblem(false, tr("Omnuv returned a machine list this version cannot read. Your previous machine view has been kept."));
+            return;
+        }
+        const QJsonArray machines = doc.array();
         m_machines->replace(machines);
+        setReadProblem(false, QString());
         setStatus(QString());
 
         // Logged because a person reporting "it says I have no machines" needs
@@ -565,238 +722,390 @@ bool OmnuvSession::openTerminal(const QString& host, const QString& user)
 #endif
 }
 
-// The key half of joining. The tunnel says when it needs one; this fetches it
-// and hands it back. Core is asked for the project's network, then for a
-// device named after this computer, so the entry in a person's device list is
-// one they recognise.
+QJsonObject OmnuvSession::networkScope() const
+{
+    if (!signedIn() || !m_identityKnown || m_accountId.isEmpty() || m_projectId.isEmpty()) return {};
+    QUrl core(m_coreUrl);
+    core.setScheme(core.scheme().toLower()); core.setHost(core.host().toLower());
+    if ((core.scheme() == "https" && core.port() == 443) || (core.scheme() == "http" && core.port() == 80)) core.setPort(-1);
+    core.setFragment(QString()); core.setQuery(QString());
+    QString origin = core.toString(QUrl::RemovePassword | QUrl::RemoveUserInfo | QUrl::StripTrailingSlash);
+    return {{"core_url", origin}, {"account_id", m_accountId}, {"project_id", m_projectId}};
+}
+
+void OmnuvSession::updateNetworkScope()
+{
+    const auto scope = networkScope();
+    if (scope == m_networkScope) return;
+    m_networkScope = scope;
+    ++m_enrollmentRequest;
+    m_networkMovePrompt.clear(); m_networkMoveRevision.clear(); m_authorizedMoveRevision.clear();
+    m_tunnel->setScope(scope);
+    emit enrollmentChanged();
+}
+
+QJsonObject OmnuvSession::pendingEnrollment() const
+{
+    const auto scope = networkScope();
+    if (scope.isEmpty()) return {};
+    const auto records = m_enrollmentJournal.records();
+    for (const auto& value : records) {
+        const auto record = value.toObject(), membership = record.value("membership").toObject();
+        if (record.value("cleanup_done").toBool()) continue;
+        bool matches = true;
+        for (auto it = scope.begin(); it != scope.end(); ++it)
+            if (it.value() != membership.value(it.key())) matches = false;
+        if (matches) return record;
+    }
+    return {};
+}
+
+QString OmnuvSession::enrollmentRecovery() const
+{
+    const auto record = pendingEnrollment();
+    if (record.isEmpty()) return {};
+    const auto membership = record.value("membership").toObject();
+    return tr("Enrollment %1 is saved for this project. Retry reuses this attempt. If its key was already issued, revoke it before starting again. Closing the app keeps these recovery details.")
+        .arg(membership.value("device_id").toString())
+        + (record.value("unexpected_device_id").toString().isEmpty() ? QString()
+            : tr(" An older server also returned device %1; cleanup must remove that device.").arg(record.value("unexpected_device_id").toString()));
+}
+
+void OmnuvSession::observeEnrollment()
+{
+    if (m_observingEnrollment || !m_tunnel->connected()) return;
+    m_observingEnrollment = true;
+    const auto record = pendingEnrollment();
+    const auto membership = record.value("membership").toObject();
+    if (!record.isEmpty() && record.value("unexpected_device_id").toString().isEmpty()
+        && m_tunnel->membership() == membership) {
+        if (!m_enrollmentJournal.remove(OmnuvEnrollmentJournal::key(membership)))
+            m_tunnel->giveUp(tr("The network joined, but its recovery record could not be cleared. Retry after fixing local settings storage."));
+        emit enrollmentChanged();
+    }
+    m_observingEnrollment = false;
+}
+
+void OmnuvSession::confirmNetworkMove()
+{
+    if (m_networkMovePrompt.isEmpty() || m_networkMoveContext != m_context) return;
+    m_authorizedMoveRevision = m_networkMoveRevision;
+    m_networkMovePrompt.clear();
+    emit enrollmentChanged();
+    m_tunnel->join();
+}
+
+void OmnuvSession::cancelNetworkMove()
+{
+    m_networkMovePrompt.clear(); m_networkMoveRevision.clear(); m_authorizedMoveRevision.clear();
+    emit enrollmentChanged();
+}
+
+void OmnuvSession::revokePendingEnrollment()
+{
+    if (m_cleanupInFlight) return;
+    const auto record = pendingEnrollment();
+    if (record.isEmpty()) return;
+    const auto membership = record.value("membership").toObject();
+    const auto key = OmnuvEnrollmentJournal::key(membership);
+    ++m_enrollmentRequest; // A late successful POST must never start a cancelled enrollment.
+    const auto context = m_context;
+    m_cleanupInFlight = true;
+    emit enrollmentChanged();
+    m_tunnel->beginOperation(tr("Revoking this enrollment…"));
+    auto reply = m_net.deleteResource(request(QStringLiteral("/v1/networks/%1/devices/%2")
+        .arg(membership.value("network_id").toString(), membership.value("device_id").toString()), true));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, record, membership, key, context]() mutable {
+        reply->deleteLater();
+        m_cleanupInFlight = false;
+        emit enrollmentChanged();
+        const auto code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const auto cause = QJsonDocument::fromJson(reply->readAll()).object().value("error").toString();
+        if (reply->error() != QNetworkReply::NoError || code != 204) {
+            if (context == m_context) m_tunnel->giveUp(tr("Enrollment cleanup is not confirmed (HTTP %1): %2. The saved attempt has been kept; update the server if this operation is unsupported.")
+                .arg(code).arg(cause.isEmpty() ? reply->errorString() : cause));
+            return;
+        }
+        if (context != m_context) return; // retry cleanup in the original account/deployment
+        // A cancellation fence is now durable at Core, including when DELETE
+        // arrived before the original create. Stop only that exact membership.
+        if (!m_tunnel->stopMembership(membership)) return;
+        const auto unexpected = record.value("unexpected_device_id").toString();
+        if (!unexpected.isEmpty()) {
+            auto old = m_net.deleteResource(request(QStringLiteral("/v1/devices/%1").arg(unexpected), true));
+            connect(old, &QNetworkReply::finished, this, [this, old, record, key, context]() mutable {
+                old->deleteLater();
+                if (old->error() != QNetworkReply::NoError) {
+                    if (context == m_context) m_tunnel->giveUp(tr("The older server's extra device could not be revoked. Recovery details have been kept."));
+                    return;
+                }
+                auto done = record; done["cleanup_done"] = true;
+                if (!m_enrollmentJournal.put(key, done)) {
+                    if (context == m_context) m_tunnel->giveUp(tr("Cleanup succeeded, but could not be saved locally. Retry cleanup."));
+                } else if (context == m_context) m_tunnel->giveUp(tr("Enrollment revoked. Join this device to start a new attempt."));
+                emit enrollmentChanged();
+            });
+            return;
+        }
+        auto done = record; done["cleanup_done"] = true;
+        if (!m_enrollmentJournal.put(key, done)) {
+            if (context == m_context) m_tunnel->giveUp(tr("Cleanup succeeded, but could not be saved locally. Retry cleanup."));
+        } else if (context == m_context) m_tunnel->giveUp(tr("Enrollment revoked. Join this device to start a new attempt."));
+        emit enrollmentChanged();
+    });
+}
+
+// Establish the scope before either resuming an identity or creating a key.
 void OmnuvSession::fetchDeviceKey()
 {
     if (!signedIn()) {
-        m_tunnel->giveUp(tr("Sign in first, so this device can be added to your network."));
-        return;
+        m_tunnel->giveUp(tr("Sign in first, so this device can be added to your network.")); return;
     }
-
-    QNetworkReply* reply = m_net.get(request(QStringLiteral("/v1/networks") + projectQuery(), true));
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    if (!m_identityKnown || m_projectId.isEmpty()) {
+        m_tunnel->giveUp(tr("Choose a project before joining this device to its network.")); return;
+    }
+    if (m_accountId.isEmpty()) {
+        m_tunnel->giveUp(tr("Your server did not provide a stable account identity. Update it before enrolling this device.")); return;
+    }
+    const auto scope = networkScope();
+    m_tunnel->setScope(scope);
+    if (!m_tunnel->readMembership()) {
+        m_tunnel->giveUp(tr("Update the Omnuv network service before joining. Its existing identity has been kept.")); return;
+    }
+    bool valid;
+    m_enrollmentJournal.records(&valid);
+    if (!valid) {
+        m_tunnel->giveUp(tr("Saved enrollment recovery details could not be read. Repair local settings before starting another attempt.")); return;
+    }
+    const auto context = m_context, operation = ++m_enrollmentRequest;
+    const QString project = m_projectId;
+    auto reply = m_net.get(request(QStringLiteral("/v1/networks") + projectQuery(), true));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, context, operation, project, scope]() {
         reply->deleteLater();
-
-        const QJsonArray networks = QJsonDocument::fromJson(reply->readAll()).array();
-        if (reply->error() != QNetworkReply::NoError || networks.isEmpty()) {
-            m_tunnel->giveUp(tr("Could not find your network."));
+        if (context != m_context || operation != m_enrollmentRequest || project != m_projectId) return;
+        const auto bytes = reply->readAll();
+        const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (reply->error() != QNetworkReply::NoError) {
+            const auto cause = QJsonDocument::fromJson(bytes).object().value("error").toString().trimmed();
+            const auto problem = code == 0 ? tr("Could not reach Omnuv to read your network: %1").arg(reply->errorString())
+                : tr("Omnuv could not read your network (HTTP %1): %2").arg(code).arg(cause.isEmpty() ? reply->errorString() : cause);
+            if (code == 401) { accessTakenBack(); setStatus(tr("Sign in again. %1").arg(problem)); }
+            m_tunnel->giveUp(problem); return;
+        }
+        QJsonParseError parsed;
+        const auto document = QJsonDocument::fromJson(bytes, &parsed);
+        const auto networks = document.array();
+        if (parsed.error != QJsonParseError::NoError || !document.isArray()
+            || (!networks.isEmpty() && (!networks.first().isObject() || !nonemptyString(networks.first().toObject(), "id")))) {
+            m_tunnel->giveUp(tr("Omnuv returned network details this version cannot read.")); return;
+        }
+        if (networks.isEmpty()) {
+            m_tunnel->giveUp(tr("This project's network is not ready yet. Try joining again after it is ready.")); return;
+        }
+        auto target = scope;
+        target["network_id"] = networks.first().toObject().value("id");
+        const auto journalKey = OmnuvEnrollmentJournal::key(target);
+        const auto previous = m_enrollmentJournal.records().value(journalKey).toObject();
+        const auto previousMembership = previous.value("membership").toObject();
+        if (!m_tunnel->readMembership()) {
+            m_tunnel->giveUp(tr("The network service could not verify its membership. No enrollment was created.")); return;
+        }
+        const auto current = m_tunnel->membership();
+        const bool previouslyRevoked = previous.value("cleanup_done").toBool()
+            && current == previousMembership;
+        if (m_tunnel->membershipMatches(target) && !previouslyRevoked) {
+            if (!m_tunnel->membershipVerified()) {
+                m_tunnel->giveUp(tr("This enrollment has not completed. Its saved attempt must be recovered or revoked before creating another.")); return;
+            }
+            m_tunnel->resumeMembership(current);
+            if (!m_tunnel->operationError().isEmpty() && previous.isEmpty()) {
+                m_enrollmentJournal.put(journalKey, {{"membership", current}});
+                emit enrollmentChanged();
+            }
             return;
         }
-
-        // **The project's network, and a project always has at least one.**
-        // Since 16 September a project is created with its network in one
-        // transaction and a trigger refuses to delete one while the project is
-        // alive, so this is never empty. It is *not* guaranteed to be the only
-        // one — nothing stops a second, and a harness created exactly that the
-        // same afternoon — so `first` is a choice rather than the only answer,
-        // and the right long-term shape is for a device to be told which
-        // network to join rather than to pick.
-        //
-        // What it does rule out is the worse case: `projectQuery()` scopes the
-        // list to the project this window is showing, so `first` is always
-        // *this tenant's*, never whichever network the account listed first.
-        const QString id = networks.first().toObject()[QStringLiteral("id")].toString();
-        const QJsonObject body { { QStringLiteral("name"), QSysInfo::machineHostName() } };
-
-        QNetworkReply* add = m_net.post(
-            request(QStringLiteral("/v1/networks/%1/devices").arg(id), true),
+        const auto revision = m_tunnel->membershipRevision();
+        if ((m_tunnel->hasIdentity() || !current.isEmpty()) && !previouslyRevoked
+            && m_authorizedMoveRevision != revision) {
+            m_networkMoveRevision = revision; m_networkMoveContext = m_context;
+            m_networkMovePrompt = tr("Move this device to %1 at %2? This disconnects its current network. Before confirming, revoke the old device in its original console. Current membership: %3. The current identity is kept if you cancel.")
+                .arg(projectName(), m_coreUrl, current.isEmpty() ? tr("unverified; its original account must identify it")
+                    : tr("device %1, project %2, account %3 at %4").arg(current.value("device_id").toString(), current.value("project_id").toString(), current.value("account_id").toString(), current.value("core_url").toString()));
+            m_tunnel->giveUp(tr("Confirm the network move after revoking the old membership."));
+            emit enrollmentChanged(); return;
+        }
+        if (!pendingEnrollment().isEmpty()
+            && pendingEnrollment().value("membership").toObject().value("network_id") != target.value("network_id")) {
+            m_tunnel->giveUp(tr("Recover or revoke the saved enrollment for this project's previous network first.")); return;
+        }
+        QJsonObject record;
+        if (!m_enrollmentJournal.reserve(target, &record)) {
+            m_tunnel->giveUp(tr("The enrollment attempt could not be saved. No device was created.")); return;
+        }
+        const auto membership = record.value("membership").toObject();
+        const auto attempt = membership.value("device_id").toString();
+        if (!record.value("unexpected_device_id").toString().isEmpty()) {
+            m_tunnel->giveUp(tr("An older server returned a different enrollment ID. Revoke the saved attempt before retrying.")); return;
+        }
+        emit enrollmentChanged();
+        const QJsonObject body {{"name", QSysInfo::machineHostName()}, {"attempt_id", attempt}};
+        auto add = m_net.post(request(QStringLiteral("/v1/networks/%1/devices").arg(target.value("network_id").toString()), true),
             QJsonDocument(body).toJson(QJsonDocument::Compact));
-        connect(add, &QNetworkReply::finished, this, [this, add]() {
+        connect(add, &QNetworkReply::finished, this, [this, add, context, operation, project, membership, attempt, journalKey, record, revision]() mutable {
             add->deleteLater();
-
-            const QJsonObject o = QJsonDocument::fromJson(add->readAll()).object();
-            const QString key = o[QStringLiteral("setup_key")].toString();
-            if (add->error() != QNetworkReply::NoError || key.isEmpty()) {
-                m_tunnel->giveUp(tr("This device could not be added to your network."));
-                return;
+            const auto bytes = add->readAll();
+            const auto document = QJsonDocument::fromJson(bytes);
+            const auto o = document.object();
+            const auto returnedId = o.value("id").toString();
+            // Even an obsolete response may identify an old server's side effect.
+            // Keep that ID for cleanup without using its secret or new context.
+            if (!returnedId.isEmpty() && returnedId != attempt) {
+                auto updated = record; updated["unexpected_device_id"] = returnedId;
+                if (!m_enrollmentJournal.put(journalKey, updated))
+                    qWarning().noquote() << "omnuv: enrollment cleanup ID could not be saved:" << returnedId;
+                emit enrollmentChanged();
             }
-
-            // The management address is deployment configuration, and the only
-            // place the API states it is inside the command it hands a person
-            // to paste. Read it from there rather than guessing it from Core's.
-            const QString command = o[QStringLiteral("command")].toString();
-            const QString url = command.section(QStringLiteral("--management-url "), 1, 1)
-                                    .section(QLatin1Char(' '), 0, 0);
-            if (url.isEmpty()) {
-                m_tunnel->giveUp(tr("Your network did not say where to join."));
-                return;
+            if (context != m_context || operation != m_enrollmentRequest || project != m_projectId) return;
+            const int code = add->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            if (add->error() != QNetworkReply::NoError) {
+                const auto cause = o.value("error").toString().trimmed();
+                const auto problem = code == 0 ? tr("Could not reach Omnuv to add this device: %1").arg(add->errorString())
+                    : tr("Omnuv could not add this device (HTTP %1): %2").arg(code).arg(cause.isEmpty() ? add->errorString() : cause);
+                if (code == 401) { accessTakenBack(); setStatus(tr("Sign in again. %1").arg(problem)); }
+                m_tunnel->giveUp(problem + tr(" Recovery attempt: %1.").arg(attempt)); return;
             }
-
-            m_tunnel->enrol(url, key);
+            if (returnedId != attempt) {
+                m_tunnel->giveUp(tr("This server does not support recoverable enrollment. Expected device %1; returned %2. The current network identity was kept. Revoke the saved enrollment before updating and retrying.")
+                    .arg(attempt, returnedId.isEmpty() ? tr("no device ID") : returnedId)); return;
+            }
+            if (!document.isObject() || !nonemptyString(o, "setup_key") || !nonemptyString(o, "command")) {
+                m_tunnel->giveUp(tr("Omnuv returned enrollment details this version cannot read. Revoke the saved enrollment before trying again.")); return;
+            }
+            const auto command = o.value("command").toString();
+            const auto url = command.section(QStringLiteral("--management-url "), 1, 1).section(QLatin1Char(' '), 0, 0);
+            const QUrl management(url);
+            if (!management.isValid() || management.host().isEmpty()
+                || (management.scheme() != "https" && management.scheme() != "http")) {
+                m_tunnel->giveUp(tr("Your network did not provide a usable address to join. Revoke the saved enrollment before trying again.")); return;
+            }
+            m_authorizedMoveRevision.clear();
+            m_tunnel->enrolMembership(url, o.value("setup_key").toString(), membership, revision);
         });
     });
 }
 
-// **A pairing nobody types.**
-//
-// Moonlight's PIN has always been a number a person reads off one screen and
-// types into another, because the client had no way to prove to the machine
-// that it was entitled to pair. A machine the marketplace deployed does: its
-// recipe mints a single-use login for its own streaming host, writes it where
-// only root can read it, and the provider's agent carries it up to Core on the
-// ordinary status report. The owner collects it once, here, and spends it on
-// the machine — so the number still exists and nobody ever sees it.
-//
-// Three things this function must get right, and each is a decision rather
-// than a detail:
-//
-// **The order.** ComputerModel::pairComputer() has already been called by the
-// time this runs, and that is not an accident of sequencing — the identifier a
-// PIN is addressed to does not exist until the client's own pairing request is
-// waiting on the machine. See `pairing.cpp`.
-//
-// **The credential is spent on read.** Core nulls the password in the same
-// statement that returns it, so there is exactly one chance per deployment.
-// Everything that can fail cheaply is therefore done first: the deployment is
-// found before the login is asked for, and the login is asked for only when
-// there is a pairing in flight to spend it on.
-//
-// **`waiting` is not a failure.** It is the normal answer while the machine is
-// still installing, and drawing it as an error would send a person to fix a
-// machine that is working.
-void OmnuvSession::deliverPin(int row, const QString& pin)
+// Carry identity across every asynchronous step; a model row is only a view.
+QVariantMap OmnuvSession::connectionTarget(int row) const
 {
-    const QString name = m_machines->nameAt(row);
-    const QString instanceId = m_machines->idAt(row);
+    if (!signedIn() || m_projectId.isEmpty() || m_machines->idAt(row).isEmpty()
+        || m_machines->hostAt(row).isEmpty()) return {};
+    return {{"id", m_machines->idAt(row)}, {"host", m_machines->hostAt(row)},
+            {"project", m_projectId}, {"context", QString::number(m_context)}};
+}
 
-    if (!signedIn() || instanceId.isEmpty() || m_machines->hostAt(row).isEmpty()) {
-        m_pairing->giveUp(tr("This device is not signed in to Omnuv, so it cannot collect the "
-                             "login %1 published for itself.").arg(name));
-        return;
+int OmnuvSession::targetRow(const QVariantMap& target) const
+{
+    if (!signedIn() || target.value("project").toString() != m_projectId
+        || target.value("context").toString() != QString::number(m_context)
+        || target.value("id").toString().isEmpty()) return -1;
+    for (int row = 0; row < m_machines->rowCount(); ++row) {
+        if (m_machines->idAt(row) == target.value("id").toString()
+            && m_machines->hostAt(row) == target.value("host").toString()) return row;
     }
+    return -1;
+}
 
-    setStatus(tr("Pairing with %1…").arg(name));
+void OmnuvSession::finishPairing()
+{
+    m_pairing->cancel();
+    auto scope = m_pairScope;
+    m_pairScope = nullptr;
+    delete scope;
+    if (!m_claimDeployment.isEmpty() && signedIn()) {
+        auto reply = m_net.post(request(QStringLiteral("/v1/deployments/%1/stream-credentials/complete")
+            .arg(m_claimDeployment), true), QJsonDocument(QJsonObject{{"attempt_id",m_claimAttempt}}).toJson());
+        connect(reply, &QNetworkReply::finished, reply, &QObject::deleteLater);
+        // A lost acknowledgement is bounded by Core's non-renewable expiry.
+    }
+    m_claimDeployment.clear();
+    m_claimAttempt.clear();
+}
 
-    // No `?project=` — deliberately the same omission as refresh(), so the
-    // deployments and the machines come from the same project Core picks by
-    // default. A deployment in another project belongs to a machine that is
-    // not in the list this row came from.
-    QNetworkReply* reply = m_net.get(request(QStringLiteral("/v1/deployments") + projectQuery(), true));
-    connect(reply, &QNetworkReply::finished, this, [this, reply, row, pin, name, instanceId]() {
+void OmnuvSession::deliverPin(const QVariantMap& target, const QString& pin)
+{
+    finishPairing();
+    if (targetRow(target) < 0) return;
+    m_pairScope = new QObject(this);
+    m_claimAttempt = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    // End locally before the server's five-minute claim expires.
+    QTimer::singleShot(240000, m_pairScope, [this]() {
+        finishPairing();
+        emit pairingFailed(tr("Automatic pairing timed out. Pair by hand or try again."), QString());
+    });
+    // A refresh can remove the instance or change its address without changing project.
+    connect(m_machines, &MachineModel::countChanged, m_pairScope, [this, target]() {
+        if (targetRow(target) < 0) { finishPairing(); emit connectionContextChanged(); }
+    });
+    auto reply = m_net.get(request(QStringLiteral("/v1/deployments") + projectQuery(), true));
+    connect(m_pairScope, &QObject::destroyed, reply, [reply]() { reply->disconnect(); reply->abort(); reply->deleteLater(); });
+    connect(reply, &QNetworkReply::finished, m_pairScope, [this, reply, target, pin]() {
         reply->deleteLater();
-
+        if (targetRow(target) < 0) { finishPairing(); return; }
         if (reply->error() != QNetworkReply::NoError) {
-            m_pairing->giveUp(tr("Omnuv could not be reached to collect %1's login.").arg(name),
-                              reply->errorString());
-            return;
+            m_pairing->giveUp(tr("Omnuv could not be reached to collect this machine's login.")); return;
         }
-
-        // The buyer API's machine list carries no deployment, and its
-        // deployment list carries the machine — so the join is on this side,
-        // on the identifier both of them do carry.
-        QString deploymentId;
-        const QJsonArray deployments = QJsonDocument::fromJson(reply->readAll()).array();
-        for (const QJsonValue& value : deployments) {
-            const QJsonObject d = value.toObject();
-            if (d[QStringLiteral("instance_id")].toString() == instanceId) {
-                deploymentId = d[QStringLiteral("id")].toString();
-                break;
+        for (const auto& value : QJsonDocument::fromJson(reply->readAll()).array()) {
+            const auto d = value.toObject();
+            if (d["instance_id"].toString() == target.value("id").toString()) {
+                m_claimDeployment = d["id"].toString(); break;
             }
         }
-
-        if (deploymentId.isEmpty()) {
-            m_pairing->giveUp(tr("%1 was not set up from an Omnuv recipe, so it has no login to "
-                                 "hand over. Pair it by hand this once.").arg(name),
-                              tr("No deployment lists this machine."));
-            return;
+        if (m_claimDeployment.isEmpty()) {
+            m_pairing->giveUp(tr("This machine has no automatic pairing login. Pair it by hand.")); return;
         }
-
-        collectStreamLogin(row, deploymentId, pin, kLoginTries);
+        collectStreamLogin(target, pin, kLoginTries);
     });
 }
 
-void OmnuvSession::collectStreamLogin(int row, const QString& deploymentId,
-                                      const QString& pin, int triesLeft)
+void OmnuvSession::collectStreamLogin(const QVariantMap& target, const QString& pin, int triesLeft)
 {
-    const QString name = m_machines->nameAt(row);
-    const QString host = m_machines->hostAt(row);
-
-    QNetworkReply* reply = m_net.get(
-        request(QStringLiteral("/v1/deployments/%1/stream-credentials").arg(deploymentId), true));
-
-    connect(reply, &QNetworkReply::finished, this,
-            [this, reply, row, deploymentId, pin, triesLeft, name, host]() {
+    if (!m_pairScope || targetRow(target) < 0) { finishPairing(); return; }
+    auto reply = m_net.post(request(QStringLiteral("/v1/deployments/%1/stream-credentials/claim")
+        .arg(m_claimDeployment), true), QJsonDocument(QJsonObject{{"attempt_id",m_claimAttempt}}).toJson());
+    connect(m_pairScope, &QObject::destroyed, reply, [reply]() { reply->disconnect(); reply->abort(); reply->deleteLater(); });
+    connect(reply, &QNetworkReply::finished, m_pairScope, [this, reply, target, pin, triesLeft]() {
         reply->deleteLater();
-
+        if (targetRow(target) < 0) { finishPairing(); return; }
         const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        if (code != 200) {
-            m_pairing->giveUp(
-                code == 404
-                    ? tr("Omnuv no longer has a record of %1's setup, so there is no login to "
-                         "collect.").arg(name)
-                    : tr("Omnuv would not hand over %1's login.").arg(name),
-                tr("GET stream-credentials returned %1.")
-                    .arg(code == 0 ? reply->errorString() : QString::number(code)));
+        const auto o = QJsonDocument::fromJson(reply->readAll()).object();
+        const auto status = o["status"].toString();
+        // A timeout may follow a committed claim. Retry its SAME attempt id.
+        if ((code == 0 || code >= 500 || (code == 200 && status == "waiting")) && triesLeft > 1) {
+            QTimer::singleShot(kLoginIntervalMs, m_pairScope, [this, target, pin, triesLeft]() {
+                collectStreamLogin(target, pin, triesLeft - 1);
+            });
             return;
         }
-
-        const QJsonObject o = QJsonDocument::fromJson(reply->readAll()).object();
-        const QString status = o[QStringLiteral("status")].toString();
-        const QString user = o[QStringLiteral("user")].toString();
-
-        // Branch on Core's word, never on the sentence around it. These three
-        // are the whole vocabulary of that endpoint.
-        if (status == QStringLiteral("waiting")) {
-            // The machine has not published its login yet, which is what a
-            // machine still installing looks like. Ask again; say so meanwhile.
-            if (triesLeft > 1) {
-                setStatus(tr("%1 is still setting itself up…").arg(name));
-                QTimer::singleShot(kLoginIntervalMs, this,
-                                   [this, row, deploymentId, pin, triesLeft]() {
-                    collectStreamLogin(row, deploymentId, pin, triesLeft - 1);
-                });
-                return;
-            }
-            m_pairing->giveUp(tr("%1 has not finished setting itself up, so it has not published "
-                                 "the login this device needs. Try again in a few minutes, or "
-                                 "pair by hand.").arg(name),
-                              tr("stream-credentials answered waiting %1 times.").arg(kLoginTries));
+        if (code != 200 || status != "ready" || o["user"].toString().isEmpty() || o["password"].toString().isEmpty()) {
+            m_pairing->giveUp(tr("Automatic pairing is unavailable. You can pair this machine by hand."),
+                             tr("Credential claim returned %1 (%2).").arg(code).arg(status));
             return;
         }
-
-        if (status == QStringLiteral("delivered")) {
-            // Collected once already, by this device or another, and Core
-            // cannot reissue it: the password was cleared in the statement
-            // that returned it. Say what is actually left to do.
-            m_pairing->giveUp(
-                user.isEmpty()
-                    ? tr("%1's one-time login has already been collected, and it cannot be "
-                         "issued again. Pair from the device that collected it, or deploy the "
-                         "machine again to get a fresh one.").arg(name)
-                    : tr("%1's one-time login has already been collected, and it cannot be "
-                         "issued again. Pair from the device that collected it, or deploy the "
-                         "machine again. Its login name is %2.").arg(name, user),
-                tr("stream-credentials answered delivered. The machine still holds its own copy "
-                   "in /etc/onv/recipe-stream-credential."));
-            return;
-        }
-
-        // `ready`. The password exists in this reply and nowhere else, now and
-        // for good: it is not written to settings, not put in the credential
-        // store, not logged, and not held on any object. It goes from here
-        // into the one request that spends it.
-        const QString password = o[QStringLiteral("password")].toString();
-        if (status != QStringLiteral("ready") || user.isEmpty() || password.isEmpty()) {
-            m_pairing->giveUp(tr("Omnuv answered about %1's login in a way this device did not "
-                                 "understand.").arg(name),
-                              tr("stream-credentials answered \"%1\".").arg(status));
-            return;
-        }
-
-        setStatus(tr("Pairing with %1…").arg(name));
-        m_pairing->deliver(host, pin,
-                           // The name the machine will list this device under,
-                           // and the same one it was enrolled on the network
-                           // with, so one device reads as one device.
-                           QSysInfo::machineHostName(),
-                           // Which of the requests waiting on that machine is
-                           // ours: the address it saw us arrive from.
-                           m_tunnel->address(),
-                           user, password);
+        m_pairing->deliver(target.value("host").toString(), pin, QSysInfo::machineHostName(),
+                          m_tunnel->address(), o["user"].toString(), o["password"].toString());
     });
+}
+
+void OmnuvSession::watchPairing(QObject* object)
+{
+    auto manager = qobject_cast<ComputerManager*>(object);
+    if (!manager || m_pairManager == manager) return;
+    if (m_pairManager) disconnect(m_pairManager, nullptr, this, nullptr);
+    m_pairManager = manager;
+    connect(manager, &ComputerManager::pairingCompleted, this,
+        [this](NvComputer* computer, const QString& error) {
+            emit hostPairingFinished(computer->manualAddress.address(), error.isEmpty() ? QVariant() : QVariant(error));
+        });
 }
 
 int OmnuvSession::hostRowFor(QObject* computerManager, const QString& address) const
@@ -824,6 +1133,8 @@ int OmnuvSession::hostRowFor(QObject* computerManager, const QString& address) c
 
 bool OmnuvSession::shouldStartHidden()
 {
+    // Fixture launches always show their window and never consume first run.
+    if (m_fixture) return false;
     QSettings settings;
     const bool ranBefore = settings.value(QStringLiteral("omnuv/hasRunBefore"), false).toBool();
     settings.setValue(QStringLiteral("omnuv/hasRunBefore"), true);

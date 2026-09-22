@@ -17,6 +17,7 @@
 #include <QTimer>
 #include <QMutex>
 #include <QWaitCondition>
+#include "omnuv/pairingnetwork.h"
 
 class ComputerManager;
 
@@ -232,6 +233,7 @@ public:
     QString generatePinString();
 
     void pairHost(NvComputer* computer, QString pin);
+    Q_INVOKABLE void cancelPairing(const QString& address);
 
     void quitRunningApp(NvComputer* computer);
 
@@ -269,6 +271,7 @@ private:
 
     void startPollingComputer(NvComputer* computer);
 
+    QHash<QString, OmnuvPairingCancellation> m_PairingCancellation;
     StreamingPreferences* m_Prefs;
     int m_PollingRef;
     QReadWriteLock m_Lock;

@@ -34,7 +34,8 @@ namespace OmnuvCredentials
     // signs the person out on the next launch is worse than one that says so.
     bool store(const QString& token);
 
-    void clear();
+    // True only when both the native store and any legacy file are absent.
+    bool clear();
 
     // Whether this build uses the platform store rather than the file. The
     // About box and any support conversation should be able to say which.

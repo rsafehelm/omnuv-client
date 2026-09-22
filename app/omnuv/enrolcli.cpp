@@ -131,10 +131,14 @@ void OmnuvEnrol::start(const QStringList& args, QObject* parent)
     // Passing a key on the command line still works and still goes straight to
     // the tunnel: it is the path the installer takes, where nobody has signed
     // in yet.
-    auto* session = new OmnuvSession(parent);
-    OmnuvTunnel* tunnel = session->tunnel();
+    // A supplied key is an explicit legacy enrollment. Do not let an unrelated
+    // saved account's asynchronous identity read relabel or cancel that action.
+    auto* session = key.isEmpty() ? new OmnuvSession(parent) : nullptr;
+    OmnuvTunnel* tunnel = session ? session->tunnel() : new OmnuvTunnel(parent);
 
-    QObject::connect(tunnel, &OmnuvTunnel::changed, tunnel, [tunnel]() {
+    auto requested = std::make_shared<bool>(!key.isEmpty());
+    QObject::connect(tunnel, &OmnuvTunnel::changed, tunnel, [tunnel, requested]() {
+        if (!*requested) return;
         switch (tunnel->reading()) {
         case omnuv::Reading::Pass:
             // **A short wait, and it is for the library rather than for the
@@ -211,7 +215,18 @@ void OmnuvEnrol::start(const QStringList& args, QObject* parent)
     // yet — which is "not on your network", which is true and is not this
     // run's answer.
     if (key.isEmpty()) {
-        tunnel->join();
+        // A saved token is not yet a verified account/project. Wait for /me
+        // rather than asking the session to enroll against its default project.
+        if (session->signedIn() && session->accountEmail().isEmpty()) {
+            auto started = std::make_shared<bool>(false);
+            QObject::connect(session, &OmnuvSession::projectsChanged, tunnel, [session, tunnel, started, requested]() {
+                if (*started || session->accountEmail().isEmpty()) return;
+                *started = true;
+                *requested = true;
+                tunnel->join();
+            });
+            emitLine(QStringLiteral("state=waiting  reason=reading selected account and project"));
+        } else { *requested = true; tunnel->join(); }
     }
     else {
         tunnel->enrol(url, key);

@@ -1,0 +1,362 @@
+package main
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	netbird "github.com/netbirdio/netbird/client/embed"
+)
+
+type fakeClient struct {
+	start    func(context.Context) error
+	stop     func(context.Context) error
+	identity string
+	address  func() (string, string)
+}
+
+func (f *fakeClient) Start(ctx context.Context) error {
+	if f.start != nil {
+		return f.start(ctx)
+	}
+	return nil
+}
+func (f *fakeClient) Stop(ctx context.Context) error {
+	if f.stop != nil {
+		return f.stop(ctx)
+	}
+	return nil
+}
+func (f *fakeClient) Address() (string, string) {
+	if f.address != nil {
+		return f.address()
+	}
+	return "100.64.0.1", "fixture"
+}
+func (f *fakeClient) Identity() (string, error) { return f.identity, nil }
+
+func testTunnel(t *testing.T) *tunnel {
+	t.Helper()
+	tn := &tunnel{dir: t.TempDir()}
+	tn.factory = func(opts netbird.Options) (tunnelClient, error) {
+		identity := opts.PrivateKey
+		if opts.SetupKey != "" {
+			identity = "fixture-private-identity-" + opts.SetupKey
+			if err := writeIdentity(opts.ConfigPath, identity); err != nil {
+				return nil, err
+			}
+		}
+		return &fakeClient{identity: identity}, nil
+	}
+	t.Cleanup(func() { _ = tn.stop() })
+	return tn
+}
+
+func writeIdentity(path, identity string) error {
+	raw, _ := json.Marshal(map[string]string{"PrivateKey": identity})
+	return os.WriteFile(path, raw, 0o600)
+}
+
+func scope() membership {
+	return membership{"https://api.lab.omnuv.com", "00000000-0000-4000-8000-000000000001",
+		"00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003", "00000000-0000-4000-8000-000000000004"}
+}
+func payload(value any) string {
+	raw, _ := json.Marshal(value)
+	return base64.StdEncoding.EncodeToString(raw)
+}
+func viewOf(t *testing.T, tn *tunnel) membershipView {
+	t.Helper()
+	var view membershipView
+	if err := json.Unmarshal([]byte(answer(tn, "membership-v1")), &view); err != nil {
+		t.Fatal(err)
+	}
+	return view
+}
+func finish(t *testing.T, tn *tunnel) {
+	t.Helper()
+	tn.mu.Lock()
+	done := tn.done
+	tn.mu.Unlock()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("fixture start did not finish")
+	}
+}
+func enroll(t *testing.T, tn *tunnel) membershipView {
+	t.Helper()
+	request := enrolRequest{scope(), "https://netbird.lab.omnuv.com", "fixture-key", viewOf(t, tn).Revision}
+	if got := answer(tn, "enrol-v1 "+payload(request)); got != "ok" {
+		t.Fatal(got)
+	}
+	finish(t, tn)
+	view := viewOf(t, tn)
+	if !view.Verified || view.Membership == nil || *view.Membership != scope() {
+		t.Fatalf("unverified successful build: %+v", view)
+	}
+	return view
+}
+
+func TestMembershipEmptyAndLegacyAreExplicitlyDifferent(t *testing.T) {
+	tn := testTunnel(t)
+	empty := viewOf(t, tn)
+	if empty.Version != 1 || empty.Revision != "empty" || empty.HasIdentity || empty.Membership != nil {
+		t.Fatalf("empty: %+v", empty)
+	}
+	const secret = "never-return-this-private-key"
+	if err := writeIdentity(filepath.Join(tn.dir, "config.json"), secret); err != nil {
+		t.Fatal(err)
+	}
+	legacy := viewOf(t, tn)
+	if !legacy.HasIdentity || legacy.Verified || legacy.Membership != nil || legacy.Revision == "empty" {
+		t.Fatalf("legacy: %+v", legacy)
+	}
+	if strings.Contains(answer(tn, "membership-v1"), secret) {
+		t.Fatal("identity leaked into public IPC")
+	}
+	before, _ := os.ReadFile(filepath.Join(tn.dir, "config.json"))
+	if got := answer(tn, "resume-v1 "+payload(scope())); !strings.HasPrefix(got, "err membership-mismatch") {
+		t.Fatal(got)
+	}
+	after, _ := os.ReadFile(filepath.Join(tn.dir, "config.json"))
+	if string(before) != string(after) {
+		t.Fatal("unverified resume changed the identity")
+	}
+}
+
+func TestEnrollmentCASAndDurableIdentityBinding(t *testing.T) {
+	tn := testTunnel(t)
+	old := enroll(t, tn)
+	request := enrolRequest{scope(), "https://netbird.lab.omnuv.com", "new-key", "empty"}
+	if got := answer(tn, "enrol-v1 "+payload(request)); !strings.HasPrefix(got, "err membership-changed") {
+		t.Fatal(got)
+	}
+	if viewOf(t, tn).Revision != old.Revision {
+		t.Fatal("stale consent mutated membership")
+	}
+	restarted := &tunnel{dir: tn.dir}
+	if got := viewOf(t, restarted); !got.Verified || got.Revision != old.Revision {
+		t.Fatalf("restart lost binding: %+v", got)
+	}
+	if err := writeIdentity(filepath.Join(tn.dir, "config.json"), "external-different-private-key"); err != nil {
+		t.Fatal(err)
+	}
+	changed := viewOf(t, tn)
+	if changed.Verified || changed.Membership != nil || changed.Revision == old.Revision {
+		t.Fatal("stale metadata labeled a different identity")
+	}
+}
+
+func TestResumeAndStopRequireExactMembership(t *testing.T) {
+	tn := testTunnel(t)
+	old := enroll(t, tn)
+	wrong := scope()
+	wrong.ProjectID = "00000000-0000-4000-8000-000000000099"
+	for _, command := range []string{"resume-v1 " + payload(wrong), "stop-v1 " + payload(stopRequest{wrong, old.Revision})} {
+		if got := answer(tn, command); !strings.HasPrefix(got, "err ") {
+			t.Fatal(got)
+		}
+	}
+	if state, _ := tn.snapshot(); state != stateRunning {
+		t.Fatal("wrong scope stopped the active tunnel")
+	}
+	if got := answer(tn, "stop-v1 "+payload(stopRequest{scope(), old.Revision})); got != "ok" {
+		t.Fatal(got)
+	}
+	if !viewOf(t, tn).Verified {
+		t.Fatal("stop erased an identity before server revocation")
+	}
+	if got := answer(tn, "resume-v1 "+payload(scope())); got != "ok" {
+		t.Fatal(got)
+	}
+	finish(t, tn)
+	if state, _ := tn.snapshot(); state != stateRunning {
+		t.Fatal("matching identity did not resume")
+	}
+}
+
+func TestPendingEnrollmentIsJournaledAndCanceledStartCannotRevive(t *testing.T) {
+	tn := testTunnel(t)
+	started := make(chan struct{})
+	var stops atomic.Int32
+	tn.factory = func(opts netbird.Options) (tunnelClient, error) {
+		if err := writeIdentity(opts.ConfigPath, "new-pending-identity"); err != nil {
+			return nil, err
+		}
+		return &fakeClient{identity: "new-pending-identity", start: func(ctx context.Context) error { close(started); <-ctx.Done(); return nil },
+			stop: func(context.Context) error { stops.Add(1); return nil }}, nil
+	}
+	if err := tn.enrolMembership(enrolRequest{scope(), "https://netbird.lab.omnuv.com", "key", "empty"}); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	pending := viewOf(t, tn)
+	if !pending.Pending || pending.Verified || pending.Membership == nil || pending.Revision == "empty" {
+		t.Fatalf("pending intent missing: %+v", pending)
+	}
+	if err := tn.resumeMembership(scope()); err == nil {
+		t.Fatal("pending identity was treated as verified")
+	}
+	if err := tn.stopMembership(stopRequest{scope(), pending.Revision}); err != nil {
+		t.Fatal(err)
+	}
+	if state, _ := tn.snapshot(); state != stateStopped || stops.Load() != 1 {
+		t.Fatal("old completion revived a stopped tunnel")
+	}
+	if got := viewOf(t, tn); got.Verified {
+		t.Fatal("canceled start published verified membership")
+	}
+}
+
+func TestOverlappingEnrollmentCannotPublishAnOlderMembership(t *testing.T) {
+	tn := testTunnel(t)
+	var calls atomic.Int32
+	tn.factory = func(opts netbird.Options) (tunnelClient, error) {
+		if err := writeIdentity(opts.ConfigPath, opts.SetupKey); err != nil {
+			return nil, err
+		}
+		if calls.Add(1) == 1 {
+			return &fakeClient{identity: opts.SetupKey, start: func(ctx context.Context) error { <-ctx.Done(); return errors.New("old failure") }}, nil
+		}
+		return &fakeClient{identity: opts.SetupKey}, nil
+	}
+	if err := tn.enrolMembership(enrolRequest{scope(), "https://netbird.lab.omnuv.com", "first", "empty"}); err != nil {
+		t.Fatal(err)
+	}
+	second := scope()
+	second.DeviceID = "00000000-0000-4000-8000-000000000098"
+	if err := tn.enrolMembership(enrolRequest{second, "https://netbird.lab.omnuv.com", "second", viewOf(t, tn).Revision}); err != nil {
+		t.Fatal(err)
+	}
+	finish(t, tn)
+	if got := viewOf(t, tn); !got.Verified || got.Membership == nil || *got.Membership != second {
+		t.Fatalf("older callback overwrote replacement: %+v", got)
+	}
+}
+
+func TestDeletionFailureAndCorruptMetadataFailClosed(t *testing.T) {
+	tn := testTunnel(t)
+	state := filepath.Join(tn.dir, "state.json")
+	if err := os.Mkdir(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, "unremovable-child"), []byte("fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var called atomic.Bool
+	tn.factory = func(netbird.Options) (tunnelClient, error) { called.Store(true); return &fakeClient{}, nil }
+	if err := tn.start("https://netbird.lab.omnuv.com", "key"); err == nil || called.Load() {
+		t.Fatal("failed identity cleanup was ignored")
+	}
+	if err := os.WriteFile(filepath.Join(tn.dir, "membership.json"), []byte("corrupt"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := answer(tn, "membership-v1"); !strings.HasPrefix(got, "err ") {
+		t.Fatal(got)
+	}
+}
+
+func TestMalformedVersionedRequestsCannotMutate(t *testing.T) {
+	tn := testTunnel(t)
+	for _, command := range []string{"enrol-v1 nonsense", "resume-v1 " + payload(map[string]string{"unknown": "field"}), "stop-v1 " + payload(stopRequest{}), "membership-v1 extra", "enrol-v1 " + strings.Repeat("A", 17000)} {
+		if got := answer(tn, command); !strings.HasPrefix(got, "err ") {
+			t.Fatal(got)
+		}
+		if viewOf(t, tn).Revision != "empty" {
+			t.Fatal("malformed request changed the identity")
+		}
+	}
+}
+
+func TestStartFailureCleansUpAndCannotClaimVerifiedMembership(t *testing.T) {
+	tn := testTunnel(t)
+	var stops atomic.Int32
+	tn.factory = func(opts netbird.Options) (tunnelClient, error) {
+		if err := writeIdentity(opts.ConfigPath, "failed-start-identity"); err != nil {
+			return nil, err
+		}
+		return &fakeClient{identity: "failed-start-identity", start: func(context.Context) error { return errors.New("fixture startup failed") },
+			stop: func(context.Context) error { stops.Add(1); return nil }}, nil
+	}
+	if err := tn.enrolMembership(enrolRequest{scope(), "https://netbird.lab.omnuv.com", "key", "empty"}); err != nil {
+		t.Fatal(err)
+	}
+	finish(t, tn)
+	if state, why := tn.snapshot(); state != stateFailed || !strings.Contains(why, "fixture startup failed") || stops.Load() != 1 {
+		t.Fatalf("startup failure or cleanup disappeared: %d %q %d", state, why, stops.Load())
+	}
+	if got := viewOf(t, tn); got.Verified || !got.Pending {
+		t.Fatal("failed start must retain only unverified recovery intent")
+	}
+}
+
+func TestStopFailurePreservesIdentityAndPreventsReplacement(t *testing.T) {
+	tn := testTunnel(t)
+	old := enroll(t, tn)
+	tn.mu.Lock()
+	tn.client.(*fakeClient).stop = func(context.Context) error { return errors.New("fixture stop failed") }
+	tn.mu.Unlock()
+	if err := tn.enrolMembership(enrolRequest{scope(), "https://netbird.lab.omnuv.com", "replacement", old.Revision}); err == nil {
+		t.Fatal("an unproven stop allowed replacing an active identity")
+	}
+	if now := viewOf(t, tn); now.Revision != old.Revision || !now.Verified {
+		t.Fatal("failed stop damaged old identity")
+	}
+}
+
+func TestMembershipStateIsOneCoherentSnapshotAcrossReplacement(t *testing.T) {
+	tn := testTunnel(t)
+	old := enroll(t, tn)
+	if old.State != stateRunning || old.Address == "" {
+		t.Fatalf("missing versioned state/address: %+v", old)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	tn.mu.Lock()
+	tn.client.(*fakeClient).address = func() (string, string) { close(entered); <-release; return "old-address", "old" }
+	tn.mu.Unlock()
+	result := make(chan string, 1)
+	go func() { result <- answer(tn, "membership-v1") }()
+	<-entered
+	newScope := scope()
+	newScope.ProjectID = "00000000-0000-4000-8000-000000000077"
+	if err := tn.enrolMembership(enrolRequest{newScope, "https://netbird.lab.omnuv.com", "new-key", old.Revision}); err != nil {
+		t.Fatal(err)
+	}
+	finish(t, tn)
+	close(release)
+	if got := <-result; !strings.HasPrefix(got, "err membership changed") {
+		t.Fatalf("mixed old scope and new state: %s", got)
+	}
+	if view := viewOf(t, tn); view.State != stateRunning || *view.Membership != newScope {
+		t.Fatalf("new coherent snapshot wrong: %+v", view)
+	}
+}
+
+func TestRunningLibraryIdentityMustMatchPersistedIdentity(t *testing.T) {
+	tn := testTunnel(t)
+	var stopped atomic.Bool
+	tn.factory = func(opts netbird.Options) (tunnelClient, error) {
+		if err := writeIdentity(opts.ConfigPath, "different-disk-identity"); err != nil {
+			return nil, err
+		}
+		return &fakeClient{identity: "actual-library-identity", stop: func(context.Context) error { stopped.Store(true); return nil }}, nil
+	}
+	if err := tn.enrolMembership(enrolRequest{scope(), "https://netbird.lab.omnuv.com", "key", "empty"}); err != nil {
+		t.Fatal(err)
+	}
+	finish(t, tn)
+	if state, why := tn.snapshot(); state != stateFailed || !strings.Contains(why, "stored identity differs") || !stopped.Load() {
+		t.Fatalf("false binding was not stopped: %d %q", state, why)
+	}
+	if viewOf(t, tn).Verified {
+		t.Fatal("disk key was falsely bound to the running library's scope")
+	}
+}

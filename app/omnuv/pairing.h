@@ -60,6 +60,7 @@ public:
     // Give up before the machine was ever asked — for the cases OmnuvSession
     // decides, so that every ending of a pairing attempt arrives on one
     // signal. The same shape as OmnuvTunnel::giveUp().
+    void cancel();
     void giveUp(const QString& why, const QString& detail = QString());
 
 signals:
@@ -102,5 +103,6 @@ private:
     // buyer uses. Never a number: the number goes in `detail`.
     static QString sentenceFor(QNetworkReply* reply, const QString& apiError);
 
+    QObject* m_scope = nullptr;
     QNetworkAccessManager* m_net;
 };

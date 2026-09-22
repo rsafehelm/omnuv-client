@@ -40,6 +40,9 @@ public:
     void setEnabled(bool on);
     bool supported() const;
 
+private:
+    const bool m_fixture = qEnvironmentVariableIsSet("OMNUV_FIXTURE_URL");
+
 signals:
     void changed();
 };

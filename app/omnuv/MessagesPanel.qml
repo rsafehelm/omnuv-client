@@ -4,8 +4,8 @@
 // recent list. The messages are Core's operational events for the project in
 // view, in Core's own sentences; the event's `detail` is never drawn, because
 // it is a record for the console and not a sentence for a person. What this
-// device itself last reported (`Omnuv.status`) leads the list, marked as this
-// device's, since it is the one message Core cannot know.
+// device itself last reported (`Omnuv.status`) and its decoder capability lead
+// the list, since Core cannot know either of them.
 //
 // Severity is a word and a tone, never a tone alone.
 
@@ -21,6 +21,12 @@ Rectangle {
 
     property double now: Date.now()
     property bool open: false
+    property bool hardwareDecoderUnavailable: false
+    property bool runningXWayland: false
+
+    readonly property string hardwareDecoderMessage: runningXWayland
+        ? qsTr("Hardware video decoding is unavailable on XWayland. Streaming may be slower. Use native Wayland or X11 for hardware decoding.")
+        : qsTr("No working hardware video decoder was detected on this device. Streaming may be slower; check the video decoder setting and graphics driver.")
 
     readonly property var read: Omnuv.estate.events
     readonly property var rows: read.data !== undefined ? read.data : []
@@ -32,7 +38,7 @@ Rectangle {
                 n++
             }
         }
-        return n
+        return n + (hardwareDecoderUnavailable ? 1 : 0)
     }
 
     function tone(severity) {
@@ -110,7 +116,8 @@ Rectangle {
                 Label {
                     Layout.fillWidth: true
                     visible: !panel.open
-                    text: Omnuv.status !== "" ? Omnuv.status
+                    text: panel.hardwareDecoderUnavailable ? panel.hardwareDecoderMessage
+                          : Omnuv.status !== "" ? Omnuv.status
                           : panel.read.state === "loading" ? qsTr("Reading…")
                           : panel.read.state === "unavailable" ? panel.read.problem
                           : panel.newest === null ? qsTr("Nothing to report")
@@ -119,7 +126,8 @@ Rectangle {
                     elide: Label.ElideRight
                     font.family: Theme.textFamily
                     font.pixelSize: Theme.bodySize
-                    opacity: panel.newest === null && panel.read.state !== "unavailable" ? 0.6 : 1
+                    opacity: !panel.hardwareDecoderUnavailable && panel.newest === null
+                             && panel.read.state !== "unavailable" ? 0.6 : 1
                 }
 
                 Item {
@@ -128,7 +136,7 @@ Rectangle {
                 }
 
                 Label {
-                    visible: !panel.open && panel.newest !== null
+                    visible: !panel.open && panel.newest !== null && !panel.hardwareDecoderUnavailable
                     text: panel.newest ? Estate.ago(panel.newest.at, panel.now) : ""
                     font.family: Theme.textFamily
                     font.pixelSize: Theme.captionSize
@@ -159,6 +167,36 @@ Rectangle {
 
             header: Column {
                 width: list.width
+
+                RowLayout {
+                    width: parent.width
+                    visible: panel.hardwareDecoderUnavailable
+                    height: visible ? Math.max(28, decoderWarning.implicitHeight + 2 * Theme.spacing) : 0
+                    spacing: Theme.spacingLoose
+
+                    Pill {
+                        Layout.preferredWidth: 76
+                        Layout.alignment: Qt.AlignTop
+                        Layout.topMargin: Theme.spacing
+                        tone: Theme.fillCaution
+                        dot: true
+                        text: qsTr("warning")
+                    }
+                    Label {
+                        id: decoderWarning
+                        Layout.fillWidth: true
+                        text: panel.hardwareDecoderMessage
+                        wrapMode: Text.WordWrap
+                        font.family: Theme.textFamily
+                        font.pixelSize: Theme.bodySize
+                    }
+                    Button {
+                        Layout.alignment: Qt.AlignTop
+                        flat: true
+                        text: qsTr("Help")
+                        onClicked: Qt.openUrlExternally("https://github.com/moonlight-stream/moonlight-docs/wiki/Fixing-Hardware-Decoding-Problems")
+                    }
+                }
 
                 Label {
                     width: parent.width
@@ -194,7 +232,8 @@ Rectangle {
 
                 Label {
                     width: parent.width
-                    visible: panel.read.state === "current" && panel.rows.length === 0 && Omnuv.status === ""
+                    visible: panel.read.state === "current" && panel.rows.length === 0
+                             && Omnuv.status === "" && !panel.hardwareDecoderUnavailable
                     text: qsTr("Nothing to report")
                     font.family: Theme.textFamily
                     font.pixelSize: Theme.bodySize

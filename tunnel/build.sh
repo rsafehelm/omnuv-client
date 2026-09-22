@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds `onvtunneld`, the privileged half of the private network.
 #
-#     ./tunnel/build.sh            windows + linux, into tunnel/dist/
+#     ./tunnel/build.sh            windows + linux + macOS, into tunnel/dist/
 #     ./tunnel/build.sh windows    one of them
 #
 # **Everything happens in a container on whatever machine you are sitting at.**
@@ -21,6 +21,7 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 out="$here/dist"; mkdir -p "$out"
 targets="${1:-all}"
+case "$targets" in all|windows|linux|macos) ;; *) echo "Unknown tunnel target: $targets" >&2; exit 2 ;; esac
 
 run() { docker run --rm -v "$here:/w" -v omnuv_go_mod:/go/pkg/mod -w /w golang:1.26 bash -c "$1"; }
 
@@ -61,6 +62,16 @@ fi
 if [ "$targets" = all ] || [ "$targets" = linux ]; then
     run 'CGO_ENABLED=0 go build -ldflags="-s -w" -o dist/onvtunneld .'
     echo "  linux    dist/onvtunneld      $(du -h "$out/onvtunneld" | cut -f1)"
+fi
+
+# macOS lab artifacts use the existing Unix IPC implementation and an explicit
+# private ONV_TUNNEL_DIR. Native service provisioning is owned by Ansible.
+if [ "$targets" = all ] || [ "$targets" = macos ]; then
+    for pair in x64:amd64 arm64:arm64; do
+        mac="${pair%%:*}"; goarch="${pair##*:}"
+        run "CGO_ENABLED=0 GOOS=darwin GOARCH=$goarch go build -ldflags=\"-s -w\" -o dist/macos/$mac/onvtunneld ."
+        echo "  macos    dist/macos/$mac/onvtunneld  $(du -h "$out/macos/$mac/onvtunneld" | cut -f1)"
+    done
 fi
 
 ls "$out" | sed 's/^/  /'

@@ -23,6 +23,8 @@ import QtQuick.Window
 
 import ComputerModel 1.0
 import ComputerManager 1.0
+import StreamingPreferences 1.0
+import SystemProperties 1.0
 
 import Omnuv 1.0
 import "estate.js" as Estate
@@ -30,134 +32,63 @@ import "estate.js" as Estate
 Item {
     id: root
     focus: true
+    Keys.onEscapePressed: function(event) {
+        if (activeTarget || pendingTarget || delivering) root.cancelConnection()
+        else event.accepted = false
+    }
 
     // The toolbar shows this, so it should say where a person actually is.
     objectName: Omnuv.signedIn ? qsTr("Machines") : qsTr("Sign in to Omnuv")
 
-    // The machine whose Connect was pressed while its host was still being
-    // added. -1 when nothing is waiting.
-    property int pendingRow: -1
-
-    // Set by *Choose what to stream* just before the same `connectTo` the Play
-    // button calls, and consumed by `openHost`. One slot rather than a
-    // parameter threaded through `connectTo`, `openHost`, `settle` and
-    // `onComputerAddCompleted`, and safe for the same reason `pendingRow` is
-    // one slot: there is at most one connect in flight.
+    // One operation at a time, identified independently of model row order.
+    property var activeTarget: null
+    property var pendingTarget: null
+    property bool delivering: false
     property bool chooseApp: false
-
-    StackView.onActivated: {
-        Omnuv.refresh(true)
-        Omnuv.tunnel.watch(true)
-    }
-    StackView.onDeactivating: Omnuv.tunnel.watch(false)
-
-    // Upstream's own list of hosts. We do not keep our own: whether a host is
-    // reachable and whether it is paired are things it already knows.
+    property string justPaired: ""
+    property var launchApps: null
     property ComputerModel hosts: createHosts()
+
+    StackView.onActivated: { Omnuv.refresh(true); Omnuv.tunnel.watch(true) }
+    StackView.onDeactivating: Omnuv.tunnel.watch(false)
 
     function createHosts() {
         var model = Qt.createQmlObject('import ComputerModel 1.0; ComputerModel {}', root, '')
         model.initialize(ComputerManager)
-        // **This line was missing, and its absence was a live defect.**
-        // `PcView.createModel()` connects it (`app/gui/PcView.qml:80`) and we
-        // did not, so an Omnuv pairing that failed said nothing at all and one
-        // that succeeded left its dialog on screen for ever. Everything below
-        // about delivering a PIN would have been a better-dressed version of
-        // the same bug without it.
-        model.pairingCompleted.connect(pairingFinished)
+        Omnuv.watchPairing(ComputerManager)
         return model
     }
 
-    // Upstream's `pairingComplete`, with the one thing this application can do
-    // that upstream cannot: carry straight on. `error` is `undefined` on
-    // success — `ComputerModel::handlePairingCompleted` turns an empty string
-    // into an empty QVariant (`app/gui/computermodel.cpp:225`).
-    function pairingFinished(error) {
-        // `ComputerManager` has one pairing signal for every host, so take the
-        // attempt this view started and put it down in the same breath. A
-        // second completion that is nobody's — the command line's, say — must
-        // not re-enter a machine this one finished with.
-        var row = pairing.row
-        var index = pairing.hostIndex
-        pairing.row = -1
-        pairing.hostIndex = -1
-        delivering = false
-        if (row < 0) {
-            return
-        }
-
+    function cancelConnection() {
+        if (delivering) ComputerManager.cancelPairing(pairing.host)
+        settle.stop()
+        appWait.stop()
+        activeTarget = null
+        chooseApp = false
         pairing.close()
-
-        if (error !== undefined) {
-            message.show(error)
-            return
-        }
-
-        // The model's `paired` role is read from `NvComputer::pairState`, and
-        // nothing refreshes it when pairing completes — it catches up on the
-        // next poll, seconds later. Re-entering `openHost` before then would
-        // see an unpaired host and mint a second PIN, so tell it what we
-        // already know. One shot: `openHost` clears this as it reads it, so a
-        // host that is genuinely unpaired later is paired again properly.
-        justPaired = index
-        openHost(row)
+        Omnuv.finishPairing()
+        // Keep slots until the cancelled pairing worker or pending add reports
+        // completion, so its callback cannot finish a newer attempt.
     }
 
-    // The host index whose pairing has just completed, for exactly one call to
-    // `openHost`. -1 the rest of the time.
-    property int justPaired: -1
+    function validTarget(target, starting) {
+        if (!target || (!starting && !activeTarget) || Omnuv.targetRow(target) < 0) {
+            cancelConnection()
+            return false
+        }
+        return true
+    }
 
-    // True from the moment a code is minted until that attempt is over, one
-    // way or the other.
-    //
-    // **The happy path shows nothing, which is an invitation to press Play
-    // again.** A second press would mint a second code — which the machine
-    // refuses, because a pairing for this client is already under way — and
-    // would ask Core a second time for a login it can only issue once, so the
-    // second attempt would report "already collected" over the top of a first
-    // one that was working. Nothing about that is recoverable by the person,
-    // and all of it is avoided by not starting twice.
-    property bool delivering: false
-
-    // A ComputerModel is a QAbstractListModel, which QML cannot index into
-    // directly. A Repeater over it can, and costs one invisible item per host.
     Repeater {
         id: hostProbe
         model: hosts
         delegate: Item {
             visible: false
-            readonly property string hostName: model.name
             readonly property bool hostOnline: model.online
             readonly property bool hostPaired: model.paired
-            // **The third state, and it is not a shade of offline.**
-            // `ComputerModel` has carried `StatusUnknownRole` all along and we
-            // were dropping it, which made "I could not reach this to ask"
-            // render exactly like "I asked and it said no". `docs/client-widget.md`
-            // forbids that in its own words: a check that could not run is
-            // `unknown`, not `fail`. Telling a buyer their machine is down when
-            // the truth is that we cannot see it sends them to fix the wrong
-            // thing.
             readonly property bool hostStatusUnknown: model.statusUnknown
         }
     }
-
-    // The applications one machine publishes, while a launch is in flight.
-    //
-    // `AppModel` is upstream's, initialised exactly as `AppView.qml:64-69`
-    // does it, and it is the only thing in this program that can build a
-    // `Session`: `app/main.cpp:949` registers `Session` as uncreatable from
-    // QML, and `AppModel::createSessionForApp()` is the one factory
-    // (`app/gui/appmodel.cpp:97`). So this is not a convenience — it is the
-    // supported way in.
-    //
-    // `showHiddenGames` is true, unlike `AppView`'s default, because a hidden
-    // application is still the one this machine is sold as streaming. Hiding
-    // is a preference about a grid we no longer show, and letting it decide
-    // whether Play works would be a setting silently breaking a product
-    // promise. The same value goes to `initialize()` and is therefore the same
-    // index space `createSessionForApp()` reads.
-    property var launchApps: null
-
     Repeater {
         id: appProbe
         delegate: Item {
@@ -165,361 +96,241 @@ Item {
             readonly property string appName: model.name
         }
     }
-
-    // Upstream matches an application by name lowercased — `CliStartStream`'s
-    // `getAppIndex()`, `app/cli/startstream.cpp:146`. Same rule here, so a
-    // machine reachable from the shell is reachable from the card.
+    function hostIndexFor(host) { return Omnuv.hostRowFor(ComputerManager, host) }
     function appIndexFor(name) {
-        var want = name.toLowerCase()
         for (var i = 0; i < appProbe.count; i++) {
             var item = appProbe.itemAt(i)
-            if (item && item.appName.toLowerCase() === want) {
-                return i
-            }
+            if (item && item.appName.toLowerCase() === name.toLowerCase()) return i
         }
         return -1
     }
 
-    // Found by the exact address we gave it.
-    //
-    // Two earlier keys were wrong in different ways. Matching on the host's
-    // *name* fails in the only window that matters — right after
-    // `addNewHostManually` the entry exists but has not been polled, so it has
-    // no name yet. Matching on the model's `details` string fails worse:
-    // `ComputerModel::data` builds that from `tr("Online")`, `tr("Paired")` and
-    // friends, so it is localised prose, and a substring search in it matches
-    // 10.200.1.5 against a host at 10.200.1.50.
-    //
-    // `Omnuv.hostRowFor` compares `NvComputer::manualAddress` — structured,
-    // exact, persisted, and never translated. See its comment for why the row
-    // it returns is the same row this view indexes.
-    function hostIndexFor(host) {
-        return Omnuv.hostRowFor(ComputerManager, host)
-    }
-
     Connections {
         target: ComputerManager
-
         function onComputerAddCompleted(success, detectedPortBlocking) {
-            if (root.pendingRow < 0) {
-                return
-            }
-            var row = root.pendingRow
-            root.pendingRow = -1
-
+            if (!root.pendingTarget) return
+            var target = root.pendingTarget
+            root.pendingTarget = null
+            if (!root.validTarget(target)) return
             if (!success) {
-                // **Upstream tells us why, and we used to throw it away.**
-                // `detectedPortBlocking` means this device's own network is
-                // blocking the streaming ports — a problem with the cafe wifi,
-                // not with the machine. Reporting that as "your machine has not
-                // finished starting" sends a person to stare at a console that
-                // is working perfectly.
-                if (detectedPortBlocking) {
-                    message.show(qsTr("This network is blocking the ports streaming needs.\n\n" +
-                                      "%1 is reachable, but this device cannot open a stream to it " +
-                                      "from here. A different network, or a phone hotspot, will.")
-                                 .arg(Omnuv.machines.nameAt(row)))
-                    return
-                }
-
-                // Otherwise there are two causes and this device cannot tell
-                // them apart: it is not on the Client VPN, or the machine is up
-                // but nothing is streaming on it. Say both rather than guess.
-                message.show(qsTr("No streaming host answered at %1.\n\n" +
-                                  "Either this device is not on your Client VPN, or the machine " +
-                                  "has not finished setting itself up. Its console says which.")
-                             .arg(Omnuv.machines.hostAt(row)))
+                root.activeTarget = null
+                message.show(detectedPortBlocking
+                    ? qsTr("This network is blocking the ports streaming needs. Try a different network.")
+                    : qsTr("No streaming host answered at %1. Check your Client VPN and the machine's console.").arg(target.host))
                 return
             }
-            root.openHost(row)
+            root.openHost(target)
         }
     }
 
-    // Both the entry and its state lag the signal that created it: the host is
-    // added, then polled, and only then does it have a name or count as online.
-    // Twice now that lag has looked like a broken machine — first the name was
-    // missing, then `online` was false on a host that had just answered. So
-    // wait for it rather than judging it on the first look.
     Timer {
         id: settle
-        property int row: -1
+        property var target: null
         property int tries: 0
         interval: 500
         repeat: true
         onTriggered: {
-            var index = root.hostIndexFor(Omnuv.machines.hostAt(row))
+            if (!root.validTarget(target)) return
+            var index = root.hostIndexFor(target.host)
             var item = index >= 0 ? hostProbe.itemAt(index) : null
             if (item && item.hostOnline) {
                 stop()
-                root.openHost(row)
-            }
-            else if (++tries > 30) {
+                root.openHost(target)
+            } else if (++tries > 30) {
                 stop()
-                // Three answers, not two. "We asked and it said no" and "we
-                // could not ask" send a person to different places, so they get
-                // different sentences.
-                if (item && item.hostStatusUnknown) {
-                    message.show(qsTr("This device cannot tell whether %1 is up.\n\n" +
-                                      "That is usually the Client VPN rather than the machine: " +
-                                      "nothing answered, so there is nothing to report about it " +
-                                      "either way.")
-                                 .arg(Omnuv.machines.nameAt(row)))
-                }
-                else {
-                    message.show(qsTr("%1 is not answering yet. A machine takes a few minutes to " +
-                                      "finish setting itself up after it starts.")
-                                 .arg(Omnuv.machines.nameAt(row)))
-                }
+                root.activeTarget = null
+                message.show(item && item.hostStatusUnknown
+                    ? qsTr("This device cannot tell whether %1 is up. Check your Client VPN.").arg(target.host)
+                    : qsTr("%1 is not answering yet. It may still be starting.").arg(target.host))
             }
         }
-        function watch(r) {
-            row = r
-            tries = 0
-            start()
-        }
+        function watch(t) { target = t; tries = 0; start() }
     }
 
-    // Everything Connect does, once the host is known to be there and awake.
-    function openHost(row) {
-        var index = hostIndexFor(Omnuv.machines.hostAt(row))
+    function openHost(target) {
+        if (!validTarget(target)) return
+        var row = Omnuv.targetRow(target)
+        var index = hostIndexFor(target.host)
         var item = index >= 0 ? hostProbe.itemAt(index) : null
-        if (!item || !item.hostOnline) {
-            settle.watch(row)
-            return
-        }
-
-        var alreadyPaired = (index === justPaired)
-        justPaired = -1
-
+        if (!item || !item.hostOnline) { settle.watch(target); return }
+        var alreadyPaired = target.host === justPaired
+        justPaired = ""
         if (!item.hostPaired && !alreadyPaired) {
-            if (delivering) {
-                // A code is already out on this machine and it is waiting for
-                // that one. Show it again rather than minting a second, which
-                // the machine refuses — Sunshine answers 409 to a second
-                // pairing from the same client — and which would ask Core for
-                // a login it can only ever issue once.
-                if (pairing.why !== "") {
-                    pairing.open()
-                }
-                return
-            }
-
-            // **The PIN is made here and handed over for them.**
-            //
-            // It used to say that this could not be done for a person, because
-            // the machine has never seen the number. That was true of a machine
-            // nobody vouches for; it is not true of one the marketplace built.
-            // The machine mints a single-use login for its own streaming host,
-            // Core holds it for its owner, and this device spends it — so the
-            // number still exists and nobody reads it off a screen.
-            //
-            // The order is the machine's rather than ours: `pairComputer` has
-            // to go first, because the identifier a PIN is addressed to does
-            // not exist until this client's pairing request is waiting on the
-            // machine. See `app/omnuv/pairing.cpp`.
+            if (delivering) return
             var pin = hosts.generatePinString()
-            hosts.pairComputer(index, pin)
-
             pairing.machine = Omnuv.machines.nameAt(row)
-            pairing.host = Omnuv.machines.hostAt(row)
+            pairing.host = target.host
             pairing.pin = pin
-            pairing.row = row
-            pairing.hostIndex = index
+            pairing.target = target
             pairing.why = ""
             pairing.detail = ""
-
-            // Opens nothing on the happy path. `Omnuv.pairingFailed` is what
-            // brings the dialog up, which is what makes it a fallback rather
-            // than a step.
             delivering = true
-            Omnuv.deliverPin(row, pin)
+            hosts.pairComputer(index, pin)
+            Omnuv.deliverPin(target, pin)
             return
         }
-
-        if (root.chooseApp) {
-            root.chooseApp = false
-            openAppGrid(row)
-            return
-        }
-        launch(row)
+        if (chooseApp) { chooseApp = false; openAppGrid(target); return }
+        launch(target)
     }
 
-    // Upstream's grid, which used to be where Play landed and is now where
-    // *Choose what to stream* lands. Unchanged, in upstream's style, inside
-    // upstream's chrome: it is upstream's screen and restyling it would be a
-    // sixth file in the change budget for a screen a person opens once.
-    function openAppGrid(row) {
-        var index = hostIndexFor(Omnuv.machines.hostAt(row))
+    function pairingFinished(address, error) {
+        if (!delivering || address !== pairing.host) return
+        var target = pairing.target
+        pairing.target = null
+        delivering = false
+        pairing.close()
+        Omnuv.finishPairing()
+        if (!validTarget(target)) return
+        if (error !== undefined) {
+            activeTarget = null
+            message.show(error)
+            return
+        }
+        justPaired = address
+        openHost(target)
+    }
+
+    function openAppGrid(target) {
+        if (!validTarget(target)) return
+        var index = hostIndexFor(target.host)
+        if (index < 0) { cancelConnection(); return }
         var component = Qt.createComponent("qrc:/gui/AppView.qml")
         var appView = component.createObject(stackView, {
-                                                 "computerIndex": index,
-                                                 "objectName": Omnuv.machines.nameAt(row)
-                                             })
+            "computerIndex": index,
+            "objectName": Omnuv.machines.nameAt(Omnuv.targetRow(target))
+        })
+        activeTarget = null
         stackView.push(appView)
     }
 
-    // Ask the machine what it publishes, then stream the one Core named.
-    //
-    // The list is not there when the host first comes online — upstream polls
-    // serverinfo and the application list separately, which is why
-    // `CliStartStream` sits in `StateSeekApp` waiting for an
-    // `Event::ComputerUpdated` (`app/cli/startstream.cpp:96-112`) rather than
-    // reading it straight away. So this waits the same way `settle` waits for
-    // the host, and for the same reason.
-    function launch(row) {
-        var index = hostIndexFor(Omnuv.machines.hostAt(row))
-        if (index < 0) {
-            // Cannot happen from `openHost`, which has already found it. If it
-            // ever does, the grid is the honest fallback rather than a guess.
-            openAppGrid(row)
-            return
-        }
-
-        if (launchApps) {
-            // Dropped from the probe before it is destroyed, because
-            // `destroy()` is deferred to the end of the event loop and a
-            // Repeater holding a model that is about to go is a crash looking
-            // for a busy machine.
-            appProbe.model = null
-            launchApps.destroy()
-        }
+    function launch(target) {
+        if (!validTarget(target)) return
+        var index = hostIndexFor(target.host)
+        if (index < 0) { cancelConnection(); return }
+        if (launchApps) { appProbe.model = null; launchApps.destroy() }
         launchApps = Qt.createQmlObject('import AppModel 1.0; AppModel {}', root, '')
         launchApps.initialize(ComputerManager, index, true)
         appProbe.model = launchApps
-
-        appWait.row = row
+        appWait.target = target
         appWait.tries = 0
         appWait.start()
     }
 
-    // The list, once there is one.
     Timer {
         id: appWait
-        property int row: -1
+        property var target: null
         property int tries: 0
         interval: 500
         repeat: true
-        // The usual case is a machine this device has streamed before, whose
-        // list upstream already has. Waiting half a second to discover that
-        // would be half a second of nothing on every Play.
         triggeredOnStart: true
         onTriggered: {
-            if (row < 0) {
-                stop()
-                return
-            }
-
+            if (!root.validTarget(target)) return
+            var row = Omnuv.targetRow(target)
             if (appProbe.count > 0) {
                 stop()
                 var want = Omnuv.machines.streamAppAt(row)
                 var app = root.appIndexFor(want)
-                var r = row
-                row = -1
-                if (app >= 0) {
-                    root.startStream(r, app)
-                }
+                if (app >= 0) root.startStream(target, app)
                 else {
-                    // The machine answered and this is not on its list. That is
-                    // a real disagreement between Core and the machine, and the
-                    // person is better served by the grid — which shows what is
-                    // actually there — than by a sentence telling them so.
-                    message.show(qsTr("%1 is not offering \u201C%2\u201D right now. Choose what to " +
-                                      "stream from what it does offer.")
-                                 .arg(Omnuv.machines.nameAt(r)).arg(want))
-                    root.openAppGrid(r)
+                    message.show(qsTr("%1 is not offering %2 right now. Choose what to stream.")
+                        .arg(Omnuv.machines.nameAt(row)).arg(want))
+                    root.openAppGrid(target)
                 }
-                return
-            }
-
-            if (++tries > 30) {
+            } else if (++tries > 30) {
                 stop()
-                var name = Omnuv.machines.nameAt(row)
-                row = -1
-                message.show(qsTr("%1 answered, but has not said what it can stream. Its streaming " +
-                                  "host is still starting up, or it stopped after answering.")
-                             .arg(name))
+                root.activeTarget = null
+                message.show(qsTr("%1 answered, but has not said what it can stream yet.").arg(target.host))
             }
         }
     }
 
-    // Build the session and hand it to our own segue.
-    //
-    // `createSessionForApp` is the only QML-reachable `Session` constructor —
-    // see `launchApps` above — and the object it returns has JavaScript
-    // ownership, so the segue's `property Session session` is what keeps it
-    // alive. Upstream relies on exactly that in `AppView.qml:221-227`.
-    function startStream(row, appIndex) {
+    function startStream(target, appIndex) {
+        if (!validTarget(target)) return
+        var row = Omnuv.targetRow(target)
         var component = Qt.createComponent("qrc:/omnuv/OmnuvSegue.qml")
         var segue = component.createObject(stackView, {
-                                               "session": launchApps.createSessionForApp(appIndex),
-                                               "appName": Omnuv.machines.streamAppAt(row),
-                                               "machineName": Omnuv.machines.nameAt(row),
-                                               "machineHost": Omnuv.machines.hostAt(row),
-                                               "machineUser": Omnuv.machines.userAt(row)
-                                           })
-
-        // A `Session` runs once — `DeferredSessionCleanupTask`'s destructor
-        // releases `s_ActiveSessionSemaphore` — so *Try again* cannot restart
-        // the one that failed. It comes back here and starts over, which is
-        // also the only place that knows how to.
+            "session": launchApps.createSessionForApp(appIndex),
+            "appName": Omnuv.machines.streamAppAt(row),
+            "machineName": Omnuv.machines.nameAt(row),
+            "machineHost": target.host,
+            "machineUser": Omnuv.machines.userAt(row)
+        })
         segue.retryRequested.connect(function() {
             stackView.pop()
-            root.connectTo(row)
+            root.connectTarget(target, false)
         })
-
+        activeTarget = null
         stackView.push(segue)
     }
 
-    // The primary action of a machine that does not stream, and the *other*
-    // way in to one that does. Split out of connectTo() because a streamed
-    // machine's card offers both, and a rig that will not stream is exactly
-    // when a person needs the terminal most.
     function openTerminalFor(row) {
         var host = Omnuv.machines.hostAt(row)
         var user = Omnuv.machines.userAt(row)
-        if (!Omnuv.openTerminal(host, user)) {
-            message.show(qsTr("No terminal could be started. Connect with:\n\nssh %1@%2")
-                         .arg(user).arg(host))
-        }
+        if (!Omnuv.openTerminal(host, user))
+            message.show(qsTr("No terminal could be started. Connect with:\n\nssh %1@%2").arg(user).arg(host))
+    }
+    function connectTo(row, choose) { connectTarget(Omnuv.connectionTarget(row), choose === true) }
+    function connectTarget(target, choose) {
+        if (activeTarget || pendingTarget || delivering) return
+        if (!validTarget(target, true)) return
+        activeTarget = target
+        chooseApp = choose
+        var row = Omnuv.targetRow(target)
+        if (!Omnuv.machines.streamedAt(row)) { openTerminalFor(row); activeTarget = null; return }
+        if (hostIndexFor(target.host) >= 0) { openHost(target); return }
+        pendingTarget = target
+        ComputerManager.addNewHostManually(target.host)
     }
 
-    function connectTo(row) {
-        if (!Omnuv.machines.streamedAt(row)) {
-            openTerminalFor(row)
-            return
-        }
-
-        if (hostIndexFor(Omnuv.machines.hostAt(row)) >= 0) {
-            openHost(row)
-            return
-        }
-
-        // First time on this device: teach the streaming client the machine's
-        // private name. `addNewHostManually` is the one upstream method this
-        // application calls, and the whole integration rests on it.
-        pendingRow = row
-        ComputerManager.addNewHostManually(Omnuv.machines.hostAt(row))
-    }
-
-    // The only ending of a delivery that has a screen. Success is silent: the
-    // machine takes the code, upstream finishes the handshake, and
-    // `pairingFinished` carries on to the stream.
     Connections {
         target: Omnuv
-
+        function onConnectionContextChanged() { root.cancelConnection(); networkMove.close(); revokeEnrollment.close() }
+        function onEnrollmentChanged() {
+            if (Omnuv.networkMovePrompt !== "") networkMove.open()
+            else networkMove.close()
+        }
+        function onHostPairingFinished(address, error) { root.pairingFinished(address, error) }
         function onPairingFailed(why, detail) {
-            // The attempt is *not* over: only its automatic half failed, and
-            // the machine is still waiting for this code because
-            // `pairComputer` is still running. So `delivering` stays true and
-            // `pairing.row` stays set until the pairing itself ends, one way
-            // or the other.
+            if (!root.validTarget(pairing.target)) return
             pairing.why = why
             pairing.detail = detail
             pairing.open()
         }
     }
+    Connections {
+        target: Omnuv.machines
+        function onCountChanged() {
+            if (root.activeTarget && Omnuv.targetRow(root.activeTarget) < 0) root.cancelConnection()
+        }
+    }
 
     // ---------------------------------------------------------------- dialogs
+
+    Dialog {
+        id: networkMove
+        objectName: "networkMove"
+        anchors.centerIn: parent
+        width: Math.min(root.width - 80, 560)
+        modal: true
+        title: qsTr("Move this device to another network")
+        standardButtons: Dialog.Yes | Dialog.Cancel
+        contentItem: Label { text: Omnuv.networkMovePrompt; wrapMode: Text.WordWrap }
+        onAccepted: Omnuv.confirmNetworkMove()
+        onRejected: Omnuv.cancelNetworkMove()
+    }
+    Dialog {
+        id: revokeEnrollment
+        anchors.centerIn: parent
+        width: Math.min(root.width - 80, 520)
+        modal: true
+        title: qsTr("Revoke the saved enrollment")
+        standardButtons: Dialog.Yes | Dialog.Cancel
+        contentItem: Label {
+            text: qsTr("Revoke this saved attempt and disconnect it if it joined? Any other network membership on this device is kept. You can join again after cleanup is confirmed.")
+            wrapMode: Text.WordWrap
+        }
+        onAccepted: Omnuv.revokePendingEnrollment()
+    }
 
     // **A fallback, not a step.** This opens only when the code could not be
     // handed over, and it leads with the reason rather than with the number,
@@ -538,8 +349,7 @@ Item {
 
         // Which machine this attempt was for, so a completion can carry on
         // where it left off.
-        property int row: -1
-        property int hostIndex: -1
+        property var target: null
 
         // One sentence for the person, and the machine-shaped remainder.
         property string why
@@ -552,6 +362,7 @@ Item {
         title: qsTr("Finish pairing with %1").arg(machine)
 
         onClosed: disclosure.shown = false
+        onRejected: root.cancelConnection()
 
         ColumnLayout {
             width: parent.width
@@ -572,8 +383,8 @@ Item {
                 // Sunshine holds a pairing request open for
                 // PAIRING_SESSION_TIMEOUT, `src/nvhttp.h:68` at the tag the
                 // platform pins.
-                text: qsTr("It is waiting for this number now, on its own setup page, and stops " +
-                           "waiting five minutes after Play was pressed.")
+                text: qsTr("Enter this code on the machine’s setup page while pairing is pending. " +
+                           "The pairing request expires after five minutes.")
                 wrapMode: Text.WordWrap
                 font.pixelSize: Theme.bodySize
                 opacity: 0.7
@@ -954,14 +765,36 @@ Item {
             Layout.fillWidth: true
         }
 
+        Notice {
+            objectName: "credentialWarning"
+            visible: Omnuv.credentialWarning !== ""
+            text: Omnuv.credentialWarning
+        }
+        Notice {
+            objectName: "readProblem"
+            visible: Omnuv.readProblem !== ""
+            text: Omnuv.readProblem
+            actionText: qsTr("Try again")
+            onAction: Omnuv.retryReads()
+        }
+
         // Whether this device is on the project network at all. Shown before
         // the machines, because "Connect does nothing" is nearly always this.
         Notice {
-            visible: !Omnuv.tunnel.connected
-            text: Omnuv.tunnel.state
+            visible: !Omnuv.tunnel.connected || Omnuv.tunnel.operationError !== ""
+            text: Omnuv.tunnel.operationError !== "" ? Omnuv.tunnel.operationError : Omnuv.tunnel.state
             actionText: Omnuv.tunnel.busy ? qsTr("Joining…") : qsTr("Join this device")
             actionEnabled: Omnuv.tunnel.available && !Omnuv.tunnel.busy && Omnuv.signedIn
             onAction: Omnuv.tunnel.join()
+        }
+
+        Notice {
+            objectName: "enrollmentRecovery"
+            visible: Omnuv.enrollmentRecovery !== ""
+            text: Omnuv.enrollmentRecovery
+            actionText: Omnuv.enrollmentCleanupBusy ? qsTr("Revoking…") : qsTr("Revoke saved enrollment")
+            actionEnabled: !Omnuv.enrollmentCleanupBusy
+            onAction: revokeEnrollment.open()
         }
 
         // A refresh that failed. What was shown stays, dimmed where it is
@@ -1164,8 +997,7 @@ Item {
                         onPrimaryActivated: root.connectTo(index)
                         onTerminalRequested: root.openTerminalFor(index)
                         onChooseAppRequested: {
-                            root.chooseApp = true
-                            root.connectTo(index)
+                            root.connectTo(index, true)
                         }
                         onSettingsRequested: streamSettings.open()
                     }
@@ -1320,6 +1152,9 @@ Item {
             visible: !Omnuv.noProject
             Layout.fillWidth: true
             now: machineList.now
+            hardwareDecoderUnavailable: runConfigChecks && !SystemProperties.hasHardwareAcceleration
+                && StreamingPreferences.videoDecoderSelection !== StreamingPreferences.VDS_FORCE_SOFTWARE
+            runningXWayland: SystemProperties.isRunningXWayland
         }
     }
 }

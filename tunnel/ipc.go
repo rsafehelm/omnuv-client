@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -9,7 +10,7 @@ import (
 	"strings"
 )
 
-// The protocol, and it is deliberately four words on a line.
+// One command per line. Versioned scope commands use base64 JSON payloads.
 //
 // One request per connection, answered and closed. Nothing here is a stream,
 // nothing needs framing, and a text protocol can be spoken by hand with a pipe
@@ -20,6 +21,10 @@ import (
 //	enrol <url> <key>      → ok | err <sentence>
 //	stop                   → ok | err <sentence>
 //	state                  → state <0-3> <address|-> <name|-> <sentence, possibly empty>
+//	membership-v1          → JSON public scope, identity presence and CAS revision
+//	resume-v1 <payload>    → ok | err <sentence> (exact verified membership)
+//	enrol-v1 <payload>     → ok | err <sentence> (confirmed revision replacement)
+//	stop-v1 <payload>      → ok | err <sentence> (matching membership + revision)
 //
 // The address and the name are this device's own, taken from the client's
 // status recorder rather than from the machine's interface list — see
@@ -78,6 +83,47 @@ func answer(t *tunnel, line string) string {
 	}
 
 	switch fields[0] {
+	case "membership-v1":
+		if len(fields) != 1 {
+			return "err membership-v1 takes no arguments"
+		}
+		view, err := t.membershipSnapshot()
+		if err != nil {
+			return "err " + err.Error()
+		}
+		raw, err := json.Marshal(view)
+		if err != nil {
+			return "err membership observation unavailable"
+		}
+		return string(raw)
+
+	case "resume-v1", "enrol-v1", "stop-v1":
+		if len(fields) != 2 {
+			return "err versioned request takes one base64 JSON payload"
+		}
+		var err error
+		switch fields[0] {
+		case "resume-v1":
+			var request membership
+			if err = decodeRequest(fields[1], &request); err == nil {
+				err = t.resumeMembership(request)
+			}
+		case "enrol-v1":
+			var request enrolRequest
+			if err = decodeRequest(fields[1], &request); err == nil {
+				err = t.enrolMembership(request)
+			}
+		case "stop-v1":
+			var request stopRequest
+			if err = decodeRequest(fields[1], &request); err == nil {
+				err = t.stopMembership(request)
+			}
+		}
+		if err != nil {
+			return "err " + err.Error()
+		}
+		return "ok"
+
 	case "state":
 		state, why := t.snapshot()
 		ip, fqdn := t.address()

@@ -32,6 +32,7 @@ OmnuvAutostart::OmnuvAutostart(QObject* parent) : QObject(parent)
 
 bool OmnuvAutostart::supported() const
 {
+    if (m_fixture) return false;
 #if defined(Q_OS_WIN) || defined(Q_OS_LINUX)
     return true;
 #else
@@ -43,6 +44,7 @@ bool OmnuvAutostart::supported() const
 
 bool OmnuvAutostart::enabled() const
 {
+    if (m_fixture) return false;
 #if defined(Q_OS_WIN)
     QSettings run(QString::fromLatin1(kRunKey), QSettings::NativeFormat);
     return run.contains(QString::fromLatin1(kValueName));
@@ -55,6 +57,7 @@ bool OmnuvAutostart::enabled() const
 
 void OmnuvAutostart::setEnabled(bool on)
 {
+    if (m_fixture) return;
     if (on == enabled()) {
         return;
     }

@@ -33,7 +33,14 @@ jobs:
           git fetch -q --no-tags upstream master
 
           # Everything we add lives under these paths.
-          ADDED='^(app/omnuv/|app/gui/OmnuvView.qml|CHANGES.omnuv.md|README.omnuv.md|.github/workflows/omnuv-)'
+          #
+          # terminal/ arrived on 21 September 2026: the marketplace CLI, moved
+          # out of the private repository because a buyer has to be able to get
+          # it. It is a separate Rust binary that links nothing here and is not
+          # built by qmake -- the same shape as tunnel/, at the root for the
+          # same reason -- so it adds nothing to the upstream diff a rebase has
+          # to carry.
+          ADDED='^(app/omnuv/|app/gui/OmnuvView.qml|CHANGES.omnuv.md|README.omnuv.md|.github/workflows/omnuv-|terminal/|packaging/)'
           # And these upstream files, and only these, may be edited.
           #
           # .github/dependabot.yml is the first entry added after the fork, and
@@ -141,7 +148,10 @@ jobs:
           # FluentWinUI3 implements a subset of Qt Quick Controls, and the
           # unsupported ones fall back to Fusion -- StackView among them, which
           # main.qml is built on.
-          EDITED='^(app/gui/main.qml|app/main.cpp|app/app.pro|app/cli/commandlineparser.(cpp|h)|app/streaming/session.cpp|app/streaming/video/ffmpeg.cpp|app/streaming/video/overlaymanager.(cpp|h)|app/Info.plist|app/version.txt|app/deploy/.*|app/res/.*|scripts/build-arch.bat|.github/workflows/build.yml|.github/dependabot.yml)$'
+          # Pairing owns a bounded certificate wait and an explicit cancellation
+          # token. These four backend files bridge the upstream worker to the
+          # Omnuv network wrapper; the generic HTTP backend remains unchanged.
+          EDITED='^(app/backend/(nvpairingmanager|computermanager).(cpp|h)|app/gui/main.qml|app/main.cpp|app/app.pro|app/cli/commandlineparser.(cpp|h)|app/streaming/session.cpp|app/streaming/video/ffmpeg.cpp|app/streaming/video/overlaymanager.(cpp|h)|app/Info.plist|app/version.txt|app/deploy/.*|app/res/.*|scripts/build-arch.bat|.github/workflows/build.yml|.github/dependabot.yml)$'
 
           base=$(git merge-base HEAD upstream/master)
           echo "base: $base"

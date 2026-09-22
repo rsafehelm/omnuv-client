@@ -11,8 +11,9 @@
 
 #define REQUEST_TIMEOUT_MS 5000
 
-NvPairingManager::NvPairingManager(NvComputer* computer) :
-    m_Http(computer)
+NvPairingManager::NvPairingManager(NvComputer* computer, OmnuvPairingCancellation cancel) :
+    m_Network(std::move(cancel)),
+    m_Http(computer, &m_Network)
 {
     QByteArray cert = IdentityManager::get()->getCertificate();
     BIO *bio = BIO_new_mem_buf(cert.data(), -1);
@@ -204,8 +205,9 @@ NvPairingManager::saltPin(const QByteArray& salt, QString pin)
 }
 
 NvPairingManager::PairState
-NvPairingManager::pair(QString appVersion, QString pin, QSslCertificate& serverCert)
+NvPairingManager::pair(QString appVersion, QString pin, QSslCertificate& serverCert, int certificateTimeoutMs)
 {
+    if (m_Network.cancelled()) return PairState::FAILED;
     int serverMajorVersion = NvHTTP::parseQuad(appVersion).at(0);
     qInfo() << "Pairing with server generation:" << serverMajorVersion;
 
@@ -234,7 +236,7 @@ NvPairingManager::pair(QString appVersion, QString pin, QSslCertificate& serverC
                                                     "pair",
                                                     "devicename=roth&updateState=1&phrase=getservercert&salt=" +
                                                     salt.toHex() + "&clientcert=" + IdentityManager::get()->getCertificate().toHex(),
-                                                    0);
+                                                    qBound(1, certificateTimeoutMs, CertificateTimeoutMs));
     NvHTTP::verifyResponseStatus(getCert);
     if (NvHTTP::getXmlString(getCert, "paired") != "1")
     {

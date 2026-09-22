@@ -996,8 +996,9 @@ int main(int argc, char *argv[])
     // the earliest point our own code runs. See app/omnuv/appearance.h.
     OmnuvAppearance::applyStyle();
 
-    // Our icons are styled for a dark theme, so we do not allow the user to override this
-    qputenv("QT_QUICK_CONTROLS_MATERIAL_THEME", "Dark");
+    // Omnuv's window binds Material's foreground theme and background to the
+    // same resolved palette. Forcing Dark here made white labels on macOS's
+    // light window background. See gui/main.qml.
 
     // These are defaults that we allow the user to override
     if (!qEnvironmentVariableIsSet("QT_QUICK_CONTROLS_MATERIAL_ACCENT")) {

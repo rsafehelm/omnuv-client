@@ -21,15 +21,18 @@
 #pragma once
 
 #include <QDateTime>
+#include <QJsonObject>
 #include <QObject>
 #include <QString>
 #include <QTimer>
+#include <functional>
 
 #include "traystate.h"
 
 class OmnuvTunnel : public QObject
 {
     Q_OBJECT
+    friend class OmnuvSessionTest;
 
     // False when the service is not answering — not installed, not started,
     // or wedged. The view then says so rather than showing a button that
@@ -41,6 +44,7 @@ class OmnuvTunnel : public QObject
     // One line, in a person's words. "Connected", "Not joined yet", or what
     // went wrong.
     Q_PROPERTY(QString state READ state NOTIFY changed)
+    Q_PROPERTY(QString operationError READ operationError NOTIFY changed)
 
     // This device's address on the project network, when it has one.
     Q_PROPERTY(QString address READ address NOTIFY changed)
@@ -53,6 +57,22 @@ public:
     bool connected() const { return m_reading == omnuv::Reading::Pass; }
     bool busy() const { return m_busy; }
     QString state() const { return m_state; }
+    QString operationError() const { return m_operationError; }
+    void clearOperationError();
+    void setScope(const QJsonObject& scope);
+    bool readMembership();
+    QJsonObject membership() const { return m_membership; }
+    QString membershipRevision() const { return m_membershipRevision; }
+    bool hasIdentity() const { return m_hasIdentity; }
+    bool membershipSupported() const { return m_membershipSupported; }
+    bool membershipVerified() const { return m_membershipVerified; }
+    void beginOperation(const QString& why);
+    bool membershipMatches(const QJsonObject& scope) const;
+    void resumeMembership(const QJsonObject& membership);
+    void enrolMembership(const QString& managementUrl, const QString& setupKey,
+                         const QJsonObject& membership, const QString& expectedRevision);
+    bool stopMembership(const QJsonObject& membership);
+
     QString address() const { return m_address; }
 
     // The same fact as `connected()`, with the third answer this class used to
@@ -108,10 +128,12 @@ signals:
 
     // This device has never enrolled and needs a one-time key.
     void needsKey();
+    void observationExpired();
 
 private:
     void set(bool available, omnuv::Reading reading, const QString& state, const QString& address);
     void setBusy(bool busy);
+    void setOperationError(const QString& why);
 
     // A start the service refused, reported in the service's words when it
     // gave any.
@@ -128,7 +150,13 @@ private:
     // the service — with a real WireGuard adapter the embed API exposes
     // neither a status nor an address. See the note in tunnel.cpp.
 
+    QJsonObject m_scope, m_membership, m_membershipSnapshot;
+    QString m_membershipRevision;
+    bool m_hasIdentity = false, m_membershipSupported = false, m_membershipVerified = false, m_legacyAction = false;
+    bool m_waitingForKey = false;
+    std::function<QString(const QString&)> m_request;
     QTimer m_timer;
+    QTimer m_operationDeadline;
     bool m_watching = false;
     // A refused identity asks for a key once per request, never once per poll
     // — and only when somebody asked to join, so that revoking a device is not
@@ -139,6 +167,7 @@ private:
     omnuv::Reading m_reading = omnuv::Reading::Unknown;
     bool m_busy = false;
     QString m_state;
+    QString m_operationError;
     QString m_address;
     QDateTime m_takenAt;
 };

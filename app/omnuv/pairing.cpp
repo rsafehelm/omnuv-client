@@ -41,12 +41,18 @@ static const int kRequestTimeoutMs = 10 * 1000;
 // before the two Core round trips this path already made, but it is a race
 // either way, so look again a few times rather than concluding on the first
 // empty answer.
-static const int kFindTries = 8;
+static const int kFindTries = 120;
 static const int kFindIntervalMs = 500;
 
 OmnuvPairing::OmnuvPairing(QNetworkAccessManager* net, QObject* parent)
     : QObject(parent), m_net(net)
 {
+}
+
+void OmnuvPairing::cancel()
+{
+    delete m_scope;
+    m_scope = nullptr;
 }
 
 void OmnuvPairing::giveUp(const QString& why, const QString& detail)
@@ -192,6 +198,8 @@ void OmnuvPairing::deliver(const QString& host,
                            const QString& user,
                            const QString& password)
 {
+    cancel();
+    m_scope = new QObject(this);
     findPendingPairing(host, pin, clientName, fromAddress, user, password, kFindTries);
 }
 
@@ -215,11 +223,12 @@ void OmnuvPairing::findPendingPairing(const QString& host,
                                       int triesLeft)
 {
     QNetworkReply* reply = m_net->get(webRequest(host, user, password));
-    connect(reply, &QNetworkReply::sslErrors, reply, [reply](const QList<QSslError>& errors) {
+    connect(m_scope, &QObject::destroyed, reply, [reply]() { reply->disconnect(); reply->abort(); reply->deleteLater(); });
+    connect(reply, &QNetworkReply::sslErrors, m_scope, [reply](const QList<QSslError>& errors) {
         acceptSelfSigned(reply, errors);
     });
 
-    connect(reply, &QNetworkReply::finished, this,
+    connect(reply, &QNetworkReply::finished, m_scope,
             [this, reply, host, pin, clientName, fromAddress, user, password, triesLeft]() {
         reply->deleteLater();
 
@@ -227,6 +236,13 @@ void OmnuvPairing::findPendingPairing(const QString& host,
         const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const QJsonObject o = QJsonDocument::fromJson(body).object();
 
+        if ((code == 0 || code >= 500) && triesLeft > 1) {
+            QTimer::singleShot(kFindIntervalMs, m_scope,
+                [this, host, pin, clientName, fromAddress, user, password, triesLeft]() {
+                    findPendingPairing(host, pin, clientName, fromAddress, user, password, triesLeft - 1);
+                });
+            return;
+        }
         if (code != 200) {
             emit failed(sentenceFor(reply, o[QStringLiteral("error")].toString()),
                         tr("GET /api/pin returned %1.").arg(code == 0 ? reply->errorString()
@@ -262,7 +278,7 @@ void OmnuvPairing::findPendingPairing(const QString& host,
 
         if (ids.isEmpty()) {
             if (triesLeft > 1) {
-                QTimer::singleShot(kFindIntervalMs, this,
+                QTimer::singleShot(kFindIntervalMs, m_scope,
                                    [this, host, pin, clientName, fromAddress, user, password, triesLeft]() {
                     findPendingPairing(host, pin, clientName, fromAddress, user, password, triesLeft - 1);
                 });
@@ -311,11 +327,12 @@ void OmnuvPairing::sendPin(const QString& host,
 
     QNetworkReply* reply = m_net->post(webRequest(host, user, password),
                                        QJsonDocument(body).toJson(QJsonDocument::Compact));
-    connect(reply, &QNetworkReply::sslErrors, reply, [reply](const QList<QSslError>& errors) {
+    connect(m_scope, &QObject::destroyed, reply, [reply]() { reply->disconnect(); reply->abort(); reply->deleteLater(); });
+    connect(reply, &QNetworkReply::sslErrors, m_scope, [reply](const QList<QSslError>& errors) {
         acceptSelfSigned(reply, errors);
     });
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    connect(reply, &QNetworkReply::finished, m_scope, [this, reply]() {
         reply->deleteLater();
 
         const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();

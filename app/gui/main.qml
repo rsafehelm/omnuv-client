@@ -20,6 +20,12 @@ ApplicationWindow {
     property bool clearOnBack: false
 
     id: window
+
+    // Material paints labels from its attached theme, not palette.windowText.
+    // Both foreground and background must follow the actual window palette;
+    // otherwise a light macOS palette can sit underneath dark-theme labels.
+    Material.theme: palette.window.hslLightness < 0.5 ? Material.Dark : Material.Light
+    Material.background: palette.window
     width: 1280
     // Omnuv: 720, not upstream's 600. A machine card leads with a picture and
     // is taller than a host tile was; at 600 one row of them fitted and the
@@ -51,21 +57,6 @@ ApplicationWindow {
 
     // This function runs prior to creation of the initial StackView item
     function doEarlyInit() {
-        // Override the background color to Material 2 colors for Qt 6.5+
-        // in order to improve contrast between GFE's placeholder box art
-        // and the background of the app grid.
-        //
-        // Omnuv: the colour is the window's own rather than a forced #303030.
-        // The application follows the light/dark theme the person set on the
-        // desktop, and a hard-coded dark grey is that decision taken away —
-        // which on a light desktop is a dark rectangle nothing else on the
-        // screen agrees with. `palette.window` is whatever the style and the
-        // system between them decided this window should be, so the contrast
-        // this line was added for survives in both themes instead of one.
-        if (SystemProperties.usesMaterial3Theme) {
-            Material.background = palette.window
-        }
-
         SdlGamepadKeyNavigation.enable()
     }
 
@@ -93,27 +84,15 @@ ApplicationWindow {
             window.showFullScreen()
         }
 
-        // Display any modal dialogs for configuration warnings
+        // Check configuration without blocking the Omnuv estate window.
         if (runConfigChecks) {
             if (SystemProperties.isWow64) {
                 wow64Dialog.open()
             }
 
-            // Hardware acceleration and unmapped gamepads are checked asynchronously
-            SystemProperties.hasHardwareAccelerationChanged.connect(hasHardwareAccelerationChanged)
+            // The decoder result is shown in the estate's messages panel.
             SystemProperties.unmappedGamepadsChanged.connect(hasUnmappedGamepadsChanged)
             SystemProperties.startAsyncLoad()
-        }
-    }
-
-    function hasHardwareAccelerationChanged() {
-        if (!SystemProperties.hasHardwareAcceleration && StreamingPreferences.videoDecoderSelection !== StreamingPreferences.VDS_FORCE_SOFTWARE) {
-            if (SystemProperties.isRunningXWayland) {
-                xWaylandDialog.open()
-            }
-            else {
-                noHwDecoderDialog.open()
-            }
         }
     }
 
@@ -534,22 +513,6 @@ ApplicationWindow {
                 ToolTip.text: qsTr("Settings") + (settingsShortcut.nativeText ? (" ("+settingsShortcut.nativeText+")") : "")
             }
         }
-    }
-
-    ErrorMessageDialog {
-        id: noHwDecoderDialog
-        text: qsTr("No functioning hardware accelerated video decoder was detected by Moonlight. " +
-                   "Your streaming performance may be severely degraded in this configuration.")
-        helpText: qsTr("Click the Help button for more information on solving this problem.")
-        helpUrl: "https://github.com/moonlight-stream/moonlight-docs/wiki/Fixing-Hardware-Decoding-Problems"
-    }
-
-    ErrorMessageDialog {
-        id: xWaylandDialog
-        text: qsTr("Hardware acceleration doesn't work on XWayland. Continuing on XWayland may result in poor streaming performance. " +
-                   "Try running with QT_QPA_PLATFORM=wayland or switch to X11.")
-        helpText: qsTr("Click the Help button for more information.")
-        helpUrl: "https://github.com/moonlight-stream/moonlight-docs/wiki/Fixing-Hardware-Decoding-Problems"
     }
 
     NavigableMessageDialog {
