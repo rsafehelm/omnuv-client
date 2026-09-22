@@ -230,6 +230,9 @@ func (t *tunnel) resumeMembership(wanted membership) error {
 	if err := t.selectLocked(wanted.CoreURL); err != nil {
 		return err
 	}
+	if err := t.recoverAsideLocked(); err != nil {
+		return err
+	}
 	t.mu.Lock()
 	view, record, err := t.membershipLocked()
 	t.mu.Unlock()
@@ -249,6 +252,9 @@ func (t *tunnel) enrolMembership(request enrolRequest) error {
 	t.operations.Lock()
 	defer t.operations.Unlock()
 	if err := t.selectLocked(request.Membership.CoreURL); err != nil {
+		return err
+	}
+	if err := t.recoverAsideLocked(); err != nil {
 		return err
 	}
 	t.mu.Lock()

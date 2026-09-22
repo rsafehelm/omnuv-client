@@ -74,11 +74,11 @@ install_gaming() {
 
 # ---- omnuv:// links ----
 #
-# The console emits these so a person clicks a button instead of copying a key
-# or remembering a machine's name. Everything the link carries is already
-# theirs; nothing here is a secret they did not already have on screen.
+# The console emits these so a person clicks a button instead of remembering a
+# machine's name. Any web page can emit them too, so a link carries nothing a
+# page could choose to harm with: never a network key (H3, 22 September 2026).
 #
-#   omnuv://enrol?key=<key>
+#   omnuv://join
 #   omnuv://stream?host=<name>.internal&app=<application>
 #   omnuv://ssh?host=<name>.internal&user=<user>
 
@@ -157,22 +157,6 @@ valid_app() {
     [ "${#1}" -le 128 ]
 }
 
-# A link that enrols replaces this device's network membership, so a click is
-# not consent. The person is asked in a dialog; with no way to ask, the link is
-# refused and the command to run by hand is named instead.
-confirm_link_enrol() {
-    msg="A link asks to join this device to an Omnuv network. This replaces the network it is on now. Only continue if you started this from your Omnuv console."
-    if have zenity; then
-        zenity --question --title='Omnuv Connect' --text="$msg" 2>/dev/null
-    elif have kdialog; then
-        kdialog --title 'Omnuv Connect' --warningyesno "$msg" 2>/dev/null
-    elif [ "$(os)" = macos ]; then
-        osascript -e "display dialog \"$msg\" with title \"Omnuv Connect\" buttons {\"Cancel\", \"Join\"} default button \"Cancel\" with icon caution" >/dev/null 2>&1
-    else
-        die "joining from a link needs a dialog to ask you first. Run: omnuv-connect enrol <key>"
-    fi || die "joining was cancelled"
-}
-
 launch_ssh() {
     host="$1"; user="${2:-}"
     target="$host"
@@ -199,13 +183,12 @@ handle() {
 
     case "$action" in
         enrol|enroll|join)
-            key="$(param key "$query")"
-            # A link without a key asks the app to join with its own sign-in
-            # (see omnuv-connect.ps1). There is no app in this package yet, so
-            # say what to do instead of failing on a missing parameter.
-            [ -n "$key" ] || die "this device has no Omnuv app to join with its sign-in. In the console, use \"Get command\" and run the command it shows."
-            confirm_link_enrol
-            enrol "$key"
+            # A link never carries a key: any page can open omnuv://, and a
+            # key it chose would join this device to its network (H3). A link
+            # without one asks the app to join with its own sign-in; there is
+            # no app in this package yet, so say what to do instead.
+            [ -z "$(param key "$query")" ] || die "a link can no longer carry a network key. In the console, use \"Get command\" and run the command it shows."
+            die "this device has no Omnuv app to join with its sign-in. In the console, use \"Get command\" and run the command it shows."
             ;;
         stream)
             host="$(param host "$query")"

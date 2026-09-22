@@ -244,11 +244,12 @@ func TestOverlappingEnrollmentCannotPublishAnOlderMembership(t *testing.T) {
 
 func TestDeletionFailureAndCorruptMetadataFailClosed(t *testing.T) {
 	tn := testTunnel(t)
-	state := filepath.Join(tn.dir, "state.json")
-	if err := os.Mkdir(state, 0o700); err != nil {
+	if err := writeIdentity(filepath.Join(tn.dir, "config.json"), "held-identity"); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(state, "unremovable-child"), []byte("fixture"), 0o600); err != nil {
+	// Nowhere to set the identity aside: the key is never tried, and the
+	// identity stays where it was.
+	if err := os.WriteFile(asideDir(tn.dir), []byte("not a directory"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var called atomic.Bool
@@ -256,11 +257,105 @@ func TestDeletionFailureAndCorruptMetadataFailClosed(t *testing.T) {
 	if err := tn.start("https://netbird.lab.omnuv.com", "key"); err == nil || called.Load() {
 		t.Fatal("failed identity cleanup was ignored")
 	}
+	if id, _ := readIdentity(filepath.Join(tn.dir, "config.json")); id != "held-identity" {
+		t.Fatalf("a refused attempt moved the identity: %q", id)
+	}
 	if err := os.WriteFile(filepath.Join(tn.dir, "membership.json"), []byte("corrupt"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if got := answer(tn, "membership-v1"); !strings.HasPrefix(got, "err ") {
 		t.Fatal(got)
+	}
+}
+
+// **H3: a key is tried before the identity it replaces is given up.** A junk,
+// spent or hostile key used to delete the device's membership first, so it
+// fell off every network whatever the key turned out to be.
+func TestAFailedKeyKeepsTheIdentityItWouldHaveReplaced(t *testing.T) {
+	for _, path := range []string{"legacy", "v1"} {
+		t.Run(path, func(t *testing.T) {
+			tn := testTunnel(t)
+			old := enroll(t, tn)
+			tn.factory = func(opts netbird.Options) (tunnelClient, error) {
+				if err := writeIdentity(opts.ConfigPath, "rejected-identity"); err != nil {
+					return nil, err
+				}
+				return &fakeClient{identity: "rejected-identity", start: func(context.Context) error { return errors.New("invalid setup-key") }}, nil
+			}
+			var err error
+			if path == "legacy" {
+				err = tn.start("https://netbird.lab.omnuv.com", "junk-key")
+			} else {
+				err = tn.enrolMembership(enrolRequest{scope(), "https://netbird.lab.omnuv.com", "junk-key", old.Revision})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			finish(t, tn)
+			if state, why := tn.snapshot(); state != stateFailed || !strings.Contains(why, "previous identity was kept") {
+				t.Fatalf("the failure does not say the identity was kept: %d %q", state, why)
+			}
+			if now := viewOf(t, tn); now.Revision != old.Revision || !now.Verified {
+				t.Fatalf("a rejected key cost the device its membership: %+v", now)
+			}
+			if _, err := os.Stat(asideDir(tn.directory())); !os.IsNotExist(err) {
+				t.Fatal("the restored identity was left aside as well")
+			}
+			// And it still comes up without a key.
+			tn.factory = testTunnel(t).factory
+			if got := answer(tn, "resume-v1 "+payload(scope())); got != "ok" {
+				t.Fatal(got)
+			}
+			finish(t, tn)
+			if state, _ := tn.snapshot(); state != stateRunning {
+				t.Fatalf("the kept identity does not resume: %d", state)
+			}
+		})
+	}
+}
+
+// And a key that works replaces it, leaving nothing aside.
+func TestAWorkingKeyReplacesTheIdentityForGood(t *testing.T) {
+	tn := testTunnel(t)
+	old := enroll(t, tn)
+	if err := tn.enrolMembership(enrolRequest{scope(), "https://netbird.lab.omnuv.com", "second-key", old.Revision}); err != nil {
+		t.Fatal(err)
+	}
+	finish(t, tn)
+	if id, _ := readIdentity(filepath.Join(tn.directory(), "config.json")); id != "fixture-private-identity-second-key" {
+		t.Fatalf("the new identity is not the one in use: %q", id)
+	}
+	if _, err := os.Stat(asideDir(tn.directory())); !os.IsNotExist(err) {
+		t.Fatal("the replaced identity was kept after the new one worked")
+	}
+}
+
+// An attempt cancelled before it resolved leaves the old identity aside; the
+// next operation brings it back rather than resuming a half-made one.
+func TestAnInterruptedKeyIsRolledBackOnTheNextOperation(t *testing.T) {
+	tn := testTunnel(t)
+	old := enroll(t, tn)
+	started := make(chan struct{})
+	tn.factory = func(opts netbird.Options) (tunnelClient, error) {
+		if err := writeIdentity(opts.ConfigPath, "half-made-identity"); err != nil {
+			return nil, err
+		}
+		return &fakeClient{identity: "half-made-identity", start: func(ctx context.Context) error { close(started); <-ctx.Done(); return nil }}, nil
+	}
+	if err := tn.enrolMembership(enrolRequest{scope(), "https://netbird.lab.omnuv.com", "slow-key", old.Revision}); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	if err := tn.stop(); err != nil {
+		t.Fatal(err)
+	}
+	tn.factory = testTunnel(t).factory
+	if got := answer(tn, "resume-v1 "+payload(scope())); got != "ok" {
+		t.Fatal(got)
+	}
+	finish(t, tn)
+	if now := viewOf(t, tn); now.Revision != old.Revision || !now.Verified {
+		t.Fatalf("the interrupted attempt was not rolled back: %+v", now)
 	}
 }
 

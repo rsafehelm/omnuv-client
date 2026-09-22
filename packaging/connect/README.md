@@ -27,13 +27,16 @@ platform does it its own way:
 | macOS | A small application bundle, because a command in `/usr/local/bin` cannot own a scheme |
 
 ```
-omnuv://enrol?key=<key>                       join this device
+omnuv://join                                  join this device, as the account signed in to the app
 omnuv://stream?host=<name>.internal&app=<app> open the stream
 omnuv://ssh?host=<name>.internal&user=<user>  open a terminal
 ```
 
-Nothing in a link is a secret the person did not already have on screen, and
-anything that is not an `omnuv://` link is refused. If the package is not
+Any web page can open an `omnuv://` link, so a link carries nothing a page
+could choose to do harm with. It never carries a network key: a link with
+`key=` is refused (H3, 22 September 2026), because the key would be the page's
+choice and the device would join that page's network. Anything that is not an
+`omnuv://` link is refused too. If the package is not
 installed the button does nothing and the command beside it still works.
 
 ## Building

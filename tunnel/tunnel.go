@@ -156,6 +156,9 @@ func (t *tunnel) start(mgmt, key string) error {
 	if key != "" && !origin(mgmt) {
 		return errors.New("enrollment requires a management HTTPS origin")
 	}
+	if err := t.recoverAsideLocked(); err != nil {
+		return err
+	}
 	var record *membershipRecord
 	if key == "" {
 		t.mu.Lock()
@@ -193,19 +196,29 @@ func (t *tunnel) startLocked(mgmt, key string, record *membershipRecord) error {
 		return err
 	}
 	configPath, statePath := filepath.Join(dir, "config.json"), filepath.Join(dir, "state.json")
-	if key != "" {
-		// Invalidate the binding before touching identity. A partial removal
-		// leaves an unverified old key, never a false claim about its scope.
-		for _, path := range []string{filepath.Join(dir, "membership.json"), configPath, statePath} {
-			if err := removeIfPresent(path); err != nil {
-				t.setFailed(err)
-				return err
+	// A keyed attempt that fails before its goroutine runs gives the identity
+	// it set aside back (aside.go).
+	keyed := key != ""
+	fail := func(err error) error {
+		if keyed {
+			if restoreErr := restoreAside(dir); restoreErr != nil {
+				err = errors.Join(err, restoreErr)
 			}
+		}
+		t.setFailed(err)
+		return err
+	}
+	if keyed {
+		// Set the identity aside rather than deleting it, and invalidate the
+		// binding with it: the files move together, so a reader sees either the
+		// old identity or none, never a new scope on an old key.
+		if err := setAside(dir); err != nil {
+			t.setFailed(err)
+			return err
 		}
 		if record != nil {
 			if err := t.writeMembership(*record); err != nil {
-				t.setFailed(err)
-				return err
+				return fail(err)
 			}
 		}
 	}
@@ -246,8 +259,7 @@ func (t *tunnel) startLocked(mgmt, key string, record *membershipRecord) error {
 	log.Printf("onv-tunnel: starting key=%t verified-scope=%t", key != "", record != nil)
 	client, err := factory(opts)
 	if err != nil {
-		t.setFailed(err)
-		return err
+		return fail(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	t.mu.Lock()
@@ -296,15 +308,29 @@ func (t *tunnel) startLocked(mgmt, key string, record *membershipRecord) error {
 			cleanup, cancelCleanup := context.WithTimeout(context.Background(), 30*time.Second)
 			stopErr := client.Stop(cleanup)
 			cancelCleanup()
-			if stopErr != nil {
-				t.mu.Lock()
-				if generation == t.generation {
+			t.mu.Lock()
+			if generation == t.generation {
+				if stopErr != nil {
 					t.lastError += "; tunnel cleanup failed: " + stopErr.Error()
+				} else if keyed {
+					// The key did not work: the identity it was to replace
+					// comes back. A newer operation that got here first
+					// restores it itself, under operations.
+					if restoreErr := restoreAside(dir); restoreErr != nil {
+						t.lastError += "; " + restoreErr.Error()
+					} else {
+						t.lastError += "; the previous identity was kept"
+					}
 				}
-				t.mu.Unlock()
 			}
+			t.mu.Unlock()
 			log.Printf("onv-tunnel: start failed: %v", err)
 			return
+		}
+		if keyed {
+			if dropErr := dropAside(dir); dropErr != nil {
+				log.Printf("onv-tunnel: the replaced identity could not be removed: %v", dropErr)
+			}
 		}
 		t.state = stateRunning
 		t.mu.Unlock()

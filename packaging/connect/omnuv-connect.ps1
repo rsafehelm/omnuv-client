@@ -91,12 +91,12 @@ function Assert-LinkApp($App) {
     }
 }
 
-# A link that enrols replaces this device's network membership, so a click is
-# not consent: the person is asked, and anything but Yes stops it.
+# A link that joins moves this device onto the signed-in account's network,
+# so a click is not consent: the person is asked, and anything but Yes stops it.
 function Confirm-LinkEnrol {
     Add-Type -AssemblyName PresentationFramework
     $answer = [System.Windows.MessageBox]::Show(
-        "A link asks to join this device to an Omnuv network.`n`nThis replaces the network it is on now. Only continue if you started this from your Omnuv console.",
+        "A link asks to join this device to the private network of the account signed in to Omnuv.`n`nOnly continue if you started this from your Omnuv console.",
         'Omnuv Connect', 'YesNo', 'Warning', 'No')
     if ($answer -ne 'Yes') { Die 'joining was cancelled' }
 }
@@ -112,25 +112,27 @@ function Invoke-Link($Url) {
     foreach ($pair in ($query -split '&')) {
         if ($pair -match '=') {
             $kv = $pair -split '=', 2
-            $q[$kv[0]] = [System.Uri]::UnescapeDataString($kv[1] -replace '\+', ' ')
+            # The inner parentheses are load-bearing: in a method call a comma
+            # separates arguments, so without them `-replace '\+', ' '` became
+            # two arguments and every link with a query failed to parse.
+            $q[$kv[0]] = [System.Uri]::UnescapeDataString(($kv[1] -replace '\+', ' '))
         }
     }
     switch ($action.ToLower()) {
         { $_ -in 'enrol', 'enroll', 'join' } {
-            Confirm-LinkEnrol
-            # **No key: the app joins with its own sign-in** (22 September
-            # 2026). The console's links carried a key, which the legacy
-            # `enrol <key>` spent without writing a membership record, so the
-            # app then called its own network "another or unverified" and
-            # offered to move it. Without a key the client asks Core for one as
-            # the signed-in account, exactly as its Join button does, and
-            # records the membership. A key is still accepted, for a device
-            # where no one has signed in to the app.
-            if ($q['key']) { & $PSCommandPath enrol $q['key'] }
-            else {
-                & (Client-Path) enrol
-                if ($LASTEXITCODE -ne 0) { Die 'the device did not join. Open Omnuv and sign in, then use Join this device.' }
+            # **A link never carries a key (H3, 22 September 2026).** Any web
+            # page can open omnuv://, so a key in a link is a key a hostile page
+            # can choose: one for the attacker's own network, which the device
+            # would join, and whose peers could then reach it. A keyed link is
+            # refused. Without a key the app joins as the signed-in account,
+            # asking Core for a key exactly as its Join button does, so the
+            # network is the account's own.
+            if ($q['key']) {
+                Die 'a link can no longer carry a network key. Open Omnuv, sign in and use Join this device, or in the console use "Get command" and run the command it shows.'
             }
+            Confirm-LinkEnrol
+            & (Client-Path) enrol
+            if ($LASTEXITCODE -ne 0) { Die 'the device did not join. Open Omnuv and sign in, then use Join this device.' }
         }
         'stream' {
             if (-not $q['host']) { Die 'that link names no machine' }
