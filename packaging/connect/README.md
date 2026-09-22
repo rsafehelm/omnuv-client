@@ -5,8 +5,8 @@ tunnel client if it is missing, joins with the key from the console, and
 optionally installs the game streaming client.
 
 ```
-omnuv-connect enrol <key>            join the private network
-omnuv-connect enrol <key> --gaming   and install the game streaming client
+omnuv-connect enrol                  join the private network (asks for the key)
+omnuv-connect enrol --gaming         and install the game streaming client
 omnuv-connect status                 is it connected?
 omnuv-connect leave                  disconnect this device
 ```

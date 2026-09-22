@@ -159,7 +159,14 @@ Section "Install"
   ; the buyer never opens a terminal.
   ${If} $Key != ""
     DetailPrint "Joining your private network…"
-    nsExec::ExecToLog '"$INSTDIR\omnuv-connect.cmd" enrol "$Key"'
+    ; The key in a file under $PLUGINSDIR, which NSIS removes on exit, and
+    ; never on a command line (H3b): the script reads it and deletes it.
+    InitPluginsDir
+    FileOpen  $0 "$PLUGINSDIR\enrol.key" w
+    FileWrite $0 "$Key"
+    FileClose $0
+    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\omnuv-connect.ps1" enrol -KeyFile "$PLUGINSDIR\enrol.key"'
+    Delete "$PLUGINSDIR\enrol.key"
     Pop $0
     ${If} $0 != 0
       DetailPrint "The device did not join. Open Omnuv Connect from the Start menu to try again."

@@ -4,7 +4,7 @@
 # under Network; the client in this package does the joining and says whether
 # it worked.
 #
-#   omnuv-connect enrol <key>            join the private network
+#   omnuv-connect enrol                  join the private network (asks for the key)
 #   omnuv-connect handle omnuv://…       what the console's buttons open
 #
 # **The streaming client is ours and ships with this package.** It used to be
@@ -31,6 +31,9 @@ param(
     [Parameter(Position = 0)][string]$Command = 'help',
     [Parameter(Position = 1)][string]$Key,
     [string]$ManagementUrl = '@MANAGEMENT_URL@',
+    # The installer's way to hand over a key: a file only it and this can
+    # read, removed once read, rather than an argument (H3b).
+    [string]$KeyFile,
     # Anything left over. A link is exactly one argument; one that arrives as
     # several had a quote in it that ended its own (H3c).
     [Parameter(ValueFromRemainingArguments = $true)][string[]]$Extra
@@ -159,7 +162,20 @@ switch ($Command.ToLower()) {
         Invoke-Link $Key
     }
     { $_ -in 'enrol', 'enroll', 'join' } {
-        if (-not $Key) { Die 'usage: omnuv-connect enrol <key>   (copy it from your Omnuv console)' }
+        # **The key never goes on a command line (H3b, 22 September 2026).**
+        # Any process can read another's, so it comes from a file the
+        # installer wrote, or is asked for, and reaches the client on its
+        # standard input. A key typed as an argument still works, and is
+        # already on this script's command line when it does.
+        if ($KeyFile) {
+            try { $Key = (Get-Content -LiteralPath $KeyFile -Raw).Trim() }
+            finally { Remove-Item -LiteralPath $KeyFile -Force -ErrorAction SilentlyContinue }
+        }
+        if (-not $Key -and [Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
+            $secure = Read-Host -AsSecureString 'Paste the key from your Omnuv console'
+            $Key = [System.Net.NetworkCredential]::new('', $secure).Password.Trim()
+        }
+        if (-not $Key) { Die 'usage: omnuv-connect enrol   (and paste the key from your Omnuv console when asked)' }
         if (-not $ManagementUrl -or $ManagementUrl -eq '@MANAGEMENT_URL@') {
             Die 'no network address was built into this package; pass -ManagementUrl'
         }
@@ -169,7 +185,7 @@ switch ($Command.ToLower()) {
         # exits non-zero if the device did not end up on the network; both are
         # passed straight through rather than summarised, because its sentence
         # names the obstacle and a summary of ours would not.
-        & (Client-Path) enrol $Key --management-url $ManagementUrl
+        $Key | & (Client-Path) enrol --key-stdin --management-url $ManagementUrl
         if ($LASTEXITCODE -ne 0) { Die 'the device did not join. Check the key has not already been used.' }
         Say ''
         Say 'Connected. Your machines are reachable by name, for example:'

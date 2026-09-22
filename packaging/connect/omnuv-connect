@@ -5,8 +5,8 @@
 # installs the tunnel client if it is missing, joins the network with the key
 # from your Omnuv console, and tells you whether it worked.
 #
-#   omnuv-connect enrol <key>            join the private network
-#   omnuv-connect enrol <key> --gaming   and install the game streaming client
+#   omnuv-connect enrol                  join the private network (asks for the key)
+#   omnuv-connect enrol --gaming         and install the game streaming client
 #   omnuv-connect status                 is it connected?
 #   omnuv-connect leave                  disconnect this device
 #   omnuv-connect sign-in <core-url>     approve this device in a browser
@@ -128,7 +128,7 @@ launch_stream() {
         exec flatpak run com.moonlight_stream.Moonlight stream "$host"
     fi
     [ -d /Applications/Moonlight.app ] && exec open -a Moonlight --args stream "$host" "$app"
-    die "the game streaming client is not installed: run omnuv-connect enrol <key> --gaming"
+    die "the game streaming client is not installed: run omnuv-connect enrol --gaming"
 }
 
 # **A link is input from any web page, not from the console.** Anything can
@@ -221,7 +221,19 @@ enrol() {
             *) key="$1"; shift ;;
         esac
     done
-    [ -n "$key" ] || die "usage: omnuv-connect enrol <key>   (copy it from your Omnuv console)"
+    # **Asked for, or read from a pipe, rather than typed as an argument
+    # (H3b, 22 September 2026)**: any process can read another's command line,
+    # and a shell keeps it in its history. An argument still works.
+    if [ -z "$key" ]; then
+        if [ -t 0 ]; then
+            printf 'Paste the key from your Omnuv console: ' >&2
+            stty -echo 2>/dev/null; IFS= read -r key || true; stty echo 2>/dev/null; printf '\n' >&2
+        else
+            IFS= read -r key || true
+        fi
+        key=$(printf '%s' "$key" | tr -d '[:space:]')
+    fi
+    [ -n "$key" ] || die "usage: omnuv-connect enrol   (and paste the key from your Omnuv console when asked)"
     [ -n "$MANAGEMENT_URL" ] && [ "$MANAGEMENT_URL" != "@MANAGEMENT_URL@" ] \
         || die "no network address was built into this package; pass --management-url"
 
@@ -230,8 +242,14 @@ enrol() {
 
     say "Joining your private network…"
     # The key spends itself: it enrols this one device and cannot be reused.
-    as_root netbird up --management-url "$MANAGEMENT_URL" --setup-key "$key" \
-        || die "the device did not join. Check the key has not already been used."
+    # Handed over in a file only this user and root can read, removed after,
+    # never as --setup-key on netbird's command line.
+    keyfile=$(umask 077; mktemp) || die "could not make a private file for the key"
+    printf '%s\n' "$key" > "$keyfile"
+    joined=0
+    as_root netbird up --management-url "$MANAGEMENT_URL" --setup-key-file "$keyfile" && joined=1
+    rm -f "$keyfile"
+    [ "$joined" = 1 ] || die "the device did not join. Check the key has not already been used."
 
     say ""
     say "Connected. Your machines are reachable by name, for example:"
@@ -331,7 +349,7 @@ case "${1:-}" in
     handle) shift; handle "$@" ;;
     sign-in|signin|login) shift; sign_in "$@" ;;
     enrol|enroll|join) shift; enrol "$@" ;;
-    status) have netbird || die "not installed yet: run omnuv-connect enrol <key>"; netbird status ;;
+    status) have netbird || die "not installed yet: run omnuv-connect enrol"; netbird status ;;
     leave|disconnect) as_root netbird down && say "Disconnected. Revoke the device in the console to remove it for good." ;;
     version|--version) say "omnuv-connect $VERSION" ;;
     *) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' ;;

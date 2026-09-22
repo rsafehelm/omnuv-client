@@ -103,6 +103,14 @@ void OmnuvEnrol::start(const QStringList& args, QObject* parent)
         QStringLiteral("Ask this Core for the key, for this run, without changing the saved one."),
         QStringLiteral("url"));
     parser.addOption(coreUrlOption);
+    // **The key on standard input, not the command line (H3b, 22 September
+    // 2026).** Any process on the machine can read another's command line, so
+    // a key passed as an argument could be read, and spent, by something else
+    // before this ran. omnuv-connect and the installer pipe it in.
+    QCommandLineOption keyStdinOption(
+        QStringLiteral("key-stdin"),
+        QStringLiteral("Read the one-time key from standard input instead of the command line."));
+    parser.addOption(keyStdinOption);
 
     if (!parser.parse(args)) {
         fputs(qPrintable(parser.errorText() + QLatin1Char('\n')), stderr);
@@ -114,7 +122,20 @@ void OmnuvEnrol::start(const QStringList& args, QObject* parent)
 
     // args[0] is the executable and the first positional is the action itself.
     const QStringList positional = parser.positionalArguments();
-    const QString key = positional.size() > 1 ? positional.at(1) : QString();
+    QString key = positional.size() > 1 ? positional.at(1) : QString();
+    if (parser.isSet(keyStdinOption)) {
+        if (!key.isEmpty()) {
+            emitLine(QStringLiteral("state=failed  reason=a key was given both on the command line and on standard input"));
+            ::exit(1);
+        }
+        // One line, at most a few hundred bytes: a setup key is a UUID.
+        char line[512] = {};
+        if (fgets(line, sizeof line, stdin)) key = QString::fromUtf8(line).trimmed();
+        if (key.isEmpty()) {
+            emitLine(QStringLiteral("state=failed  reason=--key-stdin was given and standard input held no key"));
+            ::exit(1);
+        }
+    }
     const QString url = parser.value(urlOption);
 
     // **A key with no address is refused rather than guessed at.** The library
