@@ -102,10 +102,27 @@ bool validMachines(const QJsonDocument& doc)
 }
 }
 
+namespace {
+QString& coreUrlOverride()
+{
+    static QString url;
+    return url;
+}
+}
+
+void OmnuvSession::setCoreUrlOverride(const QString& url)
+{
+    QString trimmed = url.trimmed();
+    while (trimmed.endsWith(QLatin1Char('/'))) trimmed.chop(1);
+    coreUrlOverride() = trimmed;
+}
+
 OmnuvSession::OmnuvSession(QObject* parent)
     : QObject(parent),
-      m_storeToken([this](const QString& token) { return m_fixture || OmnuvCredentials::store(token); }),
-      m_clearToken([this]() { return m_fixture || OmnuvCredentials::clear(); }),
+      // The slot of the Core this session talks to, and no other: see
+      // credentials.h.
+      m_storeToken([this](const QString& token) { return m_fixture || OmnuvCredentials::store(tokenOrigin(), token); }),
+      m_clearToken([this]() { return m_fixture || OmnuvCredentials::clear(tokenOrigin()); }),
       m_machines(new MachineModel(this)),
       m_estate(new OmnuvEstate([this](const QString& path) { return m_net.get(request(path, true)); }, this)),
       m_tunnel(new OmnuvTunnel(this)),
@@ -135,7 +152,13 @@ OmnuvSession::OmnuvSession(QObject* parent)
         m_token = QStringLiteral("fixture-token");
         qInfo() << "omnuv: fixture session against" << m_coreUrl << "- saved account and startup state are bypassed";
     } else {
-        m_coreUrl = settings.value(QStringLiteral("omnuv/coreUrl")).toString();
+        if (!coreUrlOverride().isEmpty()) {
+            // Named for this run: beats the saved address and is never saved.
+            m_coreUrl = coreUrlOverride();
+            m_coreUrlOverridden = true;
+        } else {
+            m_coreUrl = settings.value(QStringLiteral("omnuv/coreUrl")).toString();
+        }
         if (m_coreUrl.isEmpty()) {
             // Set at build time for a packaged client; typed in by hand otherwise.
             m_coreUrl = QString::fromLocal8Bit(qgetenv("OMNUV_CORE_URL"));
@@ -317,7 +340,18 @@ void OmnuvSession::remember(const QString& key, const QString& value)
 
 void OmnuvSession::loadToken()
 {
-    m_token = OmnuvCredentials::load();
+    // A fixture session reads no real credential, ever: see the constructor.
+    if (m_fixture) return;
+    // The old single-slot token belonged to the address saved beside it, so
+    // that is the only origin it may move into.
+    const QString savedOrigin = OmnuvCredentials::origin(
+        QSettings().value(QStringLiteral("omnuv/coreUrl")).toString());
+    m_token = OmnuvCredentials::load(tokenOrigin(), savedOrigin);
+}
+
+QString OmnuvSession::tokenOrigin() const
+{
+    return OmnuvCredentials::origin(m_coreUrl);
 }
 
 void OmnuvSession::setCredentialWarning(const QString& warning)
@@ -360,10 +394,27 @@ void OmnuvSession::setCoreUrl(const QString& url)
         return;
     }
 
-    signOut();
+    // **Switching, not signing out (22 September 2026).** This used to call
+    // `signOut()`, which deleted the only token there was: moving to the test
+    // Core and back cost production's sign-in. Each Core has its own slot now,
+    // so the context is dropped, the address changes, and that Core's own
+    // sign-in (if there is one) is read. The other Core's is left alone.
+    invalidateContext();
+    clearPending();
+    m_refreshTimer.stop();
+    m_token.clear();
+    m_identityKnown = false;
     m_coreUrl = trimmed;
+    m_coreUrlOverridden = false;
     remember(QStringLiteral("omnuv/coreUrl"), m_coreUrl);
+    loadToken();
     emit coreUrlChanged();
+    emit signedInChanged();
+    setStatus(QString());
+    if (signedIn()) {
+        m_refreshTimer.start();
+        fetchIdentity();
+    }
 }
 
 void OmnuvSession::setStatus(const QString& text)
@@ -526,7 +577,8 @@ void OmnuvSession::poll()
         // "Could not find your network" for an address it no longer had.
         // Found on the rig on 16 September, by an access log that showed the
         // request had never been made.
-        remember(QStringLiteral("omnuv/coreUrl"), m_coreUrl);
+        // Not for an address named for this run only: see setCoreUrlOverride.
+        if (!m_coreUrlOverridden) remember(QStringLiteral("omnuv/coreUrl"), m_coreUrl);
         clearPending();
         emit signedInChanged();
         setStatus(QString());
@@ -725,12 +777,8 @@ bool OmnuvSession::openTerminal(const QString& host, const QString& user)
 QJsonObject OmnuvSession::networkScope() const
 {
     if (!signedIn() || !m_identityKnown || m_accountId.isEmpty() || m_projectId.isEmpty()) return {};
-    QUrl core(m_coreUrl);
-    core.setScheme(core.scheme().toLower()); core.setHost(core.host().toLower());
-    if ((core.scheme() == "https" && core.port() == 443) || (core.scheme() == "http" && core.port() == 80)) core.setPort(-1);
-    core.setFragment(QString()); core.setQuery(QString());
-    QString origin = core.toString(QUrl::RemovePassword | QUrl::RemoveUserInfo | QUrl::StripTrailingSlash);
-    return {{"core_url", origin}, {"account_id", m_accountId}, {"project_id", m_projectId}};
+    // One definition of a Core's identity, shared with the token's slot.
+    return {{"core_url", tokenOrigin()}, {"account_id", m_accountId}, {"project_id", m_projectId}};
 }
 
 void OmnuvSession::updateNetworkScope()

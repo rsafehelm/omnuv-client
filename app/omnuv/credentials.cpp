@@ -5,6 +5,8 @@
 #include <QFileInfo>
 #include <QLoggingCategory>
 #include <QSaveFile>
+#include <QCryptographicHash>
+#include <QUrl>
 #ifndef Q_OS_WIN
 #include <cerrno>
 #include <sys/stat.h>
@@ -17,45 +19,60 @@
 
 namespace {
 
+#ifdef Q_OS_WIN
 // The name the credential appears under in Credential Manager. A person
 // looking at that list should be able to tell what it is and delete it, so it
-// says the product name rather than an opaque identifier.
+// says the product name, then the Core it signs in to.
 #ifdef OMNUV_CREDENTIALS_TESTING
-const wchar_t* credentialTarget()
+QString targetBase()
 {
-    static const std::wstring name = (QStringLiteral("Omnuv Connect test ")
-        + qEnvironmentVariable("OMNUV_CREDENTIAL_TEST_DIR")).toStdWString();
-    return name.c_str();
+    return QStringLiteral("Omnuv Connect test ") + qEnvironmentVariable("OMNUV_CREDENTIAL_TEST_DIR");
 }
 #else
-const wchar_t* credentialTarget() { return L"Omnuv Connect"; }
+QString targetBase() { return QStringLiteral("Omnuv Connect"); }
 #endif
 
-// Where the token used to live, and still does on platforms without an
-// implementation here.
-QString filePath()
+// The old single slot, and a per-origin one. `legacy` is the empty origin.
+std::wstring target(const QString& origin)
+{
+    return (origin.isEmpty() ? targetBase() : targetBase() + QLatin1Char('/') + origin).toStdWString();
+}
+#endif
+
+QString configDir()
 {
 #ifdef OMNUV_CREDENTIALS_TESTING
-    return qEnvironmentVariable("OMNUV_CREDENTIAL_TEST_DIR") + QStringLiteral("/token");
+    return qEnvironmentVariable("OMNUV_CREDENTIAL_TEST_DIR");
 #elif defined(Q_OS_WIN)
-    return QDir::homePath() + QStringLiteral("/AppData/Roaming/Omnuv/token");
+    return QDir::homePath() + QStringLiteral("/AppData/Roaming/Omnuv");
 #else
-    return QDir::homePath() + QStringLiteral("/.config/omnuv/token");
+    return QDir::homePath() + QStringLiteral("/.config/omnuv");
 #endif
 }
 
-QString readFile()
+// Where the token lives on platforms without a store implementation here, and
+// where every version before 22 September kept its single one (the empty
+// origin). A hash rather than the origin itself, because an origin carries
+// characters a file name may not.
+QString filePath(const QString& origin)
 {
-    QFile f(filePath());
+    if (origin.isEmpty()) return configDir() + QStringLiteral("/token");
+    const QByteArray digest = QCryptographicHash::hash(origin.toUtf8(), QCryptographicHash::Sha256).toHex();
+    return configDir() + QStringLiteral("/tokens/") + QString::fromLatin1(digest.left(16));
+}
+
+QString readFile(const QString& origin)
+{
+    QFile f(filePath(origin));
     if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
         return QString();
     }
     return QString::fromUtf8(f.readAll()).trimmed();
 }
 
-bool writeFile(const QString& token)
+bool writeFile(const QString& origin, const QString& token)
 {
-    const QString path = filePath();
+    const QString path = filePath(origin);
     if (!QDir().mkpath(QFileInfo(path).absolutePath())) return false;
     QSaveFile file(path);
     file.setDirectWriteFallback(false);
@@ -69,9 +86,9 @@ bool writeFile(const QString& token)
     return file.commit();
 }
 
-bool removeFile()
+bool removeFile(const QString& origin)
 {
-    const QString path = filePath();
+    const QString path = filePath(origin);
     if (QFile::remove(path)) return true;
 #ifdef Q_OS_WIN
     if (GetFileAttributesW(reinterpret_cast<LPCWSTR>(path.utf16())) == INVALID_FILE_ATTRIBUTES) {
@@ -86,6 +103,50 @@ bool removeFile()
     return false;
 }
 
+#ifdef Q_OS_WIN
+QString readStore(const QString& origin)
+{
+    PCREDENTIALW cred = nullptr;
+    const std::wstring name = target(origin);
+    if (!CredReadW(name.c_str(), CRED_TYPE_GENERIC, 0, &cred) || cred == nullptr) return QString();
+    const QString token = QString::fromUtf8(
+        reinterpret_cast<const char*>(cred->CredentialBlob),
+        static_cast<int>(cred->CredentialBlobSize)).trimmed();
+    CredFree(cred);
+    return token;
+}
+
+bool deleteStore(const QString& origin)
+{
+    const std::wstring name = target(origin);
+    if (!CredDeleteW(name.c_str(), CRED_TYPE_GENERIC, 0) && GetLastError() != ERROR_NOT_FOUND) {
+        qWarning("Omnuv: could not delete the token from Credential Manager (%lu)", GetLastError());
+        return false;
+    }
+    return true;
+}
+#endif
+
+// The token in the old single slot, wherever this platform kept it, and the
+// removal of every copy of it.
+QString readLegacy()
+{
+#ifdef Q_OS_WIN
+    const QString fromStore = readStore(QString());
+    if (!fromStore.isEmpty()) return fromStore;
+#endif
+    return readFile(QString());
+}
+
+bool clearLegacy()
+{
+    bool cleared = true;
+#ifdef Q_OS_WIN
+    cleared = deleteStore(QString());
+#endif
+    return removeFile(QString()) && cleared;
+}
+
 } // namespace
 
 bool OmnuvCredentials::usingPlatformStore()
@@ -97,46 +158,59 @@ bool OmnuvCredentials::usingPlatformStore()
 #endif
 }
 
-QString OmnuvCredentials::load()
+QString OmnuvCredentials::origin(const QString& coreUrl)
 {
-#ifdef Q_OS_WIN
-    PCREDENTIALW cred = nullptr;
-    if (CredReadW(credentialTarget(), CRED_TYPE_GENERIC, 0, &cred) && cred != nullptr) {
-        const QString token = QString::fromUtf8(
-            reinterpret_cast<const char*>(cred->CredentialBlob),
-            static_cast<int>(cred->CredentialBlobSize)).trimmed();
-        CredFree(cred);
-        if (!token.isEmpty()) {
-            return token;
-        }
+    QUrl core(coreUrl.trimmed());
+    const QString scheme = core.scheme().toLower();
+    if ((scheme != QLatin1String("https") && scheme != QLatin1String("http")) || core.host().isEmpty()) {
+        return QString();
     }
-
-    // Nothing in the store. An older version of this program may have left a
-    // token in the file — move it across and remove the file, because a
-    // plaintext copy surviving the upgrade would give us the risk of both
-    // designs and the benefit of neither.
-    const QString fromFile = readFile();
-    if (!fromFile.isEmpty()) {
-        if (store(fromFile)) {
-            if (removeFile()) qInfo("Omnuv: moved the saved token into Credential Manager");
-        }
-        return fromFile;
+    core.setScheme(scheme);
+    core.setHost(core.host().toLower());
+    if ((scheme == QLatin1String("https") && core.port() == 443) || (scheme == QLatin1String("http") && core.port() == 80)) {
+        core.setPort(-1);
     }
-    return QString();
-#else
-    return readFile();
-#endif
+    core.setPath(QString());
+    core.setQuery(QString());
+    core.setFragment(QString());
+    return core.toString(QUrl::RemoveUserInfo | QUrl::StripTrailingSlash);
 }
 
-bool OmnuvCredentials::store(const QString& token)
+QString OmnuvCredentials::load(const QString& origin, const QString& legacyOwner)
 {
+    if (origin.isEmpty()) return QString();
+#ifdef Q_OS_WIN
+    const QString fromStore = readStore(origin);
+    if (!fromStore.isEmpty()) return fromStore;
+    // A file an earlier Windows build left for this origin cannot exist: the
+    // per-origin slot is newer than the file fallback there.
+#else
+    const QString own = readFile(origin);
+    if (!own.isEmpty()) return own;
+#endif
+
+    // Nothing for this origin. The old single slot is this origin's only if
+    // it was saved beside this address; anything else stays where it is.
+    if (legacyOwner.isEmpty() || legacyOwner != origin) return QString();
+    const QString legacy = readLegacy();
+    if (legacy.isEmpty()) return QString();
+    if (store(origin, legacy)) {
+        if (clearLegacy()) qInfo("Omnuv: moved the saved token into its Core's own slot");
+    }
+    return legacy;
+}
+
+bool OmnuvCredentials::store(const QString& origin, const QString& token)
+{
+    if (origin.isEmpty()) return false;
 #ifdef Q_OS_WIN
     const QByteArray utf8 = token.toUtf8();
+    const std::wstring name = target(origin);
 
     CREDENTIALW cred;
     ZeroMemory(&cred, sizeof(cred));
     cred.Type = CRED_TYPE_GENERIC;
-    cred.TargetName = const_cast<wchar_t*>(credentialTarget());
+    cred.TargetName = const_cast<wchar_t*>(name.c_str());
     cred.CredentialBlobSize = static_cast<DWORD>(utf8.size());
     cred.CredentialBlob = reinterpret_cast<LPBYTE>(const_cast<char*>(utf8.constData()));
     // Survives a reboot, which is the entire point for a program that starts
@@ -150,20 +224,18 @@ bool OmnuvCredentials::store(const QString& token)
     }
     return true;
 #else
-    return writeFile(token);
+    return writeFile(origin, token);
 #endif
 }
 
-bool OmnuvCredentials::clear()
+bool OmnuvCredentials::clear(const QString& origin)
 {
+    if (origin.isEmpty()) return true;
     bool cleared = true;
 #ifdef Q_OS_WIN
-    if (!CredDeleteW(credentialTarget(), CRED_TYPE_GENERIC, 0) && GetLastError() != ERROR_NOT_FOUND) {
-        qWarning("Omnuv: could not delete the token from Credential Manager (%lu)", GetLastError());
-        cleared = false;
-    }
+    cleared = deleteStore(origin);
 #endif
-    // Try both stores even if one fails. Absence is success; unreadability is not.
-    const bool legacyCleared = removeFile();
-    return cleared && legacyCleared;
+    // Try both even if one fails. Absence is success; unreadability is not.
+    const bool fileCleared = removeFile(origin);
+    return cleared && fileCleared;
 }

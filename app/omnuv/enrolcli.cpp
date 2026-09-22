@@ -96,6 +96,13 @@ void OmnuvEnrol::start(const QStringList& args, QObject* parent)
         QStringLiteral("The address of the network this device belongs to."),
         QStringLiteral("url"));
     parser.addOption(urlOption);
+    // The Core whose sign-in this run uses to ask for a key, for this run
+    // only; see signin.cpp.
+    QCommandLineOption coreUrlOption(
+        QStringLiteral("core-url"),
+        QStringLiteral("Ask this Core for the key, for this run, without changing the saved one."),
+        QStringLiteral("url"));
+    parser.addOption(coreUrlOption);
 
     if (!parser.parse(args)) {
         fputs(qPrintable(parser.errorText() + QLatin1Char('\n')), stderr);
@@ -133,7 +140,11 @@ void OmnuvEnrol::start(const QStringList& args, QObject* parent)
     // in yet.
     // A supplied key is an explicit legacy enrollment. Do not let an unrelated
     // saved account's asynchronous identity read relabel or cancel that action.
+    if (parser.isSet(coreUrlOption)) {
+        OmnuvSession::setCoreUrlOverride(parser.value(coreUrlOption));
+    }
     auto* session = key.isEmpty() ? new OmnuvSession(parent) : nullptr;
+    if (session) emitLine(QStringLiteral("core-url=%1").arg(session->coreUrl()));
     OmnuvTunnel* tunnel = session ? session->tunnel() : new OmnuvTunnel(parent);
 
     auto requested = std::make_shared<bool>(!key.isEmpty());

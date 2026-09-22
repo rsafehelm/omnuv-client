@@ -93,6 +93,12 @@ class OmnuvSession : public QObject
 public:
     explicit OmnuvSession(QObject* parent = nullptr);
 
+    // **An address named for one run, never remembered** (`--core-url` on
+    // `signin` and `enrol`). It beats the saved address and `OMNUV_CORE_URL`,
+    // and is not written back, so a test run against one Core cannot move a
+    // device's saved choice to it. Set before the session is built.
+    static void setCoreUrlOverride(const QString& url);
+
     QString coreUrl() const { return m_coreUrl; }
     void setCoreUrl(const QString& url);
     QString enrollmentRecovery() const;
@@ -334,6 +340,11 @@ private:
     QTimer m_refreshTimer;
 
     QString m_coreUrl;
+    // True while the address came from `setCoreUrlOverride`: nothing then
+    // writes it to the saved settings.
+    bool m_coreUrlOverridden = false;
+    // The origin this session's token is read from and written to.
+    QString tokenOrigin() const;
     QString m_token;
     QString m_deviceCode;
     QString m_userCode;

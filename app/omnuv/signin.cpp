@@ -275,8 +275,9 @@ void start(const QStringList& args, QObject* parent)
         "lines on stdout, then waits for the approval and exits. Everything\n"
         "else — progress, and anything that went wrong — goes to stderr.\n"
         "\n"
-        "The deployment comes from OMNUV_CORE_URL, or from the address this\n"
-        "client was last pointed at.");
+        "The deployment comes from --core-url, then the address this client\n"
+        "was last pointed at, then OMNUV_CORE_URL. --core-url is used for this\n"
+        "run only and never saved, and each deployment keeps its own sign-in.");
     parser.addHelpOption();
     parser.addVersionOption();
     parser.addPositionalArgument("signin", "Sign this device in");
@@ -288,6 +289,16 @@ void start(const QStringList& args, QObject* parent)
                                                "this account; otherwise sign in afresh."),
                                 QStringLiteral("email"));
     parser.addOption(asOption);
+    // **The deployment, named for this run** (B10, 22 September 2026). The
+    // saved address used to win, so a test run aimed at the mirror signed in
+    // on whatever the device was last pointed at, production on the Windows
+    // rig. Named here it beats both, is never saved, and reads only its own
+    // Core's token.
+    QCommandLineOption coreUrlOption(QStringLiteral("core-url"),
+                                     QStringLiteral("Sign in to this Core for this run, without "
+                                                    "changing the saved one."),
+                                     QStringLiteral("url"));
+    parser.addOption(coreUrlOption);
 
     // Deliberately not parser.process(): that prints to stdout on error, and
     // stdout is the machine-readable channel here. Upstream's own helper makes
@@ -316,7 +327,13 @@ void start(const QStringList& args, QObject* parent)
     // Constructed directly rather than through the QML singleton, so no tray
     // is created and no window is involved: the factory in omnuvsession.cpp is
     // what builds those, and it only runs when QML resolves the singleton.
+    if (parser.isSet(coreUrlOption)) {
+        OmnuvSession::setCoreUrlOverride(parser.value(coreUrlOption));
+    }
     auto* session = new OmnuvSession(parent);
+    // Which Core this run speaks to, before anything else: a harness checks
+    // it, because the wrong one is the failure this line exists to catch.
+    fact("core-url", session->coreUrl());
 
     if (session->coreUrl().isEmpty()) {
         complain(QStringLiteral(
