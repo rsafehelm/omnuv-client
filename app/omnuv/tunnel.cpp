@@ -230,13 +230,18 @@ void OmnuvTunnel::check()
         // Revocation is never repaired by silently creating another device.
         // A saved attempt remains recoverable through explicit revocation.
         const bool refused = why.startsWith(QLatin1String("unauthorized:"));
+        // A key the overlay would not take is not a membership taken away:
+        // it was spent already, or it expired (an hour, since H8). Saying
+        // "no longer a member" sent people looking for a revocation.
+        const bool spentKey = refused && why.contains(QLatin1String("setup-key"), Qt::CaseInsensitive);
 
         if (m_busy && !m_waitingForKey) setOperationError(why.isEmpty() ? tr("This device could not join your network.") : why);
         // The state first, then busy — see the Running branch above.
         set(true, omnuv::Reading::Fail,
             why.isEmpty() ? tr("This device could not join your network.")
-                          : (refused ? tr("This device is no longer a member of your network.")
-                                     : why),
+                          : (spentKey ? tr("That network key was already used or has expired. Join again for a new one.")
+                             : refused ? tr("This device is no longer a member of your network.")
+                                       : why),
             QString());
         if (!m_waitingForKey) setBusy(false);
 
