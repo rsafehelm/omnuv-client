@@ -1,0 +1,27 @@
+---
+# The omnuv:// handlers, run as a browser runs them, with stubbed programs.
+# A link is input from any web page; these check what reaches a program.
+name: Link handlers
+permissions:
+  contents: read
+
+on:
+  push:
+    paths:
+      - packaging/connect/**
+      - tests/connect/**
+      - .github/workflows/link-handlers.yml
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  handlers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shell handler (Linux and macOS)
+        run: sh tests/connect/handle_test.sh
+      - name: PowerShell handler (Windows)
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/connect/handle_test.ps1
