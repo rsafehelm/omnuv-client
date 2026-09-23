@@ -22,6 +22,7 @@
 
 #include <QString>
 #include <QTimer>
+#include <QDeadlineTimer>
 #include <functional>
 
 // Included rather than forward-declared: moc needs the full type to expose
@@ -267,6 +268,9 @@ private:
     quint64 m_machineRequest = 0;
     quint64 m_authAttempt = 0;
     bool m_pollPending = false;
+    // When the pending sign-in code stops being worth polling for: Core's
+    // own expires_in. A poll that fails in passing is retried until then (H20).
+    QDeadlineTimer m_codeDeadline;
 
     // Answers the tunnel's needsKey(): asks Core for a one-time enrolment key
     // for this device, then hands it back.

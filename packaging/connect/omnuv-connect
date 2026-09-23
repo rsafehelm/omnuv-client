@@ -307,6 +307,8 @@ sign_in() {
     device=$(printf '%s' "$start" | sed -n 's/.*"device_code" *: *"\([^"]*\)".*/\1/p')
     uri=$(printf '%s' "$start" | sed -n 's/.*"verification_uri" *: *"\([^"]*\)".*/\1/p')
     interval=$(printf '%s' "$start" | sed -n 's/.*"interval" *: *\([0-9][0-9]*\).*/\1/p')
+    expires=$(printf '%s' "$start" | sed -n 's/.*"expires_in" *: *\([0-9][0-9]*\).*/\1/p')
+    deadline=$(( $(date +%s) + ${expires:-600} ))
     [ -n "$device" ] || die "$core did not start a sign-in: $start"
     say ""
     say "  Open $uri and enter this code:"
@@ -323,14 +325,25 @@ sign_in() {
     # and every sign-in failed while leaving a live token nobody held.
     while :; do
         sleep "${interval:-5}"
+        # **A failure in passing is not an answer (H20).** No answer, or a
+        # 5xx, ended the sign-in — perhaps after it had been approved. It is
+        # asked again until the code expires; only Core saying no ends it, in
+        # Core's own words (H23).
         reply=$(curl -sS -w '\n%{http_code}' -H 'content-type: application/json' \
-            -d "{\"device_code\":\"$device\"}" "$core/v1/auth/device/token") \
-            || die "could not reach $core"
+            -d "{\"device_code\":\"$device\"}" "$core/v1/auth/device/token" 2>/dev/null) \
+            || reply="
+000"
         status=$(printf '%s' "$reply" | tail -n 1)
         case "$status" in
             202) continue ;;
             200) break ;;
-            *) die "that request was refused or expired" ;;
+            000|5??)
+                [ "$(date +%s)" -lt "$deadline" ] || die "the code expired while $core was not answering; start again"
+                say "  $core is not answering; still waiting…"
+                continue ;;
+            *)
+                said=$(printf '%s' "$reply" | sed '$d' | sed -n 's/.*"error" *: *"\([^"]*\)".*/\1/p')
+                die "that sign-in did not complete: ${said:-refused or expired}" ;;
         esac
     done
     token=$(printf '%s' "$reply" | sed '$d' | sed -n 's/.*"token" *: *"\([^"]*\)".*/\1/p')

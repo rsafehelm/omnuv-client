@@ -685,6 +685,37 @@ private slots:
         QVERIFY(!s.signedIn()); QVERIFY(!s.m_pollPending);
         QCOMPARE(server.count("/v1/auth/device/token"),1);
     }
+    // H20: a poll that fails in passing is polled again, and the approval the
+    // person already gave is collected; only Core saying no ends it.
+    void aPollThatFailsInPassingKeepsWaiting() {
+        HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s;
+        s.signOut(); s.m_deviceCode="approved"; s.m_codeDeadline.setRemainingTime(60000);
+        s.poll(); QTRY_COMPARE(server.count("/v1/auth/device/token"),1);
+        server.answer(server.find("/v1/auth/device/token"),503,R"({"error":"unavailable"})");
+        QTRY_VERIFY(!s.m_pollPending);
+        QCOMPARE(s.m_deviceCode,QString("approved"));
+        QVERIFY(s.status().contains("still waiting"));
+        s.poll(); QTRY_COMPARE(server.count("/v1/auth/device/token"),2);
+        server.answer(server.find("/v1/auth/device/token",server.find("/v1/auth/device/token")+1),200,R"({"token":"collected-after-a-503"})");
+        QTRY_VERIFY(s.signedIn());
+    }
+    void aCodePastItsTimeStopsWaiting() {
+        HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s;
+        s.signOut(); s.m_deviceCode="stale"; s.m_codeDeadline.setRemainingTime(0);
+        s.poll(); QTRY_COMPARE(server.count("/v1/auth/device/token"),1);
+        server.answer(server.find("/v1/auth/device/token"),503,"{}");
+        QTRY_VERIFY(s.m_deviceCode.isEmpty());
+        QVERIFY(s.status().contains("expired"));
+    }
+    // H23: refused, expired and used are three answers; Core's words say which.
+    void aRefusalSaysCoresReason() {
+        HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s;
+        s.signOut(); s.m_deviceCode="used"; s.m_codeDeadline.setRemainingTime(60000);
+        s.poll(); QTRY_COMPARE(server.count("/v1/auth/device/token"),1);
+        server.answer(server.find("/v1/auth/device/token"),400,R"({"error":"that code has already been used"})");
+        QTRY_VERIFY(s.m_deviceCode.isEmpty());
+        QVERIFY2(s.status().contains("already been used"), qPrintable(s.status()));
+    }
     void supersededStartCannotOverwriteNewCode() {
         HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s;
         s.signOut(); s.signIn(); QTRY_VERIFY(server.find("/v1/auth/device")>=0);

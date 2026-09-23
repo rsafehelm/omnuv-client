@@ -539,7 +539,9 @@ void OmnuvSession::signIn()
         emit pendingChanged();
         setStatus(tr("Waiting for approval in your browser…"));
 
-        // At the interval the server asked for, not one guessed here.
+        // At the interval the server asked for, not one guessed here, and for
+        // as long as the code lives.
+        m_codeDeadline.setRemainingTime(qint64(qMax(1, o[QStringLiteral("expires_in")].toInt(600))) * 1000);
         m_pollTimer.setInterval(qMax(1, o[QStringLiteral("interval")].toInt(3)) * 1000);
         m_pollTimer.start();
     });
@@ -583,8 +585,26 @@ void OmnuvSession::poll()
             // cost a rig cycle and a proxy log on 16 September.
             qWarning("omnuv: sign-in poll: http=%d error=%d %s", code, int(reply->error()),
                      qPrintable(reply->errorString()));
+            // **A failure in passing is not an answer (H20).** No answer, or a
+            // 5xx, ended the sign-in — after the person may already have
+            // approved it, with the console telling them the application can
+            // finish now. It is polled again until the code expires; only
+            // Core saying no (a 4xx) ends it.
+            if ((code == 0 || code >= 500) && !m_codeDeadline.hasExpired()) {
+                setStatus(tr("Omnuv is not answering right now; still waiting for your approval…"));
+                return;
+            }
+            // **Core's own reason (H23).** Refused, expired and already used
+            // are three answers, and its 400 says which.
+            const auto said = QJsonDocument::fromJson(reply->readAll()).object()
+                                  .value(QStringLiteral("error")).toString().trimmed();
             clearPending();
-            setStatus(tr("That sign-in was refused or expired. Try again."));
+            if (code == 0 || code >= 500)
+                setStatus(tr("The code expired while Omnuv was not answering. Try again."));
+            else if (!said.isEmpty())
+                setStatus(tr("That sign-in did not complete: %1. Try again.").arg(said));
+            else
+                setStatus(tr("That sign-in was refused or expired. Try again."));
             return;
         }
 
