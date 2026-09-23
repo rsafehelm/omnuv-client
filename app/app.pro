@@ -72,7 +72,20 @@ DEFINES += QT_DEPRECATED_WARNINGS
 # An environment variable rather than `CONFIG+=`, because `build-arch.bat` is
 # upstream's and passes qmake nothing: a switch here costs that file no
 # changes at all.
-!isEmpty($$(OMNUV_CREDENTIALS_TESTING)): DEFINES += OMNUV_CREDENTIALS_TESTING
+#
+# **One exact value, or the build stops.** Any non-empty value used to switch
+# the test store on, so a variable left over on a build machine or runner
+# compiled it into a release in silence, and that release put every person's
+# token under a test name. Only `test-build` means it; anything else is an
+# error naming the variable, and a build that has it says so as it configures.
+OMNUV_CREDENTIALS_TESTING_VALUE = $$(OMNUV_CREDENTIALS_TESTING)
+!isEmpty(OMNUV_CREDENTIALS_TESTING_VALUE) {
+    !equals(OMNUV_CREDENTIALS_TESTING_VALUE, "test-build") {
+        error("OMNUV_CREDENTIALS_TESTING is set to '$$OMNUV_CREDENTIALS_TESTING_VALUE'. Set it to test-build to build with the test credential store, or unset it.")
+    }
+    DEFINES += OMNUV_CREDENTIALS_TESTING
+    message("Building with the TEST credential store (OMNUV_CREDENTIALS_TESTING=test-build). Not for release.")
+}
 
 # You can also make your code fail to compile if you use deprecated APIs.
 # In order to do so, uncomment the following line.
