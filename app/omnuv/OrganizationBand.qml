@@ -18,6 +18,9 @@ RowLayout {
     id: bar
     spacing: Theme.spacingLoose
 
+    // The window owns the dialog; the bar only asks for it.
+    signal switchDeploymentRequested()
+
     readonly property var estate: Omnuv.estate
     readonly property var members: estate.members.data
 
@@ -164,6 +167,12 @@ RowLayout {
             id: moreMenu
             y: more.height
 
+            // Another Omnuv deployment, without signing out of this one:
+            // each keeps its own sign-in, so coming back needs none.
+            MenuItem {
+                text: qsTr("Switch deployment…")
+                onTriggered: bar.switchDeploymentRequested()
+            }
             MenuItem {
                 text: qsTr("Sign out")
                 onTriggered: Omnuv.signOut()

@@ -600,6 +600,34 @@ private slots:
         QVERIFY2(ended != own, "moved to an address that refused this token");
     }
 
+    // H5's window half: the signed-in window can switch deployment. That the
+    // switch keeps this Core's sign-in is setCoreUrl's own behaviour since 22
+    // September, not proved here: a fixture session sends no revocation, so
+    // this test could not see one either way.
+    void theSwitchDeploymentDialogChangesTheCore() {
+        HeldServer original, other; qputenv("OMNUV_FIXTURE_URL",original.url()); OmnuvSession s; prepare(s);
+        QFile source("/src/app/omnuv/OmnuvView.qml"); QVERIFY(source.open(QIODevice::ReadOnly));
+        const auto text=QString::fromUtf8(source.readAll());
+        const auto begin=text.lastIndexOf("    Dialog {",text.indexOf("id: switchDeployment"));
+        const auto end=text.indexOf("    Dialog {",begin+1); QVERIFY(begin>=0 && end>begin);
+        auto dialog=text.mid(begin,end-begin).replace("Omnuv.","sample.").replace("Theme.spacing","8");
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::Software); QQuickView view;
+        view.engine()->rootContext()->setContextProperty("sample",&s); QQmlComponent component(view.engine());
+        component.setData(("import QtQuick\nimport QtQuick.Controls\nimport QtQuick.Layouts\nRectangle { id: root; width: 900; height: 500; color: \"white\"\n"+dialog+"\n}").toUtf8(),QUrl("qrc:/omnuv/SwitchTest.qml"));
+        QTRY_VERIFY_WITH_TIMEOUT(!component.isLoading(),2000); QVERIFY2(component.isReady(),qPrintable(component.errorString()));
+        auto object=component.create(); QVERIFY2(object,qPrintable(component.errorString()));
+        view.setContent(QUrl("qrc:/omnuv/SwitchTest.qml"),&component,object); view.show();
+        auto popup=object->findChild<QObject*>("switchDeployment"); QVERIFY(popup); QVERIFY(QMetaObject::invokeMethod(popup,"open"));
+        QTRY_VERIFY(popup->property("visible").toBool());
+        auto field=object->findChild<QObject*>("deploymentField"); QVERIFY(field);
+        QCOMPARE(field->property("text").toString(),s.coreUrl());
+        field->setProperty("text",QString::fromUtf8(other.url())); QTest::qWait(50);
+        auto shot=view.grabWindow(); QVERIFY(!shot.isNull());
+        QVERIFY(shot.save(qEnvironmentVariable("OMNUV_TEST_ARTIFACT_DIR",QDir::tempPath())+"/switch-deployment.png"));
+        QVERIFY(QMetaObject::invokeMethod(popup,"accept"));
+        QTRY_COMPARE(s.coreUrl(),QString::fromUtf8(other.url()));
+    }
+
     void explicitMoveDialogRendersTheOriginalMembershipAndCancellation() {
         HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
         s.m_networkMovePrompt="Move to Project B? Revoke device old-device in Project A at https://original.example.test first.";

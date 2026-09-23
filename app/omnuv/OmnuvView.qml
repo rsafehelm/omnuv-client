@@ -308,6 +308,38 @@ Item {
 
     // ---------------------------------------------------------------- dialogs
 
+    // **Switching deployments while signed in (H5's window half).** The only
+    // address field was on the signed-out screen, so moving to another Core
+    // meant signing out first, which revoked this one's sign-in. Each Core has
+    // its own sign-in slot now: this changes the address and nothing else, and
+    // the other Core's sign-in, if there is one, is simply read.
+    Dialog {
+        id: switchDeployment
+        objectName: "switchDeployment"
+        anchors.centerIn: parent
+        width: Math.min(root.width - 80, 560)
+        modal: true
+        title: qsTr("Switch to another Omnuv deployment")
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        onAboutToShow: deploymentField.text = Omnuv.coreUrl
+        contentItem: ColumnLayout {
+            spacing: Theme.spacing
+            Label {
+                Layout.fillWidth: true
+                text: qsTr("You stay signed in here. If you have signed in to the other one before, " +
+                           "you will be again; otherwise it asks you to.")
+                wrapMode: Text.WordWrap
+            }
+            TextField {
+                id: deploymentField
+                objectName: "deploymentField"
+                Layout.fillWidth: true
+                placeholderText: qsTr("https://your-omnuv-address")
+                Accessible.name: qsTr("Omnuv address")
+            }
+        }
+        onAccepted: Omnuv.coreUrl = deploymentField.text
+    }
     Dialog {
         id: networkMove
         objectName: "networkMove"
@@ -765,6 +797,7 @@ Item {
 
         OrganizationBand {
             Layout.fillWidth: true
+            onSwitchDeploymentRequested: switchDeployment.open()
         }
 
         Notice {
