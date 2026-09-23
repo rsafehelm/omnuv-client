@@ -305,6 +305,11 @@ private:
     void setBusy(bool busy);
     void clearPending();
     QNetworkRequest request(const QString& path, bool authenticated) const;
+    QNetworkRequest requestAt(const QString& base, const QString& path, bool authenticated) const;
+    // H12: move to the address Core names as its own, once it answers there
+    // for the same account.
+    void considerCanonicalCore(const QString& named);
+    bool m_canonicalProbe = false;
 
     // Where the token lives. The same file the `omnuv-connect` command writes,
     // so signing in once serves both front ends of the same product.

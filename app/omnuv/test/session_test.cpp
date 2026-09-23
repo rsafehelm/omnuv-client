@@ -141,6 +141,24 @@ class OmnuvSessionTest : public QObject {
         s.m_projectIds={"a","b"}; s.m_projectNames={"A","B"};
         s.updateNetworkScope();
     }
+    // H12: one sign-in at `typed`, whose /v1/me names `own` as the Core's own
+    // address; `own` answers `code` for account `there`. Says where it ended.
+    void canonicalAttempt(int code, const char* there, QString* ended, QString* ownUrl) {
+        HeldServer typed, own; qputenv("OMNUV_FIXTURE_URL",typed.url()); OmnuvSession s; prepare(s);
+        *ownUrl=QString::fromUtf8(own.url());
+        // The constructor asked too; the request made here supersedes it, so
+        // both are waited for and the later one is answered.
+        s.m_identityPending=false; s.fetchIdentity();
+        QTRY_VERIFY(typed.count("/v1/me")>=2);
+        const auto latest=typed.find("/v1/me",typed.find("/v1/me")+1);
+        auto me=QJsonDocument::fromJson(identity()).object(); me["core"]=*ownUrl;
+        typed.answer(latest,200,QJsonDocument(me).toJson());
+        QTRY_VERIFY(own.find("/v1/me")>=0);
+        auto answer=QJsonDocument::fromJson(identity()).object(); answer["user_id"]=QString::fromLatin1(there);
+        own.answer(own.find("/v1/me"),code,code==200 ? QJsonDocument(answer).toJson() : QByteArray(R"({"error":"unauthorized"})"));
+        QTest::qWait(100);
+        *ended=s.coreUrl();
+    }
 private slots:
     void materialLabelsAndWindowUseTheSamePaletteInBothThemes() {
         QFile source("/src/app/gui/main.qml"); QVERIFY(source.open(QIODevice::ReadOnly));
@@ -568,6 +586,18 @@ private slots:
         daemon.state=2; s.m_tunnel->check(); QVERIFY(!s.m_tunnel->busy()); QVERIFY(!s.m_tunnel->joinInFlight());
         s.setCoreUrl(QString::fromUtf8(replacement.url()));
         QCOMPARE(s.coreUrl(),QString::fromUtf8(replacement.url()));
+    }
+
+    // H12: the session moves to the address Core names as its own, and only
+    // when that address answers for the same account.
+    void aCoreIsUsedAtTheAddressItNamesOnlyOnceItAnswersThereForTheSameAccount() {
+        QString ended, own;
+        canonicalAttempt(200, "account-a", &ended, &own); if (QTest::currentTestFailed()) return;
+        QCOMPARE(ended, own);
+        canonicalAttempt(200, "account-b", &ended, &own); if (QTest::currentTestFailed()) return;
+        QVERIFY2(ended != own, "moved to an address that answered for another account");
+        canonicalAttempt(401, "account-a", &ended, &own); if (QTest::currentTestFailed()) return;
+        QVERIFY2(ended != own, "moved to an address that refused this token");
     }
 
     void explicitMoveDialogRendersTheOriginalMembershipAndCancellation() {

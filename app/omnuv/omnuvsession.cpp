@@ -283,6 +283,7 @@ void OmnuvSession::fetchIdentity()
         }
         m_accountEmail = o[QStringLiteral("email")].toString();
         m_accountId = o[QStringLiteral("user_id")].toString();
+        considerCanonicalCore(o.value(QStringLiteral("core")).toString());
         m_identityKnown = true;
         m_estate->setIdentity(o[QStringLiteral("organization_name")].toString(),
                               o[QStringLiteral("organization_role")].toString());
@@ -509,7 +510,12 @@ void OmnuvSession::clearPending()
 
 QNetworkRequest OmnuvSession::request(const QString& path, bool authenticated) const
 {
-    QNetworkRequest req(QUrl(m_coreUrl + path));
+    return requestAt(m_coreUrl, path, authenticated);
+}
+
+QNetworkRequest OmnuvSession::requestAt(const QString& base, const QString& path, bool authenticated) const
+{
+    QNetworkRequest req(QUrl(base + path));
     req.setTransferTimeout(15000);
     req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
     // H2b: a redirect is an answer, not an instruction. Qt follows https to
@@ -519,7 +525,7 @@ QNetworkRequest OmnuvSession::request(const QString& path, bool authenticated) c
     req.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
     // The last line of H2: whatever set the address, a token never goes out
     // in the clear. The fixture's token is not a credential.
-    if (authenticated && (m_fixture || OmnuvCredentials::secureCore(m_coreUrl))) {
+    if (authenticated && (m_fixture || OmnuvCredentials::secureCore(base))) {
         req.setRawHeader("authorization", QStringLiteral("Bearer %1").arg(m_token).toUtf8());
     }
     return req;
@@ -684,6 +690,51 @@ void OmnuvSession::poll()
 
         m_refreshTimer.start();
         fetchIdentity();
+    });
+}
+
+// **One Core, one address (H12, 23 September 2026).** The same Core answers
+// as api.omnuv.com, console.omnuv.com and the bare domain, and this app keeps a
+// sign-in and a network membership per address — so a person who typed the
+// console's address had a second sign-in, and a device enrolled under one
+// spelling was on "another network" under the next, and was asked to move.
+//
+// Core names its own address in /v1/me. The session moves there only when it
+// is proved to be the same place: this token answers there, for this account.
+// A name that does not answer, or answers for someone else, changes nothing —
+// so a malicious server can at most point the app at a Core where its own
+// token is worthless. Never under an address named for one run, never during
+// a join, and never away from a membership made under the current address:
+// that device stays where it is rather than being asked to move.
+void OmnuvSession::considerCanonicalCore(const QString& named)
+{
+    if (named.isEmpty() || m_coreUrlOverridden || m_canonicalProbe) return;
+    const QString canonical = OmnuvCredentials::origin(named);
+    if (canonical.isEmpty() || canonical == tokenOrigin() || !OmnuvCredentials::secureCore(canonical)) return;
+    if (m_tunnel->joinInFlight()) return;
+    const auto member = m_tunnel->membership();
+    if (!member.isEmpty() && member.value(QStringLiteral("core_url")).toString() != canonical) return;
+    m_canonicalProbe = true;
+    const auto context = m_context;
+    const auto account = m_accountId;
+    QNetworkReply* reply = m_net.get(requestAt(canonical, QStringLiteral("/v1/me"), true));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, context, account, canonical]() {
+        reply->deleteLater();
+        m_canonicalProbe = false;
+        if (context != m_context || account != m_accountId || m_tunnel->joinInFlight()) return;
+        const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const auto there = QJsonDocument::fromJson(reply->readAll()).object().value(QStringLiteral("user_id")).toString();
+        if (code != 200 || there.isEmpty() || there != account) {
+            qInfo().noquote() << "omnuv: staying at" << m_coreUrl << "- its own address" << canonical << "answered" << code;
+            return;
+        }
+        const QString was = m_coreUrl;
+        m_coreUrl = canonical;
+        saveToken(m_token);
+        remember(QStringLiteral("omnuv/coreUrl"), m_coreUrl);
+        updateNetworkScope();
+        emit coreUrlChanged();
+        setStatus(tr("Using %1, this Omnuv's own address, instead of %2.").arg(canonical, was));
     });
 }
 
