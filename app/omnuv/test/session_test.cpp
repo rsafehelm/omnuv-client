@@ -647,6 +647,29 @@ private slots:
         QCOMPARE(QJsonDocument::fromJson(sent.toUtf8()).object().value("management_url").toString(),QString("https://overlay.field.invalid"));
     }
 
+    // B10: an address named for one run beats the saved one, and is never
+    // saved over it. A real session, not a fixture, on settings of its own.
+    void theCoreUrlFlagBeatsTheSavedAddressAndIsNotSaved() {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        QSettings::setPath(QSettings::NativeFormat, QSettings::UserScope, dir.path());
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, dir.path());
+        const auto fixture = qgetenv("OMNUV_FIXTURE_URL");
+        qunsetenv("OMNUV_FIXTURE_URL");
+        QSettings().setValue("omnuv/coreUrl", "https://saved.example.test");
+        OmnuvSession::setCoreUrlOverride("https://flag.example.test/");
+        {
+            OmnuvSession s;
+            QCOMPARE(s.coreUrl(), QString("https://flag.example.test"));
+        }
+        OmnuvSession::setCoreUrlOverride(QString());
+        QCOMPARE(QSettings().value("omnuv/coreUrl").toString(), QString("https://saved.example.test"));
+        {
+            OmnuvSession s;
+            QCOMPARE(s.coreUrl(), QString("https://saved.example.test"));
+        }
+        if (!fixture.isEmpty()) qputenv("OMNUV_FIXTURE_URL", fixture);
+    }
+
     void explicitMoveDialogRendersTheOriginalMembershipAndCancellation() {
         HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
         s.m_networkMovePrompt="Move to Project B? Revoke device old-device in Project A at https://original.example.test first.";
