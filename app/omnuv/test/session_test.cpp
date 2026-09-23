@@ -238,6 +238,19 @@ private slots:
         QCOMPARE(pairing.pair("7.0.0.0","1234",certificate),NvPairingManager::FAILED);
         QCOMPARE(server.calls.size(),requests);
     }
+    // H25: nothing answering is a service that is not running, and says so;
+    // an answer this version cannot read is an older service, and says that.
+    void aStoppedServiceIsNotCalledOutOfDate() {
+        HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
+        s.m_tunnel->m_request=[](const QString&) { return QString(); };
+        s.fetchDeviceKey();
+        QVERIFY2(s.m_tunnel->operationError().contains("not running"), qPrintable(s.m_tunnel->operationError()));
+        QVERIFY(!s.m_tunnel->operationError().contains("Update"));
+        s.m_tunnel->m_request=[](const QString&) { return QStringLiteral("state 2 - - an answer from another era"); };
+        s.fetchDeviceKey();
+        QVERIFY2(s.m_tunnel->operationError().contains("Update"), qPrintable(s.m_tunnel->operationError()));
+        QCOMPARE(server.count("/v1/networks"),0);
+    }
     void enrollmentCauseSurvivesPollingAndClearsOnSuccessfulRetry() {
         HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
         FixtureTunnel daemon;

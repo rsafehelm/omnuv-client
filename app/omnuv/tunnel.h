@@ -66,6 +66,10 @@ public:
     bool hasIdentity() const { return m_hasIdentity; }
     bool membershipSupported() const { return m_membershipSupported; }
     bool membershipVerified() const { return m_membershipVerified; }
+    // Whether anything answered the last membership read. Nothing answering
+    // is a service that is not running; an answer that cannot be read is an
+    // older service (H25). The two need different remedies.
+    bool serviceAnswered() const { return m_serviceAnswered; }
     void beginOperation(const QString& why);
     bool membershipMatches(const QJsonObject& scope) const;
     void resumeMembership(const QJsonObject& membership);
@@ -153,6 +157,7 @@ private:
     QJsonObject m_scope, m_membership, m_membershipSnapshot;
     QString m_membershipRevision;
     bool m_hasIdentity = false, m_membershipSupported = false, m_membershipVerified = false, m_legacyAction = false;
+    bool m_serviceAnswered = false;
     bool m_waitingForKey = false;
     std::function<QString(const QString&)> m_request;
     QTimer m_timer;

@@ -275,6 +275,7 @@ private:
     // Answers the tunnel's needsKey(): asks Core for a one-time enrolment key
     // for this device, then hands it back.
     void fetchDeviceKey();
+    QString tunnelServiceProblem(const QString& consequence) const;
     void leaveNetwork(bool askCore);
     void updateNetworkScope();
     void observeEnrollment();

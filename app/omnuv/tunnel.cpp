@@ -307,6 +307,7 @@ bool OmnuvTunnel::readMembership()
                                              : QStringLiteral("membership-v1 ") + core);
     if (!core.isEmpty() && reply.startsWith(QLatin1String("err membership-v1 takes no arguments")))
         reply = m_request(QStringLiteral("membership-v1"));
+    m_serviceAnswered = !reply.isEmpty();
     const auto document = QJsonDocument::fromJson(reply.toUtf8());
     const auto value = document.object();
     m_membershipSnapshot = value;

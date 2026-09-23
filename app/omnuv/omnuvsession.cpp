@@ -1014,6 +1014,23 @@ void OmnuvSession::revokePendingEnrollment()
 }
 
 // Establish the scope before either resuming an identity or creating a key.
+// **Not running is not out of date (H25).** Join said "update the network
+// service" whenever the membership could not be read, and the usual reason is
+// that nothing answered at all: the service is stopped, and updating it is the
+// wrong remedy. Nothing answering and an answer this version cannot read are
+// told apart, and each names what to do.
+QString OmnuvSession::tunnelServiceProblem(const QString& consequence) const
+{
+    if (!m_tunnel->serviceAnswered()) {
+#ifdef Q_OS_WIN
+        return tr("The Omnuv network service (OnvTunnel) is not running. Start it from Services, or reinstall Omnuv, then join again. %1").arg(consequence);
+#else
+        return tr("The Omnuv network service is not running. Start Omnuv again, then join again. %1").arg(consequence);
+#endif
+    }
+    return tr("Update the Omnuv network service before joining: this version cannot read its answer. %1").arg(consequence);
+}
+
 void OmnuvSession::fetchDeviceKey()
 {
     if (!signedIn()) {
@@ -1028,7 +1045,7 @@ void OmnuvSession::fetchDeviceKey()
     const auto scope = networkScope();
     m_tunnel->setScope(scope);
     if (!m_tunnel->readMembership()) {
-        m_tunnel->giveUp(tr("Update the Omnuv network service before joining. Its existing identity has been kept.")); return;
+        m_tunnel->giveUp(tunnelServiceProblem(tr("Its existing identity has been kept."))); return;
     }
     bool valid;
     m_enrollmentJournal.records(&valid);
@@ -1066,7 +1083,7 @@ void OmnuvSession::fetchDeviceKey()
         const auto previous = m_enrollmentJournal.records().value(journalKey).toObject();
         const auto previousMembership = previous.value("membership").toObject();
         if (!m_tunnel->readMembership()) {
-            m_tunnel->giveUp(tr("The network service could not verify its membership. No enrollment was created.")); return;
+            m_tunnel->giveUp(tunnelServiceProblem(tr("No enrollment was created."))); return;
         }
         const auto current = m_tunnel->membership();
         const bool previouslyRevoked = previous.value("cleanup_done").toBool()
