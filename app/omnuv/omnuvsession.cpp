@@ -523,7 +523,11 @@ void OmnuvSession::signIn()
         setBusy(false);
 
         if (reply->error() != QNetworkReply::NoError) {
-            setStatus(tr("Could not reach %1.").arg(m_coreUrl));
+            // **What went wrong, in the network library's words (H21).** A
+            // name that does not resolve, a certificate that does not verify
+            // and a refused connection were one sentence, and each has a
+            // different fix.
+            setStatus(tr("Could not reach %1: %2").arg(m_coreUrl, reply->errorString()));
             return;
         }
 

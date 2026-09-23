@@ -240,6 +240,14 @@ private slots:
     }
     // H25: nothing answering is a service that is not running, and says so;
     // an answer this version cannot read is an older service, and says that.
+    // H21: an unreachable Core says why, in the network library's words.
+    void anUnreachableCoreSaysWhy() {
+        QTcpServer closed; QVERIFY(closed.listen(QHostAddress::LocalHost)); const auto port=closed.serverPort(); closed.close();
+        qputenv("OMNUV_FIXTURE_URL",QStringLiteral("http://127.0.0.1:%1").arg(port).toUtf8()); OmnuvSession s;
+        s.signOut(); s.signIn();
+        QTRY_VERIFY(s.status().startsWith("Could not reach"));
+        QVERIFY2(s.status().contains("refused", Qt::CaseInsensitive), qPrintable(s.status()));
+    }
     void aStoppedServiceIsNotCalledOutOfDate() {
         HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
         s.m_tunnel->m_request=[](const QString&) { return QString(); };
