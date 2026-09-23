@@ -242,6 +242,26 @@ private slots:
     // an answer this version cannot read is an older service, and says that.
     // H21: an unreachable Core says why, in the network library's words.
     // H22: a 403 is a refusal, not a lost session; only a 401 signs out.
+    // H24: a key the overlay would not take was spent or expired; it is not a
+    // membership taken away, and the words say which. A refusal that names no
+    // key still reads as a membership ended.
+    void aSpentKeyIsNotCalledAnEndedMembership() {
+        HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
+        auto failing=[](const char* why) {
+            return [why](const QString& line) -> QString {
+                if (line.startsWith("membership-v1")) return QString::fromUtf8(QJsonDocument(QJsonObject{
+                    {"version",1},{"state",3},{"error",why},{"address",""},{"has_identity",true},{"verified",false},
+                    {"pending",false},{"revision","r"},{"membership",QJsonValue(QJsonValue::Null)}}).toJson(QJsonDocument::Compact));
+                return QStringLiteral("state 3 - - ") + why;
+            };
+        };
+        s.m_tunnel->m_request=failing("unauthorized: invalid setup-key");
+        s.m_tunnel->check();
+        QVERIFY2(s.m_tunnel->state().contains("already used or has expired"), qPrintable(s.m_tunnel->state()));
+        s.m_tunnel->m_request=failing("unauthorized: permission denied");
+        s.m_tunnel->check();
+        QVERIFY2(s.m_tunnel->state().contains("no longer a member"), qPrintable(s.m_tunnel->state()));
+    }
     void aRefusalDoesNotSignOut() {
         HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
         s.m_token="fixture-token";
