@@ -92,6 +92,9 @@ class OmnuvSession : public QObject
     Q_PROPERTY(OmnuvAppearance* appearance READ appearance CONSTANT)
 
 public:
+    // H13: where the chosen project is kept, one per Core, so a switch to
+    // another Core and back keeps each one's choice.
+    static QString projectSettingKey(const QString& coreUrl);
     explicit OmnuvSession(QObject* parent = nullptr);
 
     // **An address named for one run, never remembered** (`--core-url` on
@@ -360,6 +363,7 @@ private:
     QString m_insecureCoreUrl;
     // The origin this session's token is read from and written to.
     QString tokenOrigin() const;
+    void rememberProject();
     QString m_token;
     QString m_deviceCode;
     QString m_userCode;

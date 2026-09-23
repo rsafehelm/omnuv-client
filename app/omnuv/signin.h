@@ -27,4 +27,14 @@ namespace OmnuvSignIn
 // there is no event loop yet for QCoreApplication::exit() to unwind.
 void start(const QStringList& args, QObject* parent);
 
+// What `signin --as <email>` does with a token already held, once the wait for
+// the account's name is over (H17).
+enum class HeldToken {
+    Already,    // it is that account's: nothing to do
+    Replace,    // Core named another account: sign out and grant a fresh one
+    Grant,      // Core refused the token (401), which already signed out
+    Unknown,    // Core did not say: keep the token and fail, changing nothing
+};
+HeldToken judgeHeldToken(const QString& who, bool stillSignedIn, const QString& expect);
+
 }

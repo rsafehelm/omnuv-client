@@ -1,5 +1,6 @@
 #include "../omnuvsession.h"
 #include "../pairing.h"
+#include "../signin.h"
 #include "../../backend/nvpairingmanager.h"
 #include "../../backend/nvcomputer.h"
 #include <QElapsedTimer>
@@ -343,6 +344,26 @@ private slots:
         s.m_tunnel->check(); QVERIFY(s.m_tunnel->operationError().contains("cannot read"));
         for (const auto& call:server.calls) QVERIFY(!call.path.endsWith("/devices"));
     }
+    // H17: `signin --as` moves a held token only on Core's word. Silence keeps
+    // it; another account's name replaces it; a 401 has already dropped it.
+    void signinAsKeepsATokenCoreDidNotAnswerFor() {
+        using OmnuvSignIn::HeldToken;
+        using OmnuvSignIn::judgeHeldToken;
+        QCOMPARE(judgeHeldToken(QString(), true, "a@x.test"), HeldToken::Unknown);
+        QCOMPARE(judgeHeldToken(QString(), false, "a@x.test"), HeldToken::Grant);
+        QCOMPARE(judgeHeldToken("A@X.test", true, "a@x.test"), HeldToken::Already);
+        QCOMPARE(judgeHeldToken("b@x.test", true, "a@x.test"), HeldToken::Replace);
+    }
+
+    // H13: the chosen project is kept per Core. Two spellings of one origin
+    // share a key; another Core has its own, and none is the shared old one.
+    void theChosenProjectIsKeptPerCore() {
+        const QString prod = OmnuvSession::projectSettingKey("https://api.omnuv.com");
+        QCOMPARE(OmnuvSession::projectSettingKey("HTTPS://API.omnuv.com:443/"), prod);
+        QVERIFY(OmnuvSession::projectSettingKey("https://api.test.omnuv.com") != prod);
+        QVERIFY(prod != QStringLiteral("omnuv/projectId"));
+    }
+
     void enrollmentAuthenticationFailureOffersSignInAgain() {
         HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
         s.fetchDeviceKey(); QTRY_VERIFY(server.find("/v1/networks?project=a")>=0);

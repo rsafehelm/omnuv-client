@@ -212,7 +212,10 @@ OmnuvSession::OmnuvSession(QObject* parent)
     // comes back to it from a stream. Doing both would send two requests every
     // time the application starts.
     if (!m_fixture) {
-        m_projectId = settings.value(QStringLiteral("omnuv/projectId")).toString();
+        // This Core's own choice; the single key every Core once shared is
+        // read only when there is none, and is never written again (H13).
+        m_projectId = settings.value(projectSettingKey(m_coreUrl),
+                                     settings.value(QStringLiteral("omnuv/projectId"))).toString();
     }
 
     if (signedIn()) {
@@ -301,7 +304,7 @@ void OmnuvSession::fetchIdentity()
             if (m_tunnel->busy()) m_tunnel->giveUp(tr("Network enrollment was cancelled because the account or project changed."));
             m_projectId = m_projectIds.value(0);
             emit connectionContextChanged();
-            remember(QStringLiteral("omnuv/projectId"), m_projectId);
+            rememberProject();
         }
         updateNetworkScope();
         m_estate->setProject(m_projectId);
@@ -332,7 +335,7 @@ void OmnuvSession::selectProject(const QString& id)
     updateNetworkScope();
     setReadProblem(false, QString());
     emit connectionContextChanged();
-    remember(QStringLiteral("omnuv/projectId"), m_projectId);
+    rememberProject();
     emit projectsChanged();
     // The machines on screen belong to the project that was chosen a moment
     // ago; leaving them there would be showing one project's estate under
@@ -351,6 +354,19 @@ QString OmnuvSession::projectQuery() const
                                  : QStringLiteral("?project=%1").arg(m_projectId);
 }
 
+
+QString OmnuvSession::projectSettingKey(const QString& coreUrl)
+{
+    return QStringLiteral("omnuv/projectId/") + OmnuvCredentials::origin(coreUrl);
+}
+
+// Not for an address named for this run only: a harness run against the test
+// Core must not rewrite the project a person chose on production (H13).
+void OmnuvSession::rememberProject()
+{
+    if (m_coreUrlOverridden || tokenOrigin().isEmpty()) return;
+    remember(projectSettingKey(m_coreUrl), m_projectId);
+}
 
 void OmnuvSession::remember(const QString& key, const QString& value)
 {
@@ -433,6 +449,8 @@ void OmnuvSession::setCoreUrl(const QString& url)
     m_coreUrl = trimmed;
     m_coreUrlOverridden = false;
     remember(QStringLiteral("omnuv/coreUrl"), m_coreUrl);
+    // That Core's own last choice, checked against its /v1/me as any is.
+    if (!m_fixture) m_projectId = QSettings().value(projectSettingKey(m_coreUrl)).toString();
     loadToken();
     emit coreUrlChanged();
     emit signedInChanged();
@@ -626,8 +644,6 @@ void OmnuvSession::poll()
 
         invalidateContext();
         m_token = token;
-        saveToken(token);
-
         // **A device that holds a token remembers the deployment it holds it
         // for.** The address is otherwise persisted only by `setCoreUrl()` —
         // which is a person typing it into the window — so a device signed in
@@ -637,9 +653,20 @@ void OmnuvSession::poll()
         // locally: nothing reached the network, and the client reported
         // "Could not find your network" for an address it no longer had.
         // Found on the rig on 16 September, by an access log that showed the
-        // request had never been made.
-        // Not for an address named for this run only: see setCoreUrlOverride.
-        if (!m_coreUrlOverridden) remember(QStringLiteral("omnuv/coreUrl"), m_coreUrl);
+        // request had never been made. Not for an address named for this run
+        // only: see setCoreUrlOverride.
+        //
+        // **The address first, and on disk, then the token (H15).** In the
+        // other order a crash between the two left the new Core's token in
+        // its slot and the old Core's address saved, and the next launch
+        // opened the old Core. This way round the worst case is the new
+        // address with no token yet, which asks for a sign-in: what it is.
+        if (!m_coreUrlOverridden && !m_fixture) {
+            remember(QStringLiteral("omnuv/coreUrl"), m_coreUrl);
+            QSettings().sync();
+        }
+        saveToken(token);
+
         clearPending();
         emit signedInChanged();
         setStatus(QString());

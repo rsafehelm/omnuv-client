@@ -370,26 +370,44 @@ void start(const QStringList& args, QObject* parent)
     }
     if (session->signedIn()) {
         // The identity is fetched, so this waits for it rather than assuming.
-        // A session that cannot say who it is within ten seconds is signed
-        // out: an unanswerable token is not this account's until it says so.
+        //
+        // **No answer is not another account (H17, 23 September 2026).** A
+        // session that could not say who it was within ten seconds used to be
+        // signed out, so a network blip deleted a working sign-in and minted
+        // a second token. Now only Core's own word moves it: a name that is
+        // not `expect`, or a 401, which has already signed the session out.
+        // Silence changes nothing and fails the run.
         auto* probe = new QTimer(parent);
         probe->setInterval(500);
         auto tries = std::make_shared<int>(0);
         QObject::connect(probe, &QTimer::timeout, session,
                          [session, probe, expect, parent, tries]() {
                              const QString who = session->accountEmail();
-                             if (who.isEmpty() && ++*tries < 20) {
+                             // A 401 has signed the session out: no need to wait on.
+                             if (who.isEmpty() && session->signedIn() && ++*tries < 20) {
                                  return;
                              }
                              probe->stop();
-                             if (!who.isEmpty() && who.compare(expect, Qt::CaseInsensitive) == 0) {
+                             switch (judgeHeldToken(who, session->signedIn(), expect)) {
+                             case HeldToken::Already:
                                  fact("account", who);
                                  fact("signed-in", QStringLiteral("already"));
                                  ::exit(0);
+                             case HeldToken::Unknown:
+                                 fact("signed-in", QStringLiteral("unknown"));
+                                 complain(QStringLiteral(
+                                     "%1 did not say which account this device's sign-in "
+                                     "belongs to, so it was kept as it is. Try again when "
+                                     "it answers.").arg(session->coreUrl()));
+                                 ::exit(1);
+                             case HeldToken::Replace:
+                                 fact("account-was", who);
+                                 session->signOut();
+                                 break;
+                             case HeldToken::Grant:
+                                 fact("account-was", QStringLiteral("(refused)"));
+                                 break;
                              }
-                             fact("account-was",
-                                  who.isEmpty() ? QStringLiteral("(unanswered)") : who);
-                             session->signOut();
                              (new Driver(parent, session))->begin();
                          });
         probe->start();
@@ -400,6 +418,14 @@ void start(const QStringList& args, QObject* parent)
     // does nothing before the event loop it is meant to unwind has started.
     // From here on there is a loop, and Driver uses it.
     (new Driver(parent, session))->begin();
+}
+
+HeldToken judgeHeldToken(const QString& who, bool stillSignedIn, const QString& expect)
+{
+    if (!who.isEmpty()) {
+        return who.compare(expect, Qt::CaseInsensitive) == 0 ? HeldToken::Already : HeldToken::Replace;
+    }
+    return stillSignedIn ? HeldToken::Unknown : HeldToken::Grant;
 }
 
 } // namespace OmnuvSignIn
