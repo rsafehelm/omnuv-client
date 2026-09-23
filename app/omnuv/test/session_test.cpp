@@ -731,6 +731,18 @@ private slots:
         QVERIFY2(said.startsWith("state"), qPrintable("a daemon of this user on a development socket was refused: " + said));
     }
 
+    // 1325: a name from Core reaches ssh (and, on Windows, cmd) only when it
+    // is a machine's name and a login name.
+    void onlyAMachinesNameReachesSsh() {
+        QVERIFY(OmnuvSession::sshTargetIsSafe("gpu-1-ab12cd34.internal", "omnuv"));
+        QVERIFY(OmnuvSession::sshTargetIsSafe("web.internal", QString()));
+        QVERIFY(OmnuvSession::sshTargetIsSafe("10.200.0.4", "ubuntu"));
+        for (const char* host : {"-oProxyCommand=calc", "x&calc", "a b", "web|x", "web.internal;id", "", ".web", "web..x"})
+            QVERIFY2(!OmnuvSession::sshTargetIsSafe(host, "omnuv"), host);
+        for (const char* user : {"-oProxy", "a&b", "root x", "%USERNAME%"})
+            QVERIFY2(!OmnuvSession::sshTargetIsSafe("web.internal", user), user);
+    }
+
     void explicitMoveDialogRendersTheOriginalMembershipAndCancellation() {
         HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
         s.m_networkMovePrompt="Move to Project B? Revoke device old-device in Project A at https://original.example.test first.";

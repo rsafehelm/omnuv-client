@@ -23,6 +23,7 @@
 #include <QProcess>
 #include <QGuiApplication>
 #include <QSettings>
+#include <QRegularExpression>
 #include <QStandardPaths>
 #include <QUrl>
 #include <QSysInfo>
@@ -945,8 +946,26 @@ void OmnuvSession::refresh(bool everything)
 // An ordinary machine is reached with ssh, and every desktop starts a terminal
 // its own way. Try the ones that exist, take the first that starts, and tell
 // the caller if none did.
+// **The names come from Core, so they are checked before any program sees
+// them.** On Windows they reached `cmd /c start`, where `&` or `|` in a
+// machine's name would run a command; on every platform a name starting with
+// `-` reached ssh as an option, and `-oProxyCommand=` runs one. The same rules
+// the omnuv:// handlers apply: a DNS name, and a login name.
+bool OmnuvSession::sshTargetIsSafe(const QString& host, const QString& user)
+{
+    static const QRegularExpression label(QStringLiteral(
+        "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$"));
+    static const QRegularExpression login(QStringLiteral("^[A-Za-z_][A-Za-z0-9_.-]{0,31}$"));
+    if (host.size() > 253 || !label.match(host).hasMatch()) return false;
+    return user.isEmpty() || login.match(user).hasMatch();
+}
+
 bool OmnuvSession::openTerminal(const QString& host, const QString& user)
 {
+    if (!sshTargetIsSafe(host, user)) {
+        qWarning().noquote() << "omnuv: not opening ssh to a name that is not a machine's:" << user << host;
+        return false;
+    }
     const QString target = user.isEmpty() ? host : (user + QLatin1Char('@') + host);
 
 #if defined(Q_OS_WIN)

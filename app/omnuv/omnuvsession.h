@@ -95,6 +95,9 @@ public:
     // H13: where the chosen project is kept, one per Core, so a switch to
     // another Core and back keeps each one's choice.
     static QString projectSettingKey(const QString& coreUrl);
+    // Whether a machine's name and user may be handed to ssh: the link
+    // handlers' own rules, a DNS name and a login name. Pure, for tests.
+    static bool sshTargetIsSafe(const QString& host, const QString& user);
     explicit OmnuvSession(QObject* parent = nullptr);
 
     // **An address named for one run, never remembered** (`--core-url` on
