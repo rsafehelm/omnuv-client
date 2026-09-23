@@ -241,6 +241,20 @@ private slots:
     // H25: nothing answering is a service that is not running, and says so;
     // an answer this version cannot read is an older service, and says that.
     // H21: an unreachable Core says why, in the network library's words.
+    // H22: a 403 is a refusal, not a lost session; only a 401 signs out.
+    void aRefusalDoesNotSignOut() {
+        HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
+        s.m_token="fixture-token";
+        s.refresh();
+        QTRY_VERIFY(server.find("/v1/instances?project=a")>=0);
+        server.answer(server.find("/v1/instances?project=a"),403,R"({"error":"this project is closing"})");
+        QTest::qWait(80);
+        QVERIFY2(s.signedIn(), "a 403 signed the person out");
+        s.refresh();
+        QTRY_VERIFY(server.find("/v1/instances?project=a",server.find("/v1/instances?project=a")+1)>=0);
+        server.answer(server.find("/v1/instances?project=a",server.find("/v1/instances?project=a")+1),401,R"({"error":"unauthorized"})");
+        QTRY_VERIFY(!s.signedIn());
+    }
     void anUnreachableCoreSaysWhy() {
         QTcpServer closed; QVERIFY(closed.listen(QHostAddress::LocalHost)); const auto port=closed.serverPort(); closed.close();
         qputenv("OMNUV_FIXTURE_URL",QStringLiteral("http://127.0.0.1:%1").arg(port).toUtf8()); OmnuvSession s;

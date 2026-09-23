@@ -244,7 +244,11 @@ void OmnuvSession::fetchIdentity()
         if (context != m_context || sequence != m_identityRequest) return;
         m_identityPending = false;
         const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        if (code == 401 || code == 403) {
+        // **Only a 401 means the token is gone (H22).** A 403 is Core refusing
+        // this request — a policy, a fenced project — with the token still
+        // good, and it signed the person out. It is shown below, in Core's
+        // words, like any other refusal.
+        if (code == 401) {
             accessTakenBack();
             return;
         }
@@ -806,7 +810,11 @@ void OmnuvSession::refresh(bool everything)
         if (context != m_context || sequence != m_machineRequest) return;
 
         const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        if (code == 401 || code == 403) {
+        // **Only a 401 means the token is gone (H22).** A 403 is Core refusing
+        // this request — a policy, a fenced project — with the token still
+        // good, and it signed the person out. It is shown below, in Core's
+        // words, like any other refusal.
+        if (code == 401) {
             accessTakenBack();
             return;
         }
