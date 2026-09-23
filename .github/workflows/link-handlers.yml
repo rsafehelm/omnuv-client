@@ -24,6 +24,11 @@ jobs:
         run: sh tests/connect/handle_test.sh
       - name: Shell sign-in against a stand-in Core
         run: sh tests/connect/signin_test.sh
+      - name: Shell enrol names where a key leads before spending it
+        run: sh tests/connect/enrol_test.sh
       - name: PowerShell handler (Windows)
         shell: pwsh
         run: pwsh -NoProfile -File tests/connect/handle_test.ps1
+      - name: PowerShell enrol names where a key leads before spending it
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/connect/enrol_test.ps1

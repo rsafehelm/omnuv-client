@@ -5,6 +5,7 @@
 # it worked.
 #
 #   omnuv-connect enrol                  join the private network (asks for the key)
+#   omnuv-connect enrol -Yes             without the confirmation window
 #   omnuv-connect handle omnuv://…       what the console's buttons open
 #
 # **The streaming client is ours and ships with this package.** It used to be
@@ -30,6 +31,10 @@ param(
     [Parameter(Position = 0)][string]$Command = 'help',
     [Parameter(Position = 1)][string]$Key,
     [string]$ManagementUrl = '@MANAGEMENT_URL@',
+    [string]$CoreUrl = '@CORE_URL@',
+    # Join without the Yes/No window, once the script has said where the key
+    # leads. For a run with no desktop to show the window on.
+    [switch]$Yes,
     # The installer's way to hand over a key: a file only it and this can
     # read, removed once read, rather than an argument (H3b).
     [string]$KeyFile,
@@ -106,6 +111,41 @@ function Confirm-LinkEnrol {
     if ($answer -ne 'Yes') { Die 'joining was cancelled' }
 }
 
+# **Where a key leads, before it is spent (H3).** A pasted key could be
+# anybody's, and the management address alone does not say whose network it
+# joins. Core answers for a key it minted: which device, network, project and
+# organization. A key it did not mint, one already spent, and no answer at all
+# each stop here, before the key reaches the client. Could not ask is not a yes.
+function Confirm-KeyDestination($Key) {
+    if (-not $CoreUrl -or $CoreUrl -eq '@CORE_URL@') { Die 'no Omnuv address was built into this package; pass -CoreUrl' }
+    $origin = try { [Uri]$CoreUrl } catch { $null }
+    if (-not $origin -or -not ($origin.Scheme -eq 'https' -or ($origin.Scheme -eq 'http' -and $origin.IsLoopback))) {
+        Die "$CoreUrl is not an https:// address, and a key is never sent over plain http"
+    }
+    $body = @{ key = $Key } | ConvertTo-Json -Compress
+    $status = 0; $answer = $null
+    try {
+        $r = Invoke-WebRequest -UseBasicParsing -Method Post -Uri ($CoreUrl.TrimEnd('/') + '/v1/devices/key-info') `
+            -ContentType 'application/json' -Body $body
+        $status = [int]$r.StatusCode
+        $answer = $r.Content | ConvertFrom-Json
+    } catch {
+        $resp = $_.Exception.Response
+        if ($resp) { $status = [int]$resp.StatusCode }
+    }
+    if ($status -eq 404) { Die "$CoreUrl did not issue that key. Check you copied it from your own console." }
+    if ($status -ne 200 -or -not $answer) { Die "could not ask $CoreUrl where that key leads (HTTP $status), so it was not used. Try again." }
+    if ($answer.usable -ne $true) { Die 'that key has already been used, was cancelled, or has expired. Add the device again in the console.' }
+    $where = "This key joins this computer, as `"$($answer.device)`", to the network `"$($answer.network)`" of project `"$($answer.project)`" in the organization `"$($answer.organization)`", at $CoreUrl."
+    Say $where
+    if ($Yes) { return }
+    # A window rather than a console prompt: the installer runs this with no
+    # console, and the same question is asked the same way from either.
+    try { Add-Type -AssemblyName PresentationFramework } catch { Die 'no window to confirm in; run again with -Yes if that is right' }
+    $choice = [System.Windows.MessageBox]::Show("$where`n`nJoin it?", 'Omnuv Connect', 'YesNo', 'Question', 'No')
+    if ($choice -ne 'Yes') { Die 'not joined; the key was not used' }
+}
+
 # The console emits omnuv:// links so a person clicks a button instead of
 # copying a key or remembering a machine's name.
 function Invoke-Link($Url) {
@@ -157,7 +197,7 @@ function Invoke-Link($Url) {
 
 switch ($Command.ToLower()) {
     'handle'  {
-        if ($Extra -or $PSBoundParameters.ContainsKey('ManagementUrl')) { Die 'that link is malformed: it arrived as more than one argument' }
+        if ($Extra -or $Yes -or $PSBoundParameters.ContainsKey('ManagementUrl') -or $PSBoundParameters.ContainsKey('CoreUrl')) { Die 'that link is malformed: it arrived as more than one argument' }
         Invoke-Link $Key
     }
     { $_ -in 'enrol', 'enroll', 'join' } {
@@ -178,6 +218,7 @@ switch ($Command.ToLower()) {
         if (-not $ManagementUrl -or $ManagementUrl -eq '@MANAGEMENT_URL@') {
             Die 'no network address was built into this package; pass -ManagementUrl'
         }
+        Confirm-KeyDestination $Key
         Say 'Joining your private network…'
         # **Forwarded, not reimplemented.** The client holds the tunnel, so it
         # is the only thing that can join with it. It prints `state=` lines and
@@ -194,5 +235,5 @@ switch ($Command.ToLower()) {
         Say 'This device now appears in your Omnuv console under Network, where you can revoke it.'
     }
     'version' { Say "omnuv-connect $Version" }
-    default   { Get-Content $PSCommandPath | Select-Object -Skip 1 -First 7 | ForEach-Object { $_ -replace '^# ?', '' } }
+    default   { Get-Content $PSCommandPath | Select-Object -Skip 1 -First 8 | ForEach-Object { $_ -replace '^# ?', '' } }
 }

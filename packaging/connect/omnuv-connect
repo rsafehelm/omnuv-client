@@ -7,6 +7,7 @@
 #
 #   omnuv-connect enrol                  join the private network (asks for the key)
 #   omnuv-connect enrol --gaming         and install the game streaming client
+#   omnuv-connect enrol --yes            join without asking, once it has said where
 #   omnuv-connect status                 is it connected?
 #   omnuv-connect leave                  disconnect this device
 #   omnuv-connect sign-in <core-url>     approve this device in a browser
@@ -210,13 +211,57 @@ handle() {
     esac
 }
 
+# Asks Core which device, network, project and organization a key joins, says
+# so, and asks for a yes. The key goes in the request body on stdin, never on
+# curl's command line. "Could not ask" stops here too: it is not a yes.
+key_leads_where() {
+    [ -n "$CORE_URL" ] && [ "$CORE_URL" != "@CORE_URL@" ] \
+        || die "no Omnuv address was built into this package; pass --core-url"
+    case "$(origin_of "$CORE_URL")" in
+        https://*|http://127.*|'http://[::1]'*) ;;
+        *) die "$CORE_URL is not an https:// address, and a key is never sent over plain http" ;;
+    esac
+    # A key is letters, digits and dashes; anything else is not one, and
+    # would not survive being written into JSON by printf.
+    case "$1" in *[!A-Za-z0-9-]*) die "that does not look like a key from the Omnuv console" ;; esac
+    have curl || die "curl is required"
+    reply=$(printf '{"key":"%s"}' "$1" | curl -sS -w '\n%{http_code}' -H 'content-type: application/json' \
+        --data-binary @- "${CORE_URL%/}/v1/devices/key-info" 2>/dev/null) || reply="
+000"
+    status=$(printf '%s' "$reply" | tail -n 1)
+    body=$(printf '%s' "$reply" | sed '$d')
+    field() { printf '%s' "$body" | sed -n "s/.*\"$1\" *: *\"\([^\"]*\)\".*/\1/p"; }
+    case "$status" in
+        200) ;;
+        404) die "$CORE_URL did not issue that key. Check you copied it from your own console." ;;
+        *) die "could not ask $CORE_URL where that key leads (HTTP $status), so it was not used. Try again." ;;
+    esac
+    printf '%s' "$body" | grep -q '"usable" *: *true' \
+        || die "that key has already been used, was cancelled, or has expired. Add the device again in the console."
+    say ""
+    say "  This key joins this computer, as \"$(field device)\","
+    say "  to the network \"$(field network)\" of project \"$(field project)\""
+    say "  in the organization \"$(field organization)\", at $CORE_URL."
+    say ""
+    [ "$yes" = 1 ] && return 0
+    # The key may have come down a pipe, so the answer is read from the
+    # terminal. With no terminal, only --yes goes on.
+    ( : < /dev/tty ) 2>/dev/null || die "no terminal to confirm on; run again with --yes if that is right"
+    printf '  Join it? [y/N] ' >&2
+    IFS= read -r answer < /dev/tty || answer=""
+    case "$answer" in y|Y|yes|YES|Yes) ;; *) die "not joined; the key was not used" ;; esac
+}
+
 enrol() {
     key=""
     gaming=0
+    yes=0
     while [ $# -gt 0 ]; do
         case "$1" in
             --gaming) gaming=1; shift ;;
             --management-url) MANAGEMENT_URL="${2:-}"; shift 2 ;;
+            --core-url) CORE_URL="${2:-}"; shift 2 ;;
+            --yes) yes=1; shift ;;
             -*) die "unknown option $1" ;;
             *) key="$1"; shift ;;
         esac
@@ -236,6 +281,12 @@ enrol() {
     [ -n "$key" ] || die "usage: omnuv-connect enrol   (and paste the key from your Omnuv console when asked)"
     [ -n "$MANAGEMENT_URL" ] && [ "$MANAGEMENT_URL" != "@MANAGEMENT_URL@" ] \
         || die "no network address was built into this package; pass --management-url"
+
+    # **Where the key leads, before it is spent (H3).** A pasted key could be
+    # anybody's, and the management address alone does not say whose network
+    # it joins. Core answers for a key it minted; a key it did not mint, or one
+    # already spent, is refused here rather than handed to the tunnel.
+    key_leads_where "$key"
 
     install_tunnel
     [ "$gaming" = 1 ] && install_gaming

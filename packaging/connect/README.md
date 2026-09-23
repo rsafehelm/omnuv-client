@@ -18,6 +18,12 @@ tunnel (the `OnvTunnel` service) and the streaming client, shows the state in
 its window, and leaves the network from its own menu. The installer asks for
 the key while it runs, so an ordinary buyer never opens a terminal at all.
 
+Before a key is spent, both scripts ask Core which device, network, project and
+organization it joins, say so, and ask for a yes: at the terminal on Linux and
+macOS, in a Yes/No window on Windows (the installer's enrol shows the same
+window). `--yes` / `-Yes` skips the question, not the check. A key Core did not
+issue, one already used, and no answer from Core each stop the enrol (H3).
+
 ## The `omnuv://` links
 
 The console emits links so a person clicks a button instead of copying a key or
