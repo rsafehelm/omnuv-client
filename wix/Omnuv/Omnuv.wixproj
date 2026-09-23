@@ -30,7 +30,9 @@
     <TunnelFolder Condition=" '$(TunnelFolder)' == '' ">$(MSBuildThisFileDirectory)..\..\tunnel\dist\$(Platform)</TunnelFolder>
   </PropertyGroup>
   <PropertyGroup>
-    <DefineConstants>DeployDir=$(DEPLOY_FOLDER);BuildDir=$(BUILD_FOLDER);TunnelDir=$(TunnelFolder)</DefineConstants>
+    <!-- The omnuv:// handler, from the tree, as the NSIS installer takes it (F2). -->
+    <ConnectFolder>$(MSBuildThisFileDirectory)..\..\packaging\connect</ConnectFolder>
+    <DefineConstants>DeployDir=$(DEPLOY_FOLDER);BuildDir=$(BUILD_FOLDER);TunnelDir=$(TunnelFolder);ConnectDir=$(ConnectFolder)</DefineConstants>
   </PropertyGroup>
   <PropertyGroup>
     <AcceptEula>wix7</AcceptEula>

@@ -100,6 +100,32 @@
                      KeyPath="yes" />
     </Component>
 
+    <!--
+      **The omnuv:// scheme (F2, 23 September 2026)**, so the console's
+      Connect, Stream and SSH buttons open this install as they open one from
+      the Omnuv Connect installer. Held back until H3 was fixed, because a link
+      used to carry a network key any web page could choose; no link carries
+      one now, and the script refuses one that does.
+
+      The same handler as omnuv-connect.nsi, and for the same reason
+      PowerShell directly rather than a .cmd (H3c): cmd expands %VAR% inside a
+      URL and lets a raw quote end the argument, and -File hands the script
+      the URL as it arrived. The script finds OmnuvClient.exe beside itself.
+      Unfilled placeholders are harmless here: `handle` reads none of them.
+    -->
+    <Component Id="OmnuvLinks" Directory="INSTALLFOLDER">
+      <File Id="OmnuvConnectPs1"
+            KeyPath="yes"
+            Source="$(var.ConnectDir)\omnuv-connect.ps1" />
+      <RegistryKey Root="HKLM" Key="SOFTWARE\Classes\omnuv">
+        <RegistryValue Type="string" Value="URL:Omnuv" />
+        <RegistryValue Type="string" Name="URL Protocol" Value="" />
+        <RegistryValue Type="string" Key="DefaultIcon" Value="[#OmnuvClientExe],0" />
+        <RegistryValue Type="string" Key="shell\open\command"
+                       Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -ExecutionPolicy Bypass -File &quot;[#OmnuvConnectPs1]&quot; handle &quot;%1&quot;" />
+      </RegistryKey>
+    </Component>
+
     <DirectoryRef Id="INSTALLFOLDER">
       <Component Id="OmnuvClient">
         <File Id="OmnuvClientExe"
@@ -206,6 +232,7 @@
       <ComponentRef Id="OmnuvDesktopShortcut" />
       <ComponentRef Id="OnvTunnel" />
       <ComponentRef Id="OnvWintun" />
+      <ComponentRef Id="OmnuvLinks" />
       <ComponentGroupRef Id="OmnuvDependencies" />
     </Feature>
 
