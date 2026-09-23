@@ -17,16 +17,15 @@
 # driven by a different program.
 #
 # **And the tunnel is ours too now, so this script installs nothing.** It used
-# to fetch the vendor's Windows installer and drive its `netbird` command;
-# `client/embed` from the pinned 0.78.1 is compiled into `onvtunnel.dll` and
-# ships beside `OmnuvClient.exe`, which loads it by name. So `enrol` forwards
-# to the client, and the two verbs that had no destination any more are gone:
+# to fetch the vendor's Windows installer and drive its `netbird` command. The
+# tunnel is the `OnvTunnel` service the installer registers, built from
+# `client/embed` of the pinned 0.78.1, and the client talks to it over
+# `\\.\pipe\onv-tunnel`. It keeps running when the window closes. So `enrol`
+# forwards to the client, and the two verbs with no work left here are gone:
 #
-#   status   the window shows it, live, in the row that says so. There was
-#            nothing left for a shell to ask — the state lives in the process
-#            that holds the tunnel, and that process is the client.
-#   leave    the tunnel goes down when the client exits, because it is the
-#            client. `netbird down` had a daemon to talk to; this does not.
+#   status   the window shows it, live, in the row that says so.
+#   leave    the app's Leave network, which also asks Core to remove the
+#            device; signing out does the same.
 param(
     [Parameter(Position = 0)][string]$Command = 'help',
     [Parameter(Position = 1)][string]$Key,

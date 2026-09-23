@@ -4,6 +4,8 @@ One command that joins a device to a buyer's private network. It installs the
 tunnel client if it is missing, joins with the key from the console, and
 optionally installs the game streaming client.
 
+On Linux and macOS, the shell command:
+
 ```
 omnuv-connect enrol                  join the private network (asks for the key)
 omnuv-connect enrol --gaming         and install the game streaming client
@@ -11,8 +13,10 @@ omnuv-connect status                 is it connected?
 omnuv-connect leave                  disconnect this device
 ```
 
-On Windows the installer asks for the key while it runs, so an ordinary buyer
-never opens a terminal at all.
+On Windows there is no `status`, `leave` or `--gaming`: the Omnuv app holds the
+tunnel (the `OnvTunnel` service) and the streaming client, shows the state in
+its window, and leaves the network from its own menu. The installer asks for
+the key while it runs, so an ordinary buyer never opens a terminal at all.
 
 ## The `omnuv://` links
 
