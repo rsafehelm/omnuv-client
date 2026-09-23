@@ -44,13 +44,54 @@ os() {
     esac
 }
 
+# **The tunnel client, pinned (H11).** This used to run the publisher's
+# install.sh as root, fetched unpinned, so whatever that URL served on the day
+# ran with full rights. Now it is one release, the one the Windows tunnel is
+# built from (tunnel/go.mod), checked against a digest written here before a
+# byte of it is unpacked. The digests are the release's own checksums file,
+# confirmed against the tarballs on 23 September 2026. A newer netbird means a
+# change here, reviewed, not a different download.
+NETBIRD_VERSION=0.78.1
+netbird_digest() {
+    case "$1" in
+        linux_amd64)  echo 9239c9e37c2acc0612563ef5ce0c3326397460d0eb811b5a59a8e373f1a4ebde ;;
+        linux_arm64)  echo d686745aa64bb4c597602ce95e76558f5f848d0672c88d63f96397d2507005b2 ;;
+        darwin_amd64) echo 1441be19db0394497866fc19a519d7d0483fbad0fcd4d1adaeb0ed1bded739be ;;
+        darwin_arm64) echo 8d613dc78aa0e5b9f01b07ec9d02417c27638bf68b829a72399293f76da0fa03 ;;
+    esac
+}
+
+sha256_of() {
+    if have sha256sum; then sha256sum "$1" | cut -d' ' -f1
+    else shasum -a 256 "$1" | cut -d' ' -f1; fi
+}
+
 install_tunnel() {
     have netbird && return 0
-    say "Installing the tunnel client from its publisher…"
-    # The publisher's own installer, used unchanged. It places the client and
-    # its background service, which is what lets a name like gpu-1.internal
-    # resolve on this device.
-    curl -fsSL https://pkgs.netbird.io/install.sh | sh || die "the tunnel client would not install"
+    case "$(uname -s)" in Linux) sys=linux ;; Darwin) sys=darwin ;; *) die "this installer supports Linux and macOS" ;; esac
+    case "$(uname -m)" in x86_64|amd64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; *) die "no tunnel client is published for $(uname -m)" ;; esac
+    want=$(netbird_digest "${sys}_$arch")
+    have curl || die "curl is required"
+    say "Installing the tunnel client $NETBIRD_VERSION from its publisher…"
+    tmp=$(mktemp -d) || die "could not make a working directory"
+    tarball="$tmp/netbird.tar.gz"
+    curl -fsSL -o "$tarball" \
+        "https://github.com/netbirdio/netbird/releases/download/v$NETBIRD_VERSION/netbird_${NETBIRD_VERSION}_${sys}_$arch.tar.gz" \
+        || { rm -rf "$tmp"; die "the tunnel client could not be downloaded"; }
+    got=$(sha256_of "$tarball")
+    if [ "$got" != "$want" ]; then
+        rm -rf "$tmp"
+        die "the tunnel client download did not match its published digest, so nothing was installed (expected $want, got $got)"
+    fi
+    tar -xzf "$tarball" -C "$tmp" netbird || { rm -rf "$tmp"; die "the tunnel client archive would not unpack"; }
+    # The binary and its background service, which is what lets a name like
+    # gpu-1.internal resolve on this device.
+    as_root install -d -m 0755 /usr/local/bin \
+        && as_root install -m 0755 "$tmp/netbird" /usr/local/bin/netbird \
+        || { rm -rf "$tmp"; die "the tunnel client would not install"; }
+    rm -rf "$tmp"
+    as_root /usr/local/bin/netbird service install || die "the tunnel service would not install"
+    as_root /usr/local/bin/netbird service start || die "the tunnel service would not start"
     have netbird || die "the tunnel client installed but is not on PATH; open a new terminal and try again"
 }
 

@@ -24,6 +24,11 @@ macOS, in a Yes/No window on Windows (the installer's enrol shows the same
 window). `--yes` / `-Yes` skips the question, not the check. A key Core did not
 issue, one already used, and no answer from Core each stop the enrol (H3).
 
+On Linux and macOS the tunnel client is one pinned release, netbird 0.78.1 (the
+one the Windows tunnel is built from), and its tarball is checked against a
+SHA-256 written in the script before anything is unpacked (H11). Moving to a
+newer netbird is a change to the script, not a different download.
+
 ## The `omnuv://` links
 
 The console emits links so a person clicks a button instead of copying a key or

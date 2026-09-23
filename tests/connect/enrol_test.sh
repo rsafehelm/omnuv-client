@@ -9,6 +9,10 @@
 #   no answer   503: refused, since could-not-ask is not a yes
 #   no tty      usable, no terminal and no --yes: refused
 #   not a key   a quote in the key: refused before anything is sent
+#
+# And the tunnel client's install (H11), with no netbird on PATH:
+#   tampered    a download that is not the pinned release: nothing installed
+#   pinned      the real release (needs the network): installed, then joined
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
 script="$here/../../packaging/connect/omnuv-connect"
@@ -47,9 +51,10 @@ PY
     for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$work/port" ] && break; sleep 0.2; done
 }
 stop() { kill "$(cat "$work/pid")" 2>/dev/null; rm -f "$work/port"; }
+bin="$work/bin"
 run() { # key, extra args… ; stdin is /dev/null, so there is no terminal
     key=$1; shift
-    PATH="$work/bin:$PATH" timeout 30 sh "$script" enrol "$key" --management-url https://nb.example \
+    PATH="$bin:$PATH" timeout 120 sh "$script" enrol "$key" --management-url https://nb.example \
         --core-url "http://127.0.0.1:$(cat "$work/port")" "$@" < /dev/null > "$work/out" 2>&1
 }
 check() { # name, expected exit (0 or 1), netbird ran (yes/no), text
@@ -80,6 +85,41 @@ serve down;    run k-1234 --yes; check $? "Core not answering" 1 no "could not a
 
 serve usable; run 'k"}x' --yes; check $? "not a key" 1 no "does not look like a key"
 [ -s "$work/asked" ] && { echo "FAIL  a malformed key was sent"; fails=$((fails+1)); }
+stop
+
+# No netbird: a sudo that writes down what it was asked, and "installs" the
+# binary into this directory rather than /usr/local/bin.
+mkdir -p "$work/bare"
+cat > "$work/bare/sudo" <<SH
+#!/bin/sh
+echo "\$@" >> "$work/netbird.log"
+[ "\$1" = install ] && [ "\$2" = -m ] && cp "\$4" "$work/bare/netbird"
+exit 0
+SH
+chmod +x "$work/bare/sudo"
+printf '#!/bin/sh\nfor a; do [ "$p" = -o ] && echo not-the-release > "$a"; p=$a; done\n' > "$work/tampered-curl"
+chmod +x "$work/tampered-curl"
+
+serve usable
+mkdir -p "$work/tampered"; cp "$work/bare/sudo" "$work/tampered/"
+# One PATH serves both requests, so the stand-in answers only the download
+# and hands the key lookup to the real curl.
+real_curl=$(command -v curl)
+cat > "$work/tampered/curl" <<SH
+#!/bin/sh
+case "\$*" in *github.com*) exec "$work/tampered-curl" "\$@" ;; esac
+exec "$real_curl" "\$@"
+SH
+chmod +x "$work/tampered/curl"
+bin="$work/tampered"; run k-1234 --yes; check $? "a tampered download installs nothing" 1 no "did not match its published digest"
+bin="$work/bare"
+if curl -fsSI -o /dev/null https://github.com 2>/dev/null; then
+    run k-1234 --yes; st=$?
+    if [ $st -eq 0 ] && grep -q "^install -m 0755 .*/usr/local/bin/netbird$" "$work/netbird.log" \
+        && grep -q "netbird service install" "$work/netbird.log" && grep -q -- "--setup-key-file" "$work/netbird.log"; then
+        echo "ok    the pinned release installs, then joins"
+    else echo "FAIL  the pinned release (exit $st): $(tail -3 "$work/out") / $(cat "$work/netbird.log" 2>/dev/null)"; fails=$((fails+1)); fi
+else echo "skip  the pinned release (no network)"; fi
 stop
 
 [ $fails -eq 0 ] && echo "all cases hold" || echo "$fails case(s) failed"
