@@ -28,6 +28,11 @@ CORE_URL="${OMNUV_CORE_URL:?set OMNUV_CORE_URL: where this deployment Core is}"
 
 rm -rf "$OUT" && mkdir -p "$OUT"
 echo "omnuv-connect $VERSION -> overlay $MANAGEMENT_URL, core $CORE_URL"
+# **What this build points at, written beside it.** One directory serves both
+# deployments and every installer bakes in one deployment's addresses, so a
+# test build could be shipped to production. platform.yml reads this and
+# refuses a directory built for another deployment, or one that does not say.
+printf 'core_url=%s\nmanagement_url=%s\nversion=%s\n' "$CORE_URL" "$MANAGEMENT_URL" "$VERSION" > "$OUT/BUILT_FOR"
 
 fill() {
     sed -e "s|@MANAGEMENT_URL@|$MANAGEMENT_URL|g" -e "s|@CORE_URL@|$CORE_URL|g" \
