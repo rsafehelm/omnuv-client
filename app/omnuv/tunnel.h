@@ -56,6 +56,9 @@ public:
     bool available() const { return m_available; }
     bool connected() const { return m_reading == omnuv::Reading::Pass; }
     bool busy() const { return m_busy; }
+    // A join the daemon accepted and nobody has yet seen finish: it will land
+    // on the network it named whatever the window does next (H14).
+    bool joinInFlight() const { return m_busy && m_joinDispatched; }
     QString state() const { return m_state; }
     QString operationError() const { return m_operationError; }
     void clearOperationError();
@@ -137,6 +140,7 @@ signals:
 private:
     void set(bool available, omnuv::Reading reading, const QString& state, const QString& address);
     void setBusy(bool busy);
+    bool m_joinDispatched = false;
     void setOperationError(const QString& why);
 
     // A start the service refused, reported in the service's words when it

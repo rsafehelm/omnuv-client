@@ -143,6 +143,7 @@ void OmnuvTunnel::setBusy(bool busy)
         return;
     }
     m_busy = busy;
+    if (!busy) m_joinDispatched = false;
     if (busy) m_operationDeadline.start(); else m_operationDeadline.stop();
     updatePolling();
     emit changed();
@@ -355,6 +356,7 @@ void OmnuvTunnel::enrolMembership(const QString& managementUrl, const QString& s
         {{"membership", membership}, {"management_url", managementUrl},
          {"setup_key", setupKey}, {"expected_revision", expectedRevision}}));
     if (reply != QLatin1String("ok")) { fail(reply, tr("The network service did not accept this enrollment. Revoke the pending enrollment before retrying.")); return; }
+    m_joinDispatched = true;
     check();
 }
 

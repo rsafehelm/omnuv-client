@@ -430,6 +430,17 @@ void OmnuvSession::setCoreUrl(const QString& url)
     if (trimmed == m_coreUrl) {
         return;
     }
+    // **Not while a join is on its way (H14, 23 September 2026).** Once the
+    // daemon has accepted `enrol-v1` it carries on whatever the window does,
+    // so a switch then left this device joining the old Core's network with
+    // nobody watching, and the new Core would find it on "another network".
+    // A join resolves or times out within the tunnel's deadline, so this
+    // waits at most that long. Core-side work — an attempt being created or
+    // cleaned up — is scoped to its deployment and may be left behind.
+    if (m_tunnel->joinInFlight()) {
+        setStatus(tr("This device is joining a network at %1. Switch when it has finished.").arg(m_coreUrl));
+        return;
+    }
     // H2: a Core the token cannot safely be sent to is refused, not saved.
     if (!OmnuvCredentials::secureCore(trimmed)) {
         setStatus(tr("Use an https:// address. Omnuv will not send your sign-in over plain http."));

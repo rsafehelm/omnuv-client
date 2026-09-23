@@ -545,6 +545,31 @@ private slots:
         QCOMPARE(original.count("/v1/devices/old-generated-id"),0);
         QVERIFY(!s.m_enrollmentJournal.records().isEmpty());
     }
+    // H14: a join the daemon accepted holds the Core where it is until it is
+    // seen to finish; then the switch goes through.
+    void aCoreSwitchWaitsForAJoinTheDaemonAccepted() {
+        HeldServer original, replacement; qputenv("OMNUV_FIXTURE_URL",original.url()); OmnuvSession s; prepare(s);
+        FixtureTunnel daemon;
+        s.m_tunnel->m_request=[&](const QString& line) {
+            const auto reply=daemon.answer(line);
+            if (line.startsWith("enrol-v1 ")) daemon.state=1; // accepted, still starting
+            return reply;
+        };
+        s.m_tunnel->join(); QTRY_VERIFY(original.find("/v1/networks?project=a")>=0);
+        original.answer(original.find("/v1/networks?project=a"),200,R"([{"id":"network-a"}])");
+        QTRY_VERIFY(original.find("/v1/networks/network-a/devices")>=0);
+        const auto post=original.find("/v1/networks/network-a/devices");
+        original.answer(post,200,QJsonDocument(QJsonObject{{"id",QJsonDocument::fromJson(original.calls[post].body).object().value("attempt_id")},
+            {"setup_key","fixture-only"},{"command","OmnuvClient enrol fixture-only --management-url https://overlay.test.invalid"}}).toJson());
+        QTRY_VERIFY(daemon.commands.contains("enrol-v1")); QVERIFY(s.m_tunnel->joinInFlight());
+        const auto before=s.coreUrl();
+        s.setCoreUrl(QString::fromUtf8(replacement.url()));
+        QCOMPARE(s.coreUrl(),before); QVERIFY(s.status().contains("joining"));
+        daemon.state=2; s.m_tunnel->check(); QVERIFY(!s.m_tunnel->busy()); QVERIFY(!s.m_tunnel->joinInFlight());
+        s.setCoreUrl(QString::fromUtf8(replacement.url()));
+        QCOMPARE(s.coreUrl(),QString::fromUtf8(replacement.url()));
+    }
+
     void explicitMoveDialogRendersTheOriginalMembershipAndCancellation() {
         HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
         s.m_networkMovePrompt="Move to Project B? Revoke device old-device in Project A at https://original.example.test first.";
