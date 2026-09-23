@@ -583,3 +583,23 @@ func TestAnEarlierIdentityMovesOnlyWhereItsRecordSays(t *testing.T) {
 		t.Fatal("an unnamed identity was moved into a deployment")
 	}
 }
+
+// H19: the membership accepts the Cores the app signs in to, and no others.
+func TestAMembershipNamesTheCoresTheAppSignsInTo(t *testing.T) {
+	for raw, want := range map[string]bool{
+		"https://api.omnuv.com":        true,
+		"https://api.omnuv.com/":       true,
+		"http://127.0.0.1:8080":        true,
+		"http://[::1]:8080":            true,
+		"http://localhost:8080":        false,
+		"http://192.168.100.85:8443":   false,
+		"http://127.0.0.1.example.com": false,
+		"ftp://127.0.0.1":              false,
+		"https://api.omnuv.com/v1":     false,
+		"https://u@api.omnuv.com":      false,
+	} {
+		if got := origin(raw); got != want {
+			t.Errorf("origin(%q) = %v, want %v", raw, got, want)
+		}
+	}
+}
