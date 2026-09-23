@@ -40,7 +40,7 @@ import (
 // **Who may ask is owner.go's (H4, 22 September 2026).** Until then this did
 // not authenticate at all, and the socket's own permissions were the whole
 // access control: on Windows the pipe grants Administrators and
-// authenticated users, on Unix the socket is 0660 and root-owned. On a
+// authenticated users, on Unix the socket is 0666 and root-owned. On a
 // single-person machine that is the right boundary, but on a shared one any
 // local user could take the tunnel down, join it to a network whose key they
 // held, or read the other's account and project ids. The pipe still admits

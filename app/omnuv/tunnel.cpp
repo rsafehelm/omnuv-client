@@ -5,6 +5,14 @@
 #include <QDebug>
 #include <QTimer>
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+#else
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <unistd.h>
+#endif
+
 namespace {
 
 // The states the daemon reports. They are its numbers, repeated here rather
@@ -35,6 +43,51 @@ QString serverName()
 // are for a daemon that is wedged rather than for any normal call. An empty
 // return means it could not be reached, which is a third answer and is never
 // the same as "not on the network".
+// **Who is at the other end, asked of the operating system (1227).** The
+// client wrote `enrol-v1`, which carries a setup key, to whatever owned the
+// pipe or socket name. With the OnvTunnel service stopped, not yet started or
+// crashed, any local account could create that name first and collect the
+// key. So before anything is written: on Windows the pipe server's process
+// must run as LocalSystem, which is what the service runs as; on Unix the
+// peer must be root (SO_PEERCRED, getpeereid).
+bool serverIsTheService(QLocalSocket& socket)
+{
+#ifdef Q_OS_WIN
+    const HANDLE pipe = reinterpret_cast<HANDLE>(socket.socketDescriptor());
+    ULONG pid = 0;
+    if (!GetNamedPipeServerProcessId(pipe, &pid)) return false;
+    const HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!process) return false;
+    HANDLE token = nullptr;
+    bool system = false;
+    if (OpenProcessToken(process, TOKEN_QUERY, &token)) {
+        DWORD size = 0;
+        GetTokenInformation(token, TokenUser, nullptr, 0, &size);
+        QByteArray buffer(int(size), 0);
+        if (size && GetTokenInformation(token, TokenUser, buffer.data(), size, &size)) {
+            const auto* user = reinterpret_cast<const TOKEN_USER*>(buffer.constData());
+            system = IsWellKnownSid(user->User.Sid, WinLocalSystemSid);
+        }
+        CloseHandle(token);
+    }
+    CloseHandle(process);
+    return system;
+#else
+    const int fd = int(socket.socketDescriptor());
+    long peer = -1;
+#if defined(SO_PEERCRED)
+    struct ucred cred {};
+    socklen_t length = sizeof(cred);
+    if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &length) == 0) peer = long(cred.uid);
+#else
+    uid_t uid = 0;
+    gid_t gid = 0;
+    if (getpeereid(fd, &uid, &gid) == 0) peer = long(uid);
+#endif
+    return OmnuvTunnel::trustedPeerUid(peer, long(getuid()), qEnvironmentVariableIsSet("ONV_TUNNEL_DIR"));
+#endif
+}
+
 QString request(const QString& line)
 {
     if (qEnvironmentVariableIsSet("OMNUV_FIXTURE_URL")
@@ -45,6 +98,10 @@ QString request(const QString& line)
     if (!socket.waitForConnected(300)) {
         return QString();
     }
+    if (!serverIsTheService(socket)) {
+        qWarning() << "omnuv: the tunnel socket is not served by the installed service; nothing was sent";
+        return QStringLiteral("err The network service answering on this device is not the one Omnuv installed, so nothing was sent to it. Restart the Omnuv network service.");
+    }
     socket.write(line.toUtf8() + '\n');
     if (!socket.waitForBytesWritten(300) || !socket.waitForReadyRead(2000)) {
         return QString();
@@ -53,6 +110,13 @@ QString request(const QString& line)
 }
 
 } // namespace
+
+bool OmnuvTunnel::trustedPeerUid(long peerUid, long selfUid, bool developmentSocket)
+{
+    if (peerUid < 0) return false;          // the kernel would not say
+    if (peerUid == 0) return true;          // the installed service runs as root
+    return developmentSocket && peerUid == selfUid;
+}
 
 OmnuvTunnel::OmnuvTunnel(QObject* parent)
     : QObject(parent), m_request(request)

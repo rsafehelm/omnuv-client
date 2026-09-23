@@ -50,6 +50,12 @@ class OmnuvTunnel : public QObject
     Q_PROPERTY(QString address READ address NOTIFY changed)
 
 public:
+    // Whether the process at the other end of the tunnel socket is the one
+    // this device installed: root on Unix, or, only on a development socket
+    // (ONV_TUNNEL_DIR), also this same user. Pure, so it can be tested; the
+    // kernel supplies `peerUid`. Windows asks for LocalSystem instead.
+    static bool trustedPeerUid(long peerUid, long selfUid, bool developmentSocket);
+
     explicit OmnuvTunnel(QObject* parent = nullptr);
     ~OmnuvTunnel() override;
 

@@ -35,11 +35,13 @@ func listen() (net.Listener, error) {
 	if err != nil {
 		return nil, err
 	}
-	// The client runs as the person; the daemon runs as root. 0660 plus a
-	// group is the usual answer, but the group differs per distribution and
-	// this is a development path, so it is world-writable and says so.
-	// ponytail: 0666 on the dev socket; a group of our own if this ever ships
-	// on Linux as a product.
+	// **World-connectable on purpose, and not the access control.** The
+	// client runs as the person and the daemon as root, and since H4 every
+	// request is authorised by the caller's own credentials from the kernel
+	// (SO_PEERCRED, owner.go): anyone may ask `state`, and only the tunnel's
+	// owner or root may change it. A group would add a per-distribution
+	// setup step and decide nothing the owner check does not; the Windows
+	// pipe admits every authenticated user for the same reason.
 	if err := os.Chmod(socketName(), 0o666); err != nil {
 		log.Printf("onv-tunnel: chmod %s: %v", socketName(), err)
 	}

@@ -191,7 +191,7 @@ func (t *tunnel) startLocked(mgmt, key string, record *membershipRecord) error {
 		return err
 	}
 	dir := t.directory()
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := secureDir(dir); err != nil {
 		t.setFailed(err)
 		return err
 	}

@@ -27,7 +27,7 @@ func main() {
 	// in. Falls back to stderr when the file cannot be opened, because a
 	// daemon that will not start for want of a log is worse than a quiet one.
 	log.SetFlags(log.LstdFlags | log.LUTC)
-	if err := os.MkdirAll(configDir(), 0o700); err == nil {
+	if err := secureDir(configDir()); err == nil {
 		if f, err := os.OpenFile(
 			filepath.Join(configDir(), "onvtunneld.log"),
 			os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o640,

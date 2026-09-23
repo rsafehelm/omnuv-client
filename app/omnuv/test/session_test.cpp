@@ -4,6 +4,11 @@
 #include "../../backend/nvpairingmanager.h"
 #include "../../backend/nvcomputer.h"
 #include <QElapsedTimer>
+#include <unistd.h>
+#include <sys/un.h>
+#include <sys/socket.h>
+#include <thread>
+#include <QLocalSocket>
 #include <QHostAddress>
 #include <cmath>
 #include <QNetworkReply>
@@ -668,6 +673,62 @@ private slots:
             QCOMPARE(s.coreUrl(), QString("https://saved.example.test"));
         }
         if (!fixture.isEmpty()) qputenv("OMNUV_FIXTURE_URL", fixture);
+    }
+
+    // 1227: a setup key goes only to the installed service. Root always;
+    // this same user only on a development socket; nobody the kernel would
+    // not name.
+    void theTunnelSocketMustBeServedByTheService() {
+        QVERIFY(OmnuvTunnel::trustedPeerUid(0, 1000, false));
+        QVERIFY(!OmnuvTunnel::trustedPeerUid(1001, 1000, false));
+        QVERIFY(!OmnuvTunnel::trustedPeerUid(1000, 1000, false));
+        QVERIFY(OmnuvTunnel::trustedPeerUid(1000, 1000, true));
+        QVERIFY(!OmnuvTunnel::trustedPeerUid(1001, 1000, true));
+        QVERIFY(!OmnuvTunnel::trustedPeerUid(-1, 1000, true));
+    }
+
+    // The same check through the kernel: a daemon on a development socket,
+    // run by this same user, is asked and answers. The refusal half needs a
+    // peer of another uid, which this process cannot be; it is the pure test
+    // above.
+    void aDevelopmentDaemonOfThisUserIsTrustedThroughTheKernel() {
+        // On a thread of its own and in plain POSIX: request() blocks the
+        // thread it runs on, so a server needing this thread's event loop
+        // would never answer. It answers every connection until shut down.
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QByteArray path = (dir.path() + "/onv-tunnel.sock").toUtf8();
+        const int listener = ::socket(AF_UNIX, SOCK_STREAM, 0); QVERIFY(listener >= 0);
+        sockaddr_un addr{}; addr.sun_family = AF_UNIX;
+        qstrncpy(addr.sun_path, path.constData(), sizeof(addr.sun_path));
+        QVERIFY(::bind(listener, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0);
+        QVERIFY(::listen(listener, 8) == 0);
+        std::thread daemon([listener]() {
+            for (;;) {
+                const int peer = ::accept(listener, nullptr, nullptr);
+                if (peer < 0) return;
+                char line[512]; (void)::read(peer, line, sizeof(line));
+                const char reply[] = "state 0 - - fixture\n";
+                // MSG_NOSIGNAL: a client that hangs up must fail the assertion
+                // below, not kill the test with SIGPIPE.
+                (void)::send(peer, reply, sizeof(reply) - 1, MSG_NOSIGNAL);
+                ::close(peer);
+            }
+        });
+        const auto before = qgetenv("ONV_TUNNEL_DIR");
+        const auto fixture = qgetenv("OMNUV_FIXTURE_URL");
+        qputenv("ONV_TUNNEL_DIR", dir.path().toUtf8());
+        qunsetenv("OMNUV_FIXTURE_URL");
+        QString said;
+        {
+            OmnuvTunnel tunnel;
+            said = tunnel.m_request("state");
+        }
+        ::shutdown(listener, SHUT_RDWR);
+        ::close(listener);
+        daemon.join();
+        if (before.isEmpty()) qunsetenv("ONV_TUNNEL_DIR"); else qputenv("ONV_TUNNEL_DIR", before);
+        if (!fixture.isEmpty()) qputenv("OMNUV_FIXTURE_URL", fixture);
+        QVERIFY2(said.startsWith("state"), qPrintable("a daemon of this user on a development socket was refused: " + said));
     }
 
     void explicitMoveDialogRendersTheOriginalMembershipAndCancellation() {
