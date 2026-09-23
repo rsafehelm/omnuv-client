@@ -1282,8 +1282,11 @@ void OmnuvSession::fetchDeviceKey()
             const auto url = nonemptyString(o, "management_url") ? o.value("management_url").toString()
                 : command.section(QStringLiteral("--management-url "), 1, 1).section(QLatin1Char(' '), 0, 0);
             const QUrl management(url);
+            // The daemon's rule (membership.go `origin`): https, or http to
+            // this machine alone. Any http used to pass here and be refused
+            // by the daemon, after the key had already been spent.
             if (!management.isValid() || management.host().isEmpty()
-                || (management.scheme() != "https" && management.scheme() != "http")) {
+                || !OmnuvCredentials::secureCore(url)) {
                 m_tunnel->giveUp(tr("Your network did not provide a usable address to join. Revoke the saved enrollment before trying again.")); return;
             }
             m_authorizedMoveRevision.clear();

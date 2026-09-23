@@ -743,6 +743,22 @@ private slots:
             QVERIFY2(!OmnuvSession::sshTargetIsSafe("web.internal", user), user);
     }
 
+    // 1319: a management address the daemon would refuse never reaches it:
+    // plain http to another machine is refused here, before enrol-v1.
+    void aManagementAddressTheDaemonWouldRefuseIsRefusedFirst() {
+        HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
+        FixtureTunnel daemon;
+        s.m_tunnel->m_request=[&](const QString& line) { return daemon.answer(line); };
+        s.m_tunnel->join(); QTRY_VERIFY(server.find("/v1/networks?project=a")>=0);
+        server.answer(server.find("/v1/networks?project=a"),200,R"([{"id":"network-a"}])");
+        QTRY_VERIFY(server.find("/v1/networks/network-a/devices")>=0);
+        const auto post=server.find("/v1/networks/network-a/devices");
+        server.answer(post,200,QJsonDocument(QJsonObject{{"id",QJsonDocument::fromJson(server.calls[post].body).object().value("attempt_id")},
+            {"setup_key","fixture-only"},{"command","OmnuvClient enrol fixture-only"},{"management_url","http://overlay.example.test"}}).toJson());
+        QTRY_VERIFY(s.m_tunnel->operationError().contains("usable address"));
+        QVERIFY(!daemon.commands.contains("enrol-v1"));
+    }
+
     void explicitMoveDialogRendersTheOriginalMembershipAndCancellation() {
         HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
         s.m_networkMovePrompt="Move to Project B? Revoke device old-device in Project A at https://original.example.test first.";
