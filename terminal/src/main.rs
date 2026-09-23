@@ -79,13 +79,30 @@ struct Session {
     token: String,
 }
 
-fn config_path() -> std::path::PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    std::path::Path::new(&home).join(".config/omnuv/cli.json")
+/// Where the session is kept: %APPDATA% on Windows, XDG_CONFIG_HOME or
+/// ~/.config elsewhere. **Never the current directory.** It fell back to "."
+/// when HOME was unset, which is the normal case in cmd and PowerShell, so the
+/// Windows build wrote its bearer token into whatever directory it was run
+/// from and could not find it from any other.
+fn config_path_from(var: impl Fn(&str) -> Option<String>, windows: bool) -> Option<std::path::PathBuf> {
+    let set = |k: &str| var(k).filter(|v| !v.trim().is_empty());
+    let base = if windows {
+        set("APPDATA").map(std::path::PathBuf::from)
+    } else {
+        set("XDG_CONFIG_HOME")
+            .map(std::path::PathBuf::from)
+            .or_else(|| set("HOME").map(|h| std::path::Path::new(&h).join(".config")))
+    }?;
+    Some(base.join("omnuv").join("cli.json"))
+}
+
+fn config_path() -> Result<std::path::PathBuf> {
+    config_path_from(|k| std::env::var(k).ok(), cfg!(windows))
+        .context("no place to keep the sign-in: set APPDATA on Windows, or HOME")
 }
 
 fn load_session(core_override: Option<String>) -> Result<Session> {
-    let path = config_path();
+    let path = config_path()?;
     let raw = std::fs::read_to_string(&path)
         .with_context(|| format!("not signed in: run `omnuv login` (looked in {})", path.display()))?;
     let v: serde_json::Value = serde_json::from_str(&raw)?;
@@ -98,15 +115,31 @@ fn load_session(core_override: Option<String>) -> Result<Session> {
 }
 
 fn save_session(core: &str, token: &str) -> Result<()> {
-    let path = config_path();
-    std::fs::create_dir_all(path.parent().unwrap())?;
-    let body = serde_json::json!({ "core": core, "token": token });
-    std::fs::write(&path, serde_json::to_vec_pretty(&body)?)?;
+    write_private(&config_path()?, &serde_json::to_vec_pretty(&serde_json::json!({ "core": core, "token": token }))?)
+}
+
+/// **0600 from the moment the file exists.** It was written with the umask
+/// and narrowed afterwards, so for that moment the bearer token was readable
+/// by other local users. On Windows the file lives under the user's own
+/// %APPDATA%, whose ACL is that user's.
+fn write_private(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
+    use std::io::Write as _;
+    std::fs::create_dir_all(path.parent().context("a path with no directory")?)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    // A file that existed before keeps its old mode through open(); narrow it.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
     }
+    file.write_all(bytes)?;
     Ok(())
 }
 
@@ -278,7 +311,7 @@ async fn main() -> Result<()> {
             login(&core).await
         }
         Command::Logout => {
-            let p = config_path();
+            let p = config_path()?;
             if p.exists() {
                 std::fs::remove_file(&p)?;
             }
@@ -388,5 +421,42 @@ async fn main() -> Result<()> {
             println!("  {name} is being deleted. Its allocation is released when it is gone.");
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |k| pairs.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string())
+    }
+
+    #[test]
+    fn the_session_lives_in_the_users_config_never_the_current_directory() {
+        let p = |pairs, windows| config_path_from(env(pairs), windows).map(|p| p.to_string_lossy().replace('\\', "/"));
+        assert_eq!(p(&[("APPDATA", "C:/Users/a/AppData/Roaming"), ("HOME", "")], true).as_deref(),
+                   Some("C:/Users/a/AppData/Roaming/omnuv/cli.json"));
+        assert_eq!(p(&[("HOME", "/home/a")], false).as_deref(), Some("/home/a/.config/omnuv/cli.json"));
+        assert_eq!(p(&[("HOME", "/home/a"), ("XDG_CONFIG_HOME", "/cfg")], false).as_deref(), Some("/cfg/omnuv/cli.json"));
+        assert_eq!(p(&[], true), None, "Windows with no APPDATA fell back somewhere");
+        assert_eq!(p(&[("HOME", " ")], false), None, "an empty HOME became the current directory");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_token_file_is_private_from_the_start_and_after_an_overwrite() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = std::env::temp_dir().join(format!("omnuv-cli-{}", std::process::id()));
+        let path = dir.join("omnuv/cli.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        write_private(&path, b"{}").unwrap();
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        std::fs::remove_file(&path).unwrap();
+        write_private(&path, b"{}").unwrap();
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
