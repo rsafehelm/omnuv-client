@@ -628,6 +628,25 @@ private slots:
         QTRY_COMPARE(s.coreUrl(),QString::fromUtf8(other.url()));
     }
 
+    // The overlay's address from Core's own field, with a command that names
+    // none: the join goes ahead to that address.
+    void theManagementAddressIsReadFromItsOwnField() {
+        HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
+        FixtureTunnel daemon; QString sent;
+        s.m_tunnel->m_request=[&](const QString& line) {
+            if (line.startsWith("enrol-v1 ")) sent=QString::fromUtf8(QByteArray::fromBase64(line.section(' ',1).toLatin1()));
+            return daemon.answer(line);
+        };
+        s.m_tunnel->join(); QTRY_VERIFY(server.find("/v1/networks?project=a")>=0);
+        server.answer(server.find("/v1/networks?project=a"),200,R"([{"id":"network-a"}])");
+        QTRY_VERIFY(server.find("/v1/networks/network-a/devices")>=0);
+        const auto post=server.find("/v1/networks/network-a/devices");
+        server.answer(post,200,QJsonDocument(QJsonObject{{"id",QJsonDocument::fromJson(server.calls[post].body).object().value("attempt_id")},
+            {"setup_key","fixture-only"},{"command","OmnuvClient enrol fixture-only"},{"management_url","https://overlay.field.invalid"}}).toJson());
+        QTRY_VERIFY(daemon.commands.contains("enrol-v1"));
+        QCOMPARE(QJsonDocument::fromJson(sent.toUtf8()).object().value("management_url").toString(),QString("https://overlay.field.invalid"));
+    }
+
     void explicitMoveDialogRendersTheOriginalMembershipAndCancellation() {
         HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
         s.m_networkMovePrompt="Move to Project B? Revoke device old-device in Project A at https://original.example.test first.";

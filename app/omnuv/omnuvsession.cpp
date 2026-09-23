@@ -1257,8 +1257,11 @@ void OmnuvSession::fetchDeviceKey()
             if (!document.isObject() || !nonemptyString(o, "setup_key") || !nonemptyString(o, "command")) {
                 m_tunnel->giveUp(tr("Omnuv returned enrollment details this version cannot read. Revoke the saved enrollment before trying again.")); return;
             }
+            // Core's own field where it sends one; parsed out of the command
+            // only for a Core from before 23 September 2026.
             const auto command = o.value("command").toString();
-            const auto url = command.section(QStringLiteral("--management-url "), 1, 1).section(QLatin1Char(' '), 0, 0);
+            const auto url = nonemptyString(o, "management_url") ? o.value("management_url").toString()
+                : command.section(QStringLiteral("--management-url "), 1, 1).section(QLatin1Char(' '), 0, 0);
             const QUrl management(url);
             if (!management.isValid() || management.host().isEmpty()
                 || (management.scheme() != "https" && management.scheme() != "http")) {
