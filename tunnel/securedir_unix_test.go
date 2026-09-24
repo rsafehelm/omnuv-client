@@ -5,6 +5,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -24,5 +25,17 @@ func TestTheIdentityDirectoryIsItsOwnersAlone(t *testing.T) {
 	}
 	if got := info.Mode().Perm(); got != 0o700 {
 		t.Fatalf("mode %o, want 700", got)
+	}
+}
+
+// The socket lives where the platform keeps runtime sockets: /run on Linux,
+// /var/run on macOS, which has no /run.
+func TestTheSocketDirectoryExistsOnThisPlatform(t *testing.T) {
+	want := "/run"
+	if runtime.GOOS == "darwin" {
+		want = "/var/run"
+	}
+	if got := defaultRunDir(); got != want {
+		t.Fatalf("defaultRunDir() = %q on %s, want %q", got, runtime.GOOS, want)
 	}
 }

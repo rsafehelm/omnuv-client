@@ -27,6 +27,10 @@ QString serverName()
 {
 #ifdef Q_OS_WIN
     return QStringLiteral("onv-tunnel");
+#elif defined(Q_OS_MACOS)
+    // macOS has no /run; the daemon listens under /var/run there (main_unix.go).
+    const QString dir = qEnvironmentVariable("ONV_TUNNEL_DIR", QStringLiteral("/var/run"));
+    return dir + QStringLiteral("/onv-tunnel.sock");
 #else
     const QString dir = qEnvironmentVariable("ONV_TUNNEL_DIR", QStringLiteral("/run"));
     return dir + QStringLiteral("/onv-tunnel.sock");

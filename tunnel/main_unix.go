@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"runtime"
 )
 
 // The Unix half, which exists for the development loop rather than for a
@@ -17,7 +18,17 @@ func socketName() string {
 	if dir := os.Getenv("ONV_TUNNEL_DIR"); dir != "" {
 		return dir + "/onv-tunnel.sock"
 	}
-	return "/run/onv-tunnel.sock"
+	return defaultRunDir() + "/onv-tunnel.sock"
+}
+
+// **/run on Linux, /var/run on macOS.** macOS has no /run, so both halves
+// defaulted to a path that could not exist there; /var/run is where macOS
+// keeps runtime sockets. The client's serverName() says the same.
+func defaultRunDir() string {
+	if runtime.GOOS == "darwin" {
+		return "/var/run"
+	}
+	return "/run"
 }
 
 func configDir() string {
