@@ -10,7 +10,7 @@ on:
     paths:
       - packaging/connect/**
       - tests/connect/**
-      - .github/workflows/link-handlers.yml
+      - .github/workflows/omnuv-link-handlers.yml
   pull_request:
     branches:
       - master

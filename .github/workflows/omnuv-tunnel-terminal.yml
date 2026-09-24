@@ -1,0 +1,45 @@
+---
+# The private-network daemon (tunnel/) and the terminal client (terminal/).
+# Until 24 September 2026 no workflow built or tested either: build.yml runs
+# the AppImage and Steam Link builds, and the change budget compiles one C++
+# test. The Windows and macOS halves of the daemon are vetted here, not run;
+# they run on the lab rigs.
+name: Tunnel and terminal
+permissions:
+  contents: read
+
+on:
+  push:
+    paths:
+      - tunnel/**
+      - terminal/**
+      - .github/workflows/omnuv-tunnel-terminal.yml
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  tunnel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tunnel/go.mod
+          cache-dependency-path: tunnel/go.sum
+      - name: Test (Linux)
+        working-directory: tunnel
+        run: go test ./...
+      - name: Vet the Windows and macOS builds
+        working-directory: tunnel
+        run: |
+          GOOS=windows go vet ./...
+          GOOS=darwin go vet ./...
+
+  terminal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test
+        working-directory: terminal
+        run: cargo test --locked
