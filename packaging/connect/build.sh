@@ -19,7 +19,11 @@ HERE="$ROOT/packaging/connect"
 # packaging/.gitignore. It was $ROOT/dist/connect while this lived in the
 # private repository; the play that ships it reads onv_connect_dist now, so
 # the path is declared in one place rather than assumed in two.
-OUT="$HERE/dist"
+# The directory platform.yml ships from, unless told otherwise. A build for
+# another site, or one run only to see a refusal, goes elsewhere with
+# OMNUV_CONNECT_OUT: one such run on 24 September 2026 rewrote this directory's
+# BUILT_FOR for production while it held the mirror's packages.
+OUT="${OMNUV_CONNECT_OUT:-$HERE/dist}"
 # The deployment this package points at. Overridable, because the address is
 # per-deployment and the package is built per-deployment.
 MANAGEMENT_URL="${OMNUV_MANAGEMENT_URL:?set OMNUV_MANAGEMENT_URL: the overlay address is per-deployment, and a default bakes one lab into every installer}"
