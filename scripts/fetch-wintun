@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Wintun, verified, into the directories the Windows builds read.
+#
+#     scripts/fetch-wintun [dir]    default tunnel/dist; writes <dir>/<arch>/wintun.dll
+#                                   and WINTUN-LICENSE.txt for x64 and arm64
+#
+# **Why it is needed.** The tunnel makes a real WireGuard adapter, and on
+# Windows that is Wintun, lazy-loaded by NetBird when the adapter is made. So
+# nothing links it and `windeployqt` never sees it. Omnuv.wixproj and
+# build-arch.bat read it from tunnel/dist/<arch> beside onvtunneld.exe, which
+# tunnel/build.sh writes. Without this script nothing in this repository put it
+# there: the fetch lived in ~/omnuv/scripts, removed on 21 September 2026, then
+# only in lab-windows-build.yml. That play now runs this script, so the pins
+# below are the only copy.
+#
+# **Pinned twice over.** The archive's digest is the one wintun.net publishes
+# beside the download as "SHA2-256". Each DLL's digest is recorded too, so the
+# extraction can be checked on its own: a verified archive with an unverified
+# member is half a chain. Fetched rather than committed, because nobody
+# re-verifies a third party's binary once it is in git. Redistribution beside
+# software that uses only its published API is permitted, with LICENSE.txt
+# alongside (clauses 3(c) and 3(d)), so each architecture's directory gets its
+# own copy.
+set -euo pipefail
+
+version=0.14.1
+url="https://www.wintun.net/builds/wintun-$version.zip"
+zip_sha256=07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51
+# MSBuild's platform name, the archive's directory, the DLL's digest.
+dlls="x64 amd64 e5da8447dc2c320edc0fc52fa01885c103de8c118481f683643cacc3220dafce
+arm64 arm64 f7ba89005544be9d85231a9e0d5f23b2d15b3311667e2dad0debd344918a3f80"
+
+here="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+out="${1:-$here/tunnel/dist}"
+work="$out/.wintun-$version"
+mkdir -p "$work"
+
+zip="$work/wintun-$version.zip"
+digest() { sha256sum "$1" | cut -d' ' -f1; }
+if [ ! -f "$zip" ] || [ "$(digest "$zip")" != "$zip_sha256" ]; then
+    curl -fsSL "$url" -o "$zip.part"
+    got="$(digest "$zip.part")"
+    if [ "$got" != "$zip_sha256" ]; then
+        rm -f "$zip.part"
+        echo "FAIL: $url is $got, pinned $zip_sha256" >&2
+        exit 1
+    fi
+    mv "$zip.part" "$zip"
+    rm -rf "$work/wintun"
+fi
+[ -f "$work/wintun/LICENSE.txt" ] || unzip -q -o "$zip" -d "$work"
+
+echo "$dlls" | while read -r arch from want; do
+    mkdir -p "$out/$arch"
+    cp "$work/wintun/bin/$from/wintun.dll" "$out/$arch/wintun.dll"
+    cp "$work/wintun/LICENSE.txt" "$out/$arch/WINTUN-LICENSE.txt"
+    got="$(digest "$out/$arch/wintun.dll")"
+    if [ "$got" != "$want" ]; then
+        rm -f "$out/$arch/wintun.dll"
+        echo "FAIL: $arch wintun.dll is $got, pinned $want" >&2
+        exit 1
+    fi
+    echo "WINTUN_${arch}=$out/$arch/wintun.dll"
+done

@@ -49,7 +49,8 @@ jobs:
           #   app/omnuv.ico, app/omnuv.icns   the product's own icons
           #   scripts/fetch-vcredist           fetches the MSVC runtime the
           #                    installer bundles, against a published digest
-          ADDED='^(app/omnuv/|app/gui/OmnuvView.qml|CHANGES.omnuv.md|README.omnuv.md|.github/workflows/omnuv-|terminal/|packaging/|tunnel/|tests/connect/|wix/Omnuv|app/omnuv\.(ico|icns)$|scripts/fetch-vcredist$)'
+          #   scripts/fetch-wintun             fetches Wintun the same way (24 Sep)
+          ADDED='^(app/omnuv/|app/gui/OmnuvView.qml|CHANGES.omnuv.md|README.omnuv.md|.github/workflows/omnuv-|terminal/|packaging/|tunnel/|tests/connect/|wix/Omnuv|app/omnuv\.(ico|icns)$|scripts/fetch-(vcredist|wintun)$)'
           # And these upstream files, and only these, may be edited.
           #
           # .github/dependabot.yml is the first entry added after the fork, and

@@ -32,7 +32,7 @@ of ours come with it:
 - `tunnel/build.sh` builds `onvtunneld`, the private-network daemon, a Go
   program at the root that links nothing from the application.
 - On Windows the installer also needs Wintun (`wintun.dll` and its licence,
-  fetched against a published digest by `lab-windows-build.yml`), the MSVC
+  fetched against its pins into `tunnel/dist/<arch>` by `scripts/fetch-wintun`), the MSVC
   runtime (`scripts/fetch-vcredist`) and the WiX 7 extensions `wix/Omnuv`
   references.
 - `terminal/` is a separate Rust command-line client, built with `cargo`.

@@ -20,7 +20,7 @@
 
     **Per architecture, and `$(Platform)` is what selects it.** `tunnel/build.sh`
     writes `dist/x64` and `dist/arm64` under exactly those names, and
-    `fetch-wintun` does the same for the shim, so there is one path with the
+    `scripts/fetch-wintun` does the same for Wintun, so there is one path with the
     architecture substituted rather than two vocabularies to translate between.
     Without this an arm64 MSI packaged the x64 daemon: it failed no build, and
     the only machine that would have noticed is one nobody had built for.
