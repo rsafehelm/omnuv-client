@@ -25,6 +25,10 @@ struct Cli {
     /// Where Core lives. Remembered after the first sign-in.
     #[arg(long, global = true)]
     core: Option<String>,
+    /// Which project to act on, by id or name; OMNUV_PROJECT if unset.
+    /// Without either, Core's default project, as before.
+    #[arg(long, global = true)]
+    project: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -77,6 +81,22 @@ struct Launch {
 struct Session {
     core: String,
     token: String,
+    /// Sent as `?project=` on every request that is about a project's
+    /// resources (24 September 2026). Without it the CLI always acted on
+    /// Core's default project, while the desktop client scopes by the one
+    /// chosen, so the two could show one account different machines.
+    project: Option<String>,
+}
+
+/// A Core URL for `path`, carrying the project when one was chosen. Built with
+/// the URL parser, so a name with a space or an `&` stays one value.
+fn url(s: &Session, path: &str) -> Result<reqwest::Url> {
+    let mut url = reqwest::Url::parse(&format!("{}{path}", s.core))
+        .with_context(|| format!("{}{path} is not a URL", s.core))?;
+    if let Some(project) = s.project.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+        url.query_pairs_mut().append_pair("project", project);
+    }
+    Ok(url)
 }
 
 /// Where the session is kept: %APPDATA% on Windows, XDG_CONFIG_HOME or
@@ -101,7 +121,7 @@ fn config_path() -> Result<std::path::PathBuf> {
         .context("no place to keep the sign-in: set APPDATA on Windows, or HOME")
 }
 
-fn load_session(core_override: Option<String>) -> Result<Session> {
+fn load_session(core_override: Option<String>, project: Option<String>) -> Result<Session> {
     let path = config_path()?;
     let raw = std::fs::read_to_string(&path)
         .with_context(|| format!("not signed in: run `omnuv login` (looked in {})", path.display()))?;
@@ -111,6 +131,7 @@ fn load_session(core_override: Option<String>) -> Result<Session> {
             .or_else(|| v["core"].as_str().map(str::to_string))
             .context("no core address recorded")?,
         token: v["token"].as_str().context("no token recorded")?.to_string(),
+        project,
     })
 }
 
@@ -147,7 +168,7 @@ fn write_private(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
 
 async fn get<T: for<'de> Deserialize<'de>>(s: &Session, path: &str) -> Result<T> {
     let res = reqwest::Client::new()
-        .get(format!("{}{path}", s.core))
+        .get(url(s, path)?)
         .bearer_auth(&s.token)
         .send()
         .await?;
@@ -301,12 +322,13 @@ struct Parked {
 async fn main() -> Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let cli = Cli::parse();
+    let project = cli.project.clone().or_else(|| std::env::var("OMNUV_PROJECT").ok());
 
     match cli.command {
         Command::Login => {
             let core = cli
                 .core
-                .or_else(|| load_session(None).ok().map(|s| s.core))
+                .or_else(|| load_session(None, None).ok().map(|s| s.core))
                 .context("say where Core is: omnuv --core https://… login")?;
             login(&core).await
         }
@@ -319,12 +341,12 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Command::Machines => {
-            let s = load_session(cli.core)?;
+            let s = load_session(cli.core, project.clone())?;
             print_machines(&machines(&s).await?);
             Ok(())
         }
         Command::Ssh { name } => {
-            let s = load_session(cli.core)?;
+            let s = load_session(cli.core, project.clone())?;
             let m = machine_named(&s, &name).await?;
             if m.private_ip.is_none() {
                 bail!("{name} has no private address yet; it may still be starting");
@@ -335,7 +357,7 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Command::Console { name } => {
-            let s = load_session(cli.core)?;
+            let s = load_session(cli.core, project.clone())?;
             let m = machine_named(&s, &name).await?;
             // api.<domain> -> console.<domain> in a deployment; the port swap is
             // the lab's own shape, where both run on one address.
@@ -348,7 +370,7 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Command::Events { name } => {
-            let s = load_session(cli.core)?;
+            let s = load_session(cli.core, project.clone())?;
             let path = match &name {
                 Some(n) => format!("/v1/events?limit=25&resource_id={}", machine_named(&s, n).await?.id),
                 None => "/v1/events?limit=25".to_string(),
@@ -359,7 +381,7 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Command::Waiting => {
-            let s = load_session(cli.core)?;
+            let s = load_session(cli.core, project.clone())?;
             let rows: Vec<Parked> = get(&s, "/v1/parked").await?;
             let waiting: Vec<_> = rows.into_iter().filter(|r| r.status == "WAITING").collect();
             if waiting.is_empty() {
@@ -377,7 +399,7 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Command::Launch(l) => {
-            let s = load_session(cli.core)?;
+            let s = load_session(cli.core, project.clone())?;
             let mut body = serde_json::json!({
                 "name": l.name, "region": l.region, "vcpus": l.vcpus,
                 "memory_gb": l.memory_gb, "disk_gb": l.disk_gb, "wait": l.wait,
@@ -386,7 +408,7 @@ async fn main() -> Result<()> {
                 body["gpu"] = serde_json::json!({ "model": model, "count": 1 });
             }
             let res = reqwest::Client::new()
-                .post(format!("{}/v1/instances", s.core))
+                .post(url(&s, "/v1/instances")?)
                 .bearer_auth(&s.token)
                 .json(&body)
                 .send()
@@ -408,10 +430,10 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Command::Rm { name } => {
-            let s = load_session(cli.core)?;
+            let s = load_session(cli.core, project.clone())?;
             let m = machine_named(&s, &name).await?;
             let res = reqwest::Client::new()
-                .delete(format!("{}/v1/instances/{}", s.core, m.id))
+                .delete(url(&s, &format!("/v1/instances/{}", m.id))?)
                 .bearer_auth(&s.token)
                 .send()
                 .await?;
@@ -430,6 +452,24 @@ mod tests {
 
     fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
         move |k| pairs.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string())
+    }
+
+    #[test]
+    fn a_chosen_project_travels_on_every_request_and_none_changes_nothing() {
+        let session = |project: Option<&str>| Session {
+            core: "https://api.omnuv.com".into(),
+            token: "t".into(),
+            project: project.map(str::to_string),
+        };
+        assert_eq!(url(&session(None), "/v1/instances").unwrap().as_str(), "https://api.omnuv.com/v1/instances");
+        assert_eq!(url(&session(Some("  ")), "/v1/parked").unwrap().as_str(), "https://api.omnuv.com/v1/parked");
+        assert_eq!(
+            url(&session(Some("default")), "/v1/events?limit=25").unwrap().as_str(),
+            "https://api.omnuv.com/v1/events?limit=25&project=default"
+        );
+        // A name is one value, whatever it holds.
+        let odd = url(&session(Some("a b&c=d")), "/v1/instances").unwrap();
+        assert_eq!(odd.query_pairs().collect::<Vec<_>>(), vec![("project".into(), "a b&c=d".into())]);
     }
 
     #[test]
