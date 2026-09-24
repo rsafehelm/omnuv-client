@@ -51,15 +51,21 @@ pushd $BUILD_FOLDER
 qmake $SOURCE_ROOT/moonlight-qt.pro QMAKE_APPLE_DEVICE_ARCHS="x86_64 arm64" || fail "Qmake failed!"
 popd
 
-echo Compiling Moonlight in $BUILD_CONFIG configuration
+# create-dmg names the image after the app's CFBundleDisplayName (app/Info.plist),
+# which is "Omnuv Client". This script still said Moonlight.dmg after the rename,
+# so notarising, stapling and the final rename all aimed at a file that was
+# never made.
+DMG_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$SOURCE_ROOT/app/Info.plist" 2>/dev/null || echo "Omnuv Client")"
+
+echo Compiling Omnuv Client in $BUILD_CONFIG configuration
 pushd $BUILD_FOLDER
 make -j$(sysctl -n hw.logicalcpu) $(echo "$BUILD_CONFIG" | tr '[:upper:]' '[:lower:]') || fail "Make failed!"
 popd
 
 echo Saving dSYM file
 pushd $BUILD_FOLDER
-dsymutil app/OmnuvClient.app/Contents/MacOS/OmnuvClient -o Moonlight-$VERSION.dsym || fail "dSYM creation failed!"
-cp -R Moonlight-$VERSION.dsym $INSTALLER_FOLDER || fail "dSYM copy failed!"
+dsymutil app/OmnuvClient.app/Contents/MacOS/OmnuvClient -o OmnuvClient-$VERSION.dsym || fail "dSYM creation failed!"
+cp -R OmnuvClient-$VERSION.dsym $INSTALLER_FOLDER || fail "dSYM copy failed!"
 popd
 
 echo Creating app bundle
@@ -90,11 +96,12 @@ fi
 
 if [ "$NOTARY_KEYCHAIN_PROFILE" != "" ]; then
   echo Uploading to App Notary service
-  xcrun notarytool submit --keychain-profile "$NOTARY_KEYCHAIN_PROFILE" --wait $INSTALLER_FOLDER/Moonlight.dmg || fail "Notary submission failed"
+  xcrun notarytool submit --keychain-profile "$NOTARY_KEYCHAIN_PROFILE" --wait "$INSTALLER_FOLDER/$DMG_NAME.dmg" || fail "Notary submission failed"
 
   echo Stapling notary ticket to DMG
-  xcrun stapler staple -v $INSTALLER_FOLDER/Moonlight.dmg || fail "Notary ticket stapling failed!"
+  xcrun stapler staple -v "$INSTALLER_FOLDER/$DMG_NAME.dmg" || fail "Notary ticket stapling failed!"
 fi
 
-mv $INSTALLER_FOLDER/Moonlight.dmg $INSTALLER_FOLDER/Moonlight-$VERSION.dmg
+[ -f "$INSTALLER_FOLDER/$DMG_NAME.dmg" ] || fail "create-dmg made no \"$DMG_NAME.dmg\": it names the image after CFBundleDisplayName"
+mv "$INSTALLER_FOLDER/$DMG_NAME.dmg" "$INSTALLER_FOLDER/OmnuvClient-$VERSION.dmg"
 echo Build successful
