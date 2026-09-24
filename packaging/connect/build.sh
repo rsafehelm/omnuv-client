@@ -19,23 +19,27 @@ HERE="$ROOT/packaging/connect"
 # packaging/.gitignore. It was $ROOT/dist/connect while this lived in the
 # private repository; the play that ships it reads onv_connect_dist now, so
 # the path is declared in one place rather than assumed in two.
-# The directory platform.yml ships from, unless told otherwise. A build for
-# another site, or one run only to see a refusal, goes elsewhere with
-# OMNUV_CONNECT_OUT: one such run on 24 September 2026 rewrote this directory's
-# BUILT_FOR for production while it held the mirror's packages.
-OUT="${OMNUV_CONNECT_OUT:-$HERE/dist}"
 # The deployment this package points at. Overridable, because the address is
 # per-deployment and the package is built per-deployment.
 MANAGEMENT_URL="${OMNUV_MANAGEMENT_URL:?set OMNUV_MANAGEMENT_URL: the overlay address is per-deployment, and a default bakes one lab into every installer}"
 # Where the application signs in. Per-deployment, like the overlay address.
 CORE_URL="${OMNUV_CORE_URL:?set OMNUV_CORE_URL: where this deployment Core is}"
+# **One directory per deployment, named by its Core's host**
+# (dist/api.omnuv.com, dist/api.test.omnuv.com), which is where platform.yml
+# ships each site from. Until 24 September 2026 one directory served both, so
+# every switch between the mirror and production meant rebuilding or swapping
+# it by hand, and a build for one site overwrote the other's packages.
+# OMNUV_CONNECT_OUT still sends a one-off build (a refusal test) elsewhere.
+CORE_HOST="$(printf '%s' "$CORE_URL" | sed -E 's#^[a-z]+://##; s#[/:].*$##')"
+[ -n "$CORE_HOST" ] || { echo "OMNUV_CORE_URL has no host: $CORE_URL" >&2; exit 1; }
+OUT="${OMNUV_CONNECT_OUT:-$HERE/dist/$CORE_HOST}"
 
 rm -rf "$OUT" && mkdir -p "$OUT"
 echo "omnuv-connect $VERSION -> overlay $MANAGEMENT_URL, core $CORE_URL"
-# **What this build points at, written beside it.** One directory serves both
-# deployments and every installer bakes in one deployment's addresses, so a
-# test build could be shipped to production. platform.yml reads this and
-# refuses a directory built for another deployment, or one that does not say.
+# **What this build points at, written beside it.** Every installer bakes in
+# one deployment's addresses, and the directory's name alone is a convention;
+# platform.yml reads this and refuses a directory built for another
+# deployment, or one that does not say.
 printf 'core_url=%s\nmanagement_url=%s\nversion=%s\n' "$CORE_URL" "$MANAGEMENT_URL" "$VERSION" > "$OUT/BUILT_FOR"
 
 fill() {

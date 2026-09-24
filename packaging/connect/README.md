@@ -61,7 +61,7 @@ installed the button does nothing and the command beside it still works.
 ```
 
 Everything is built in containers, so the host needs Docker and nothing else:
-no toolchain, no root. Artifacts land in `packaging/connect/dist/`, and Core serves them
+no toolchain, no root. Artifacts land in `packaging/connect/dist/<core host>/` (one directory per deployment, e.g. `dist/api.omnuv.com/`), and Core serves them
 at `/downloads` so the console can hand a buyer the right one — `platform.yml`
 in the private repository copies them onto the platform host.
 
