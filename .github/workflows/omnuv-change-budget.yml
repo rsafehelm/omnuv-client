@@ -866,7 +866,7 @@ jobs:
       #
       # Every other check here reads source and decides whether it looks right.
       # `app/omnuv/streamquality.cpp` decides what a person is told about their
-      # stream and what `scripts/gaming-rig-e2e` reads back, and neither of
+      # stream and what `scripts/gaming-rig-e2e` read back (removed from the omnuv repo on 21 September 2026), and neither of
       # those is something a grep can judge -- so it is compiled against ~120
       # lines of stubs and driven with real VIDEO_STATS values.
       #

@@ -1,4 +1,8 @@
-# Omnuv Connect
+# Omnuv, the desktop client
+
+(`OmnuvClient`. **Omnuv Connect** is something else: the small wrapper and
+installer under `packaging/connect/` that joins a device and handles
+`omnuv://` links, and which installs this client on Windows.)
 
 A desktop client for [Omnuv](https://github.com/rsafehelm/omnuv): sign in, see
 your machines, click one to connect. It streams a machine that runs a streaming
@@ -22,4 +26,13 @@ the terms.
 
 ## Building
 
-Unchanged from upstream. See `README.md`.
+The Qt application builds as upstream's does; see `README.md`. Three things
+of ours come with it:
+
+- `tunnel/build.sh` builds `onvtunneld`, the private-network daemon, a Go
+  program at the root that links nothing from the application.
+- On Windows the installer also needs Wintun (`wintun.dll` and its licence,
+  fetched against a published digest by `lab-windows-build.yml`), the MSVC
+  runtime (`scripts/fetch-vcredist`) and the WiX 7 extensions `wix/Omnuv`
+  references.
+- `terminal/` is a separate Rust command-line client, built with `cargo`.

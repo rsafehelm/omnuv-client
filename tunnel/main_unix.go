@@ -9,9 +9,10 @@ import (
 )
 
 // The Unix half, which exists for the development loop rather than for a
-// product: `scripts/client-linux` runs the client against a real daemon in a
-// container, so the socket path the client speaks to is exercised on every
-// cycle instead of only on the Windows rig.
+// product: `scripts/client-linux` ran the client against a real daemon in a
+// container, so the socket path the client speaks to was exercised on every
+// cycle instead of only on the Windows rig. That loop went on 21 September
+// 2026; the macOS build uses this same path now.
 func socketName() string {
 	if dir := os.Getenv("ONV_TUNNEL_DIR"); dir != "" {
 		return dir + "/onv-tunnel.sock"

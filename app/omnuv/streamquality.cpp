@@ -371,7 +371,8 @@ void writePanel(const Sample& s, char* out, int len)
 // ---------------------------------------------------------------------------
 // The log line
 //
-// The only half of this a harness can read. `scripts/gaming-rig-e2e` samples
+// The only half of this a harness can read. `scripts/gaming-rig-e2e` (removed
+// from the omnuv repo on 21 September 2026) sampled
 // at 10, 30 and 60 seconds over `qm guest exec`, which can read a file and
 // cannot see a pixel, so this is what step 7's four thresholds are asserted
 // against. One line per second, whether or not the panel is on and whether or

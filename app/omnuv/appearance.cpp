@@ -310,7 +310,8 @@ void OmnuvAppearance::applyStyle()
 
     // `OMNUV_STYLE` wins on every platform, and it exists for one reason: an
     // explicit `setStyle` beats `QT_QUICK_CONTROLS_STYLE`, so without it the
-    // Linux loop (`scripts/client-linux`) could only ever draw Material — and
+    // Linux loop (`scripts/client-linux`, removed from the omnuv repo on
+    // 21 September 2026) could only ever draw Material — and
     // the defects that cost 15 September were FluentWinUI3's sizing under the
     // software backend, which runs on Linux just as well. A debugging switch,
     // not a preference: nothing sets it in a shipped configuration.
