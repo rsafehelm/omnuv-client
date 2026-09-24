@@ -55,31 +55,40 @@ QString serverName()
 // client wrote `enrol-v1`, which carries a setup key, to whatever owned the
 // pipe or socket name. With the OnvTunnel service stopped, not yet started or
 // crashed, any local account could create that name first and collect the
-// key. So before anything is written: on Windows the pipe server's process
-// must run as LocalSystem, which is what the service runs as; on Unix the
-// peer must be root (SO_PEERCRED, getpeereid).
+// key. So before anything is written: on Windows the pipe server must be the
+// process the service manager says is running OnvTunnel; on Unix the peer
+// must be root (SO_PEERCRED, getpeereid).
+//
+// **Windows asks the service manager, not the process's token.** This first
+// read the pipe server's token and required LocalSystem. A client runs as the
+// signed-in person, unelevated, and an unelevated process may not open a
+// SYSTEM process's token -- so the check could never pass, and every join on
+// Windows was refused with "not the one Omnuv installed" while the installed
+// service was the one answering (measured on the Windows rig, 24 September
+// 2026: the pipe `onv-tunnel` served by onvtunneld as SYSTEM, the join
+// refused). Any signed-in user may ask a service's status, and the status
+// carries its process id; a squatter holding the name while the service is
+// stopped, or before it starts, is a different process and is refused.
 bool serverIsTheService(QLocalSocket& socket)
 {
 #ifdef Q_OS_WIN
     const HANDLE pipe = reinterpret_cast<HANDLE>(socket.socketDescriptor());
     ULONG pid = 0;
-    if (!GetNamedPipeServerProcessId(pipe, &pid)) return false;
-    const HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-    if (!process) return false;
-    HANDLE token = nullptr;
-    bool system = false;
-    if (OpenProcessToken(process, TOKEN_QUERY, &token)) {
-        DWORD size = 0;
-        GetTokenInformation(token, TokenUser, nullptr, 0, &size);
-        QByteArray buffer(int(size), 0);
-        if (size && GetTokenInformation(token, TokenUser, buffer.data(), size, &size)) {
-            const auto* user = reinterpret_cast<const TOKEN_USER*>(buffer.constData());
-            system = IsWellKnownSid(user->User.Sid, WinLocalSystemSid);
+    if (!GetNamedPipeServerProcessId(pipe, &pid) || pid == 0) return false;
+    const SC_HANDLE manager = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (!manager) return false;
+    bool installed = false;
+    if (const SC_HANDLE service = OpenServiceW(manager, L"OnvTunnel", SERVICE_QUERY_STATUS)) {
+        SERVICE_STATUS_PROCESS status {};
+        DWORD needed = 0;
+        if (QueryServiceStatusEx(service, SC_STATUS_PROCESS_INFO, reinterpret_cast<LPBYTE>(&status),
+                                 sizeof(status), &needed)) {
+            installed = status.dwCurrentState == SERVICE_RUNNING && status.dwProcessId == pid;
         }
-        CloseHandle(token);
+        CloseServiceHandle(service);
     }
-    CloseHandle(process);
-    return system;
+    CloseServiceHandle(manager);
+    return installed;
 #else
     const int fd = int(socket.socketDescriptor());
     long peer = -1;
