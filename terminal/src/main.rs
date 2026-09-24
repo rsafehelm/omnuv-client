@@ -454,6 +454,50 @@ mod tests {
         move |k| pairs.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string())
     }
 
+    /// Core's replies, parsed with this client's types. **Synthetic, not
+    /// captured**: each is written field for field from Core's own view
+    /// (`InstanceView`, `EventView`, `ParkedView`, `device_auth::Pending`, as
+    /// of 24 September 2026), with every field Core sends, the optional ones
+    /// it omits left out, and fields this client ignores kept in.
+    #[test]
+    fn cores_replies_parse_as_core_writes_them() {
+        let machines: Vec<Machine> = serde_json::from_str(r#"[
+            {"id":"6f1c2d4e-0000-4000-8000-000000000001","name":"gpu-1","region":"eu-west",
+             "image":"ubuntu-26.04","os_family":"linux","default_user":"ubuntu","auth_mode":"key",
+             "console_kind":"serial","vcpus":8,"memory_mib":32768,"disk_gib":200,
+             "gpu":{"model":"RTX 3090","count":1},"status":"RUNNING","stream_app":"Desktop",
+             "private_ip":"10.210.0.11","private_name":"gpu-1.internal","last_error":null,
+             "price_per_hour":"0.4200","created_at":"2026-09-24T01:00:00Z"},
+            {"id":"6f1c2d4e-0000-4000-8000-000000000002","name":"small","region":"eu-west",
+             "image":"ubuntu-26.04","os_family":"linux","default_user":"ubuntu","auth_mode":"key",
+             "console_kind":"serial","vcpus":2,"memory_mib":4096,"disk_gib":40,
+             "status":"PENDING","private_ip":null,"last_error":null,
+             "price_per_hour":"0.0300","created_at":"2026-09-24T01:00:00Z"}
+        ]"#).expect("/v1/instances as Core writes it");
+        assert_eq!(machines[0].gpu.as_ref().map(|g| (g.model.as_str(), g.count)), Some(("RTX 3090", 1)));
+        assert!(machines[1].gpu.is_none() && machines[1].stream_app.is_none() && machines[1].private_ip.is_none());
+        assert_eq!((machines[1].vcpus, machines[1].memory_mib), (2, 4096));
+
+        let events: Vec<Event> = serde_json::from_str(r#"[{"id":7,"at":"2026-09-24T01:02:03.456Z",
+            "kind":"instance.observed","severity":"info","class":"lifecycle","actor":"provider:x",
+            "summary":"gpu-1 is now running","resource_type":"instance","resource_id":null,"detail":{}}]"#)
+            .expect("/v1/events as Core writes it");
+        // main prints the first 19 characters with the T replaced.
+        assert_eq!(events[0].at[..19].replace('T', " "), "2026-09-24 01:02:03");
+
+        let parked: Vec<Parked> = serde_json::from_str(r#"[{"id":"6f1c2d4e-0000-4000-8000-000000000003",
+            "status":"WAITING","waiting_on":"a GPU","attempts":3,"last_reason":null,
+            "created_at":"2026-09-24T01:00:00Z","expires_at":"2026-09-25T01:00:00Z",
+            "instance_id":null,"billing":"nothing is charged while a request waits"}]"#)
+            .expect("/v1/parked as Core writes it");
+        assert_eq!((parked[0].status.as_str(), parked[0].attempts), ("WAITING", 3));
+
+        let pending: Pending = serde_json::from_str(r#"{"device_code":"dc","user_code":"ABCD-EFGH",
+            "verification_uri":"https://console.omnuv.com/device","interval":5,"expires_in":600}"#)
+            .expect("the device-code start as Core writes it");
+        assert_eq!((pending.user_code.as_str(), pending.interval), ("ABCD-EFGH", 5));
+    }
+
     #[test]
     fn a_chosen_project_travels_on_every_request_and_none_changes_nothing() {
         let session = |project: Option<&str>| Session {
