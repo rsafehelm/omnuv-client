@@ -122,5 +122,24 @@ if curl -fsSI -o /dev/null https://github.com 2>/dev/null; then
 else echo "skip  the pinned release (no network)"; fi
 stop
 
+# The bundled client (the Linux .deb, 24 September 2026): enrolment goes
+# through it, the key on its standard input, and nothing else is fetched or run.
+cat > "$work/client" <<SH
+#!/bin/sh
+echo "\$@" > "$work/client.args"
+cat > "$work/client.stdin"
+exit \${CLIENT_EXIT:-0}
+SH
+chmod +x "$work/client"
+serve usable
+rm -f "$work/netbird.log" "$work/client.args" "$work/client.stdin"
+OMNUV_CONNECT_CLIENT="$work/client" run k-1234 --yes; st=$?
+if [ $st -eq 0 ] && grep -qx "enrol --key-stdin --management-url https://nb.example" "$work/client.args" \
+    && grep -qx "k-1234" "$work/client.stdin" && ! grep -q k-1234 "$work/client.args" && [ ! -s "$work/netbird.log" ]; then
+    echo "ok    the bundled client joins, the key on its stdin, netbird untouched"
+else echo "FAIL  the bundled client (exit $st): args=$(cat "$work/client.args" 2>/dev/null) netbird=$(cat "$work/netbird.log" 2>/dev/null) $(tail -2 "$work/out")"; fails=$((fails+1)); fi
+CLIENT_EXIT=1 OMNUV_CONNECT_CLIENT="$work/client" run k-1234 --yes; check $? "the bundled client refusing is reported" 1 no "did not join"
+stop
+
 [ $fails -eq 0 ] && echo "all cases hold" || echo "$fails case(s) failed"
 exit $fails

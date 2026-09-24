@@ -40,7 +40,43 @@ fill() {
 }
 
 # ---------- Ubuntu / Debian ----------
+# **One .deb holding the client, its Qt and the tunnel service** (the
+# operator's decision, 24 September 2026), when a staged client is handed in:
+# OMNUV_CLIENT_LINUX_DIR is what linux/stage-client.sh wrote. Built by
+# linux/package-deb.sh inside OMNUV_DEB_IMAGE (default omnuv-client-linux:local,
+# the image the client was built in), because working out Depends needs the
+# libraries the client was built against.
+#
+# Without one, the wrapper-only package is built as before and named
+# -noclient, which Core's downloads list does not offer to a buyer: it installs
+# NetBird and upstream Moonlight, which is what the decision replaced.
 build_deb() {
+    if [ -z "${OMNUV_CLIENT_LINUX_DIR:-}" ]; then
+        build_deb_wrapper
+        return
+    fi
+    [ -x "$OMNUV_CLIENT_LINUX_DIR/bin/OmnuvClient.bin" ] || {
+        echo "  deb    FAILED: no staged client at OMNUV_CLIENT_LINUX_DIR=$OMNUV_CLIENT_LINUX_DIR" >&2; return 1; }
+    [ -x "$ROOT/tunnel/dist/onvtunneld" ] || {
+        echo "  deb    FAILED: no tunnel/dist/onvtunneld; run tunnel/build.sh linux" >&2; return 1; }
+    local stage="$OUT/.deb-full"
+    rm -rf "$stage" && mkdir -p "$stage"
+    fill "$HERE/omnuv-connect" > "$stage/omnuv-connect"
+    cp -a "$OMNUV_CLIENT_LINUX_DIR" "$stage/client"
+    cp "$ROOT/tunnel/dist/onvtunneld" "$stage/onvtunneld"
+    docker run --rm -v "$HERE/linux:/linux:ro" -v "$ROOT/app/omnuv:/app/omnuv:ro" -v "$stage:/in:ro" -v "$OUT:/out" \
+        "${OMNUV_DEB_IMAGE:-omnuv-client-linux:local}" bash -c "
+        set -e
+        apt-get -qq update >/dev/null 2>&1
+        DEBIAN_FRONTEND=noninteractive apt-get -qq install -y dpkg-dev >/dev/null 2>&1
+        bash /linux/package-deb.sh /in/client /in/onvtunneld /in/omnuv-connect '$VERSION' /out
+        chown $(id -u):$(id -g) /out/omnuv-connect_${VERSION}_amd64.deb" \
+        || { echo "  deb    FAILED: packaging did not finish" >&2; return 1; }
+    rm -rf "$stage"
+    echo "  deb    omnuv-connect_${VERSION}_amd64.deb (client, Qt and tunnel service)"
+}
+
+build_deb_wrapper() {
     local stage="$OUT/.deb"
     rm -rf "$stage"
     mkdir -p "$stage/DEBIAN" "$stage/usr/bin" "$stage/usr/share/doc/omnuv-connect"
@@ -80,7 +116,7 @@ CTL
     # fakeroot so files are owned by root inside the package without needing it here.
     docker run --rm -v "$OUT:/out" -w /out debian:trixie-slim \
         sh -c "apt-get -qq update >/dev/null && apt-get -qq install -y fakeroot >/dev/null \
-               && fakeroot dpkg-deb --build .deb omnuv-connect_${VERSION}_all.deb" >/dev/null
+               && fakeroot dpkg-deb --build .deb omnuv-connect_${VERSION}-noclient_all.deb" >/dev/null
     rm -rf "$stage"
     echo "  deb    $(basename "$OUT"/omnuv-connect_*.deb)"
 }

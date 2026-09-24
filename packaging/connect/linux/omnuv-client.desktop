@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Omnuv
+Comment=Your machines, and a private network to reach them
+Exec=/opt/omnuv/bin/OmnuvClient
+Icon=omnuv
+Terminal=false
+Categories=Network;

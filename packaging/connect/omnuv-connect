@@ -156,8 +156,23 @@ param() {
     done
 }
 
+# **The client this package ships, where it ships one (24 September 2026).**
+# The Linux .deb carries the Omnuv client, its Qt and the tunnel service, as
+# the Windows installer does; the operator's decision was one package. Where
+# it is installed it does everything below: enrolling, streaming, the link a
+# console button opens. NetBird and upstream Moonlight are never fetched then.
+# The macOS package does not carry it yet (it needs the Mac rig to build), so
+# there the older path stays.
+# OMNUV_CONNECT_CLIENT is for tests; it is the same trust as PATH.
+BUNDLED="${OMNUV_CONNECT_CLIENT:-/opt/omnuv/bin/OmnuvClient}"
+bundled() { [ -x "$BUNDLED" ]; }
+
 launch_stream() {
     host="$1"; app="$2"
+    if bundled; then
+        [ -n "$app" ] && exec "$BUNDLED" stream "$host" "$app"
+        exec "$BUNDLED" stream "$host"
+    fi
     for m in moonlight moonlight-qt; do
         if have "$m"; then
             # Verified against the client's own parser: stream <host> "<app>".
@@ -230,6 +245,8 @@ handle() {
             # without one asks the app to join with its own sign-in; there is
             # no app in this package yet, so say what to do instead.
             [ -z "$(param key "$query")" ] || die "a link can no longer carry a network key. In the console, use \"Get command\" and run the command it shows."
+            # The app joins with its own sign-in; opening it is the join.
+            bundled && exec "$BUNDLED"
             die "this device has no Omnuv app to join with its sign-in. In the console, use \"Get command\" and run the command it shows."
             ;;
         stream)
@@ -328,6 +345,22 @@ enrol() {
     # it joins. Core answers for a key it minted; a key it did not mint, or one
     # already spent, is refused here rather than handed to the tunnel.
     key_leads_where "$key"
+
+    if bundled; then
+        say "Joining your private network…"
+        # **Forwarded, not reimplemented**, as omnuv-connect.ps1 does: the
+        # client asks the tunnel service, which holds the network. The key goes
+        # on its standard input, never its command line.
+        printf '%s\n' "$key" | "$BUNDLED" enrol --key-stdin --management-url "$MANAGEMENT_URL" \
+            || die "the device did not join. Check the key has not already been used."
+        say ""
+        say "Connected. Your machines are reachable by name, for example:"
+        say "    ssh gpu-1.internal"
+        say "    or open Omnuv, which lists them by name"
+        say ""
+        say "This device now appears in your Omnuv console under Network, where you can revoke it."
+        return 0
+    fi
 
     install_tunnel
     [ "$gaming" = 1 ] && install_gaming
@@ -454,8 +487,22 @@ case "${1:-}" in
     handle) shift; handle "$@" ;;
     sign-in|signin|login) shift; sign_in "$@" ;;
     enrol|enroll|join) shift; enrol "$@" ;;
-    status) have netbird || die "not installed yet: run omnuv-connect enrol"; netbird status ;;
-    leave|disconnect) as_root netbird down && say "Disconnected. Revoke the device in the console to remove it for good." ;;
+    status)
+        if bundled; then
+            if systemctl is-active --quiet onv-tunnel.service 2>/dev/null; then
+                say "The Omnuv network service is running. Open Omnuv to see this device's network."
+            else
+                die "the Omnuv network service is not running: sudo systemctl start onv-tunnel"
+            fi
+        else
+            have netbird || die "not installed yet: run omnuv-connect enrol"; netbird status
+        fi ;;
+    leave|disconnect)
+        if bundled; then
+            as_root systemctl stop onv-tunnel.service && say "Disconnected until the service starts again. Revoke the device in the console to remove it for good."
+        else
+            as_root netbird down && say "Disconnected. Revoke the device in the console to remove it for good."
+        fi ;;
     version|--version) say "omnuv-connect $VERSION" ;;
     *) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' ;;
 esac

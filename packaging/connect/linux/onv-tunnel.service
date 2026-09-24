@@ -1,0 +1,18 @@
+[Unit]
+Description=Omnuv private network
+Documentation=https://omnuv.com
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# As root: creating the WireGuard adapter needs it, and the client, which
+# runs as the person, asks this over /run/onv-tunnel.sock (it checks the
+# socket's peer is root before sending anything).
+ExecStart=/opt/omnuv/bin/onvtunneld
+Restart=on-failure
+RestartSec=5s
+StateDirectory=onv/tunnel
+StateDirectoryMode=0700
+
+[Install]
+WantedBy=multi-user.target
