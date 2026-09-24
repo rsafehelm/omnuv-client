@@ -2,7 +2,10 @@
 # The Visual C++ redistributables, into build/redist/, verified against the
 # pins the bundle already carries.
 #
-#     scripts/fetch-vcredist          fetch if absent or wrong; print where
+#     scripts/fetch-vcredist [dir]    fetch if absent or wrong; print where
+#
+# `dir` defaults to build/redist/. The lab play passes one of its own because
+# it runs this against a read-only mount of the checkout.
 #
 # **Why fetch them at all.** `Bundle.wxs` declares both redistributables with a
 # `DownloadUrl` and no local payload, so `OmnuvSetup.exe` is a *downloading*
@@ -24,7 +27,7 @@ set -euo pipefail
 
 here="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 bundle="$here/wix/OmnuvSetup/Bundle.wxs"
-out="$here/build/redist"
+out="${1:-$here/build/redist}"
 
 [ -f "$bundle" ] || { echo "FAIL: $bundle is missing" >&2; exit 1; }
 
