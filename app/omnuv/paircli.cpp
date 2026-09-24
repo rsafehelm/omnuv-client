@@ -69,6 +69,15 @@ void OmnuvPairCli::start(const QStringList& args, QObject* parent)
     parser.addPositionalArgument(QStringLiteral("pair-machine"), QStringLiteral("The action."));
     parser.addPositionalArgument(QStringLiteral("host"),
                                  QStringLiteral("The machine's private name."));
+    // The Core that owns the machine, for this run only; see signin.cpp. The
+    // same flag `signin` and `enrol` take (B10), and for the same reason: a
+    // device that once signed in to one deployment keeps that address saved,
+    // and without the flag a harness pointed at another asked the saved one.
+    QCommandLineOption coreUrlOption(
+        QStringLiteral("core-url"),
+        QStringLiteral("Ask this Core for the machine's login, for this run, without changing the saved one."),
+        QStringLiteral("url"));
+    parser.addOption(coreUrlOption);
 
     if (!parser.parse(args)) {
         fputs(qPrintable(parser.errorText() + QLatin1Char('\n')), stderr);
@@ -84,12 +93,18 @@ void OmnuvPairCli::start(const QStringList& args, QObject* parent)
         ::exit(1);
     }
     const QString host = positional.at(1);
+    if (parser.isSet(coreUrlOption)) {
+        OmnuvSession::setCoreUrlOverride(parser.value(coreUrlOption));
+    }
 
     // **A session, because the credential is the whole point.** The machine's
     // one-time web login lives in Core, against the deployment that owns the
     // machine, and only a signed-in device may collect it. Without one this
     // action is upstream's `pair` with extra steps.
     auto* session = new OmnuvSession(parent);
+    // Said before anything else, so a harness can hold it to the Core it
+    // named rather than trust that the flag took.
+    emitLine(QStringLiteral("core-url=%1").arg(session->coreUrl()));
     QObject::connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, session,
                      [session]() { session->finishPairing(); });
     if (!session->signedIn()) {
