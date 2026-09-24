@@ -731,6 +731,81 @@ private slots:
         QVERIFY2(said.startsWith("state"), qPrintable("a daemon of this user on a development socket was refused: " + said));
     }
 
+    // 1271: an answer in two writes is read whole, and one still unfinished
+    // at the deadline is no answer. The daemon ends every answer with a
+    // newline; the old read took whatever the first readyRead brought.
+    void anAnswerIsReadToItsNewlineAndNoFurther() {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QByteArray path = (dir.path() + "/onv-tunnel.sock").toUtf8();
+        const int listener = ::socket(AF_UNIX, SOCK_STREAM, 0); QVERIFY(listener >= 0);
+        sockaddr_un addr{}; addr.sun_family = AF_UNIX;
+        qstrncpy(addr.sun_path, path.constData(), sizeof(addr.sun_path));
+        QVERIFY(::bind(listener, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0);
+        QVERIFY(::listen(listener, 8) == 0);
+        std::thread daemon([listener]() {
+            // By the line asked, not by the connection's number: the
+            // tunnel's constructor asks its own questions first.
+            for (;;) {
+                const int peer = ::accept(listener, nullptr, nullptr);
+                if (peer < 0) return;
+                char line[512] = {}; (void)::read(peer, line, sizeof(line) - 1);
+                const bool split = qstrncmp(line, "split", 5) == 0, hang = qstrncmp(line, "hang", 4) == 0;
+                if (!split && !hang) {
+                    const char plain[] = "state 0 - - fixture\n";
+                    (void)::send(peer, plain, sizeof(plain) - 1, MSG_NOSIGNAL);
+                    ::close(peer); continue;
+                }
+                const char first[] = "state 0 - - two";
+                (void)::send(peer, first, sizeof(first) - 1, MSG_NOSIGNAL);
+                // `split` finishes after a pause; `hang` not inside the
+                // client's two seconds.
+                std::this_thread::sleep_for(std::chrono::milliseconds(split ? 150 : 2600));
+                const char rest[] = " writes\nand a second line\n";
+                if (split) (void)::send(peer, rest, sizeof(rest) - 1, MSG_NOSIGNAL);
+                ::close(peer);
+            }
+        });
+        const auto before = qgetenv("ONV_TUNNEL_DIR");
+        const auto fixture = qgetenv("OMNUV_FIXTURE_URL");
+        qputenv("ONV_TUNNEL_DIR", dir.path().toUtf8());
+        qunsetenv("OMNUV_FIXTURE_URL");
+        QString whole, unfinished;
+        {
+            OmnuvTunnel tunnel;
+            whole = tunnel.m_request("split");
+            unfinished = tunnel.m_request("hang");
+        }
+        ::shutdown(listener, SHUT_RDWR);
+        ::close(listener);
+        daemon.join();
+        if (before.isEmpty()) qunsetenv("ONV_TUNNEL_DIR"); else qputenv("ONV_TUNNEL_DIR", before);
+        if (!fixture.isEmpty()) qputenv("OMNUV_FIXTURE_URL", fixture);
+        QCOMPARE(whole, QStringLiteral("state 0 - - two writes"));
+        QVERIFY2(unfinished.isEmpty(), qPrintable("a half answer at the deadline was taken as one: " + unfinished));
+    }
+
+    // 1271: a daemon that does not answer costs one blocked request per poll,
+    // and the polls slow to one in thirty seconds until it answers again.
+    void anUnansweringDaemonIsAskedOnceAndLessOften() {
+        OmnuvTunnel tunnel;
+        QStringList asked;
+        bool answering = false;
+        tunnel.m_request = [&](const QString& line) {
+            asked << line.section(QLatin1Char(' '), 0, 0);
+            return answering ? (line.startsWith("membership-v1") ? QStringLiteral("{}") : QStringLiteral("state 0 - - ok")) : QString();
+        };
+        tunnel.m_timer.setInterval(3000);
+        tunnel.check();
+        QCOMPARE(asked, QStringList{"membership-v1"});
+        QCOMPARE(tunnel.m_timer.interval(), 6000);
+        for (int i = 0; i < 5; ++i) tunnel.check();
+        QCOMPARE(tunnel.m_timer.interval(), 30000);
+        answering = true; asked.clear();
+        tunnel.check();
+        QCOMPARE(asked, (QStringList{"membership-v1", "state"}));
+        QCOMPARE(tunnel.m_timer.interval(), 3000);
+    }
+
     // 1325: a name from Core reaches ssh (and, on Windows, cmd) only when it
     // is a machine's name and a login name.
     void onlyAMachinesNameReachesSsh() {

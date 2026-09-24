@@ -4,6 +4,7 @@
 #include <QJsonDocument>
 #include <QDebug>
 #include <QTimer>
+#include <QDeadlineTimer>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -107,11 +108,34 @@ QString request(const QString& line)
         return QStringLiteral("err The network service answering on this device is not the one Omnuv installed, so nothing was sent to it. Restart the Omnuv network service.");
     }
     socket.write(line.toUtf8() + '\n');
-    if (!socket.waitForBytesWritten(300) || !socket.waitForReadyRead(2000)) {
+    if (!socket.waitForBytesWritten(300)) {
         return QString();
     }
-    return QString::fromUtf8(socket.readAll()).trimmed();
+    // **Up to the newline, under one deadline (24 September 2026).** The
+    // daemon ends every answer with one (`fmt.Fprintln`, ipc.go). This read
+    // everything the first `readyRead` brought, so an answer that arrived in
+    // two writes came back as its first half: a membership JSON cut short
+    // parses as nothing. An answer still unfinished at the deadline is not an
+    // answer, so the caller gets empty ("could not be reached"), not the
+    // fragment. A daemon that closes without a newline has finished.
+    QByteArray answer;
+    const QDeadlineTimer deadline(2000);
+    while (!answer.contains('\n')) {
+        if (socket.bytesAvailable() > 0) { answer += socket.readAll(); continue; }
+        if (socket.state() != QLocalSocket::ConnectedState) break;
+        const qint64 left = deadline.remainingTime();
+        if (left <= 0 || !socket.waitForReadyRead(int(left))) {
+            answer += socket.readAll();
+            if (socket.state() == QLocalSocket::ConnectedState && !answer.contains('\n')) return QString();
+            break;
+        }
+    }
+    const qsizetype end = answer.indexOf('\n');
+    return QString::fromUtf8(end < 0 ? answer : answer.left(end)).trimmed();
 }
+
+constexpr int kPollMs = 3 * 1000;
+constexpr int kSlowPollMs = 30 * 1000;
 
 } // namespace
 
@@ -128,7 +152,7 @@ OmnuvTunnel::OmnuvTunnel(QObject* parent)
     // Three seconds. Reading the state is a local socket round trip rather
     // than a process to spawn, and a join takes tens of seconds to resolve —
     // so the view moves while it happens.
-    m_timer.setInterval(3 * 1000);
+    m_timer.setInterval(kPollMs);
     connect(&m_timer, &QTimer::timeout, this, &OmnuvTunnel::check);
     m_operationDeadline.setSingleShot(true);
     m_operationDeadline.setInterval(120000);
@@ -244,7 +268,16 @@ void OmnuvTunnel::updatePolling()
 void OmnuvTunnel::check()
 {
     readMembership();
-    const QString reply = m_request(QStringLiteral("state"));
+    // **One unanswered request per poll, not two, and fewer polls while
+    // nothing answers (24 September 2026).** These calls block the thread
+    // they run on, which is the UI's, for up to 2.6 s each when the daemon
+    // accepts and then says nothing. Asking `state` straight after
+    // `membership-v1` went unanswered doubled that for no new information,
+    // every three seconds. Now: skip it, and stretch the interval to 30 s
+    // until an answer comes, when it drops back to 3 s. Not async; that would
+    // mean rewriting m_request and every test built on it (TODO.md).
+    const QString reply = m_serviceAnswered ? m_request(QStringLiteral("state")) : QString();
+    m_timer.setInterval(reply.isEmpty() ? qMin(m_timer.interval() * 2, kSlowPollMs) : kPollMs);
 
     if (reply.isEmpty()) {
         // Unknown rather than a failure, and the distinction is the whole
