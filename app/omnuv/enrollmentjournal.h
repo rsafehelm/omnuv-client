@@ -57,7 +57,13 @@ private:
         if (!m_memory) {
             if (!QDir().mkpath(QFileInfo(lockPath).absolutePath())) return false;
             lock.reset(new QLockFile(lockPath));
-            if (!lock->tryLock(0)) return false;
+            // **Waited for, briefly (24 September 2026).** `tryLock(0)` gave
+            // up at once, so a second window reserving while the first held
+            // the lock told its user the attempt "could not be saved". What
+            // the lock guards is one settings write; two seconds is many of
+            // them. A holder that died is noticed by QLockFile itself (the
+            // process is gone) and does not cost the wait.
+            if (!lock->tryLock(2000)) return false;
         }
         bool valid;
         auto values = records(&valid);

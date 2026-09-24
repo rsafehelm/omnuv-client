@@ -8,6 +8,7 @@
 #include <sys/un.h>
 #include <sys/socket.h>
 #include <thread>
+#include <atomic>
 #include <QLocalSocket>
 #include <QHostAddress>
 #include <cmath>
@@ -865,6 +866,23 @@ private slots:
         OmnuvEnrollmentJournal broken(false,blocker.fileName()+"/settings.ini"); QVERIFY(!broken.reserve(scope,&b));
         QFile corrupt(dir.path()+"/corrupt.ini"); QVERIFY(corrupt.open(QIODevice::WriteOnly)); corrupt.write("[omnuv]\nenrollments=broken-json\n"); corrupt.close();
         OmnuvEnrollmentJournal damaged(false,corrupt.fileName()); QVERIFY(!damaged.reserve(scope,&b));
+    }
+    // 1350: a reservation made while another holder has the journal's lock
+    // waits for it, rather than failing at once as "could not be saved".
+    void aReservationWaitsForTheJournalLockBriefly() {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString path = dir.path()+"/saved.ini";
+        const QJsonObject scope{{"core_url","https://core.example.test"},{"account_id","a"},{"project_id","p"},{"network_id","n"}};
+        std::atomic<bool> held{false};
+        std::thread other([&]() {
+            QLockFile lock(path+".journal-lock"); if (!lock.tryLock(1000)) return;
+            held = true; std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        });
+        while (!held) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        OmnuvEnrollmentJournal journal(false,path); QJsonObject record;
+        const bool reserved = journal.reserve(scope,&record);
+        other.join();
+        QVERIFY2(reserved, "a lock held for 300 ms made the reservation fail");
     }
     void enrollmentWithoutSelectedProjectDoesNotUseTheDefaultProject() {
         HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
