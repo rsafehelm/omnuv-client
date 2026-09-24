@@ -161,11 +161,38 @@ param() {
 # the Windows installer does; the operator's decision was one package. Where
 # it is installed it does everything below: enrolling, streaming, the link a
 # console button opens. NetBird and upstream Moonlight are never fetched then.
-# The macOS package does not carry it yet (it needs the Mac rig to build), so
-# there the older path stays.
+# The macOS package carries the same three things: Omnuv.app in
+# /Applications, and onvtunneld as the launchd daemon dev.omnuv.tunnel
+# (packaging/connect/macos/package-pkg.sh).
 # OMNUV_CONNECT_CLIENT is for tests; it is the same trust as PATH.
-BUNDLED="${OMNUV_CONNECT_CLIENT:-/opt/omnuv/bin/OmnuvClient}"
+case "$(uname -s)" in
+    Darwin) default_client=/Applications/Omnuv.app/Contents/MacOS/OmnuvClient ;;
+    *) default_client=/opt/omnuv/bin/OmnuvClient ;;
+esac
+BUNDLED="${OMNUV_CONNECT_CLIENT:-$default_client}"
 bundled() { [ -x "$BUNDLED" ]; }
+
+# The tunnel service, by the init each system has: systemd's onv-tunnel.service
+# on Linux, launchd's dev.omnuv.tunnel on macOS.
+TUNNEL_LABEL=dev.omnuv.tunnel
+tunnel_running() {
+    case "$(uname -s)" in
+        Darwin) launchctl print "system/$TUNNEL_LABEL" 2>/dev/null | grep -q 'state = running' ;;
+        *) systemctl is-active --quiet onv-tunnel.service 2>/dev/null ;;
+    esac
+}
+tunnel_start_hint() {
+    case "$(uname -s)" in
+        Darwin) echo "sudo launchctl bootstrap system /Library/LaunchDaemons/$TUNNEL_LABEL.plist" ;;
+        *) echo "sudo systemctl start onv-tunnel" ;;
+    esac
+}
+tunnel_stop() {
+    case "$(uname -s)" in
+        Darwin) as_root launchctl bootout "system/$TUNNEL_LABEL" ;;
+        *) as_root systemctl stop onv-tunnel.service ;;
+    esac
+}
 
 launch_stream() {
     host="$1"; app="$2"
@@ -491,17 +518,17 @@ case "${1:-}" in
     enrol|enroll|join) shift; enrol "$@" ;;
     status)
         if bundled; then
-            if systemctl is-active --quiet onv-tunnel.service 2>/dev/null; then
+            if tunnel_running; then
                 say "The Omnuv network service is running. Open Omnuv to see this device's network."
             else
-                die "the Omnuv network service is not running: sudo systemctl start onv-tunnel"
+                die "the Omnuv network service is not running: $(tunnel_start_hint)"
             fi
         else
             have netbird || die "not installed yet: run omnuv-connect enrol"; netbird status
         fi ;;
     leave|disconnect)
         if bundled; then
-            as_root systemctl stop onv-tunnel.service && say "Disconnected until the service starts again. Revoke the device in the console to remove it for good."
+            tunnel_stop && say "Disconnected until the service starts again. Revoke the device in the console to remove it for good."
         else
             as_root netbird down && say "Disconnected. Revoke the device in the console to remove it for good."
         fi ;;
