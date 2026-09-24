@@ -273,8 +273,11 @@ handle() {
 # so, and asks for a yes. The key goes in the request body on stdin, never on
 # curl's command line. "Could not ask" stops here too: it is not a yes.
 key_leads_where() {
-    [ -n "$CORE_URL" ] && [ "$CORE_URL" != "@CORE_URL@" ] \
-        || die "no Omnuv address was built into this package; pass --core-url"
+    # **A pattern, never the placeholder itself.** build.sh substitutes every
+    # occurrence of the placeholder, so a guard spelled with it compared the
+    # built address with itself and refused every enrolment that did not pass
+    # the address again by hand (found on the Linux rig, 24 September 2026).
+    case "$CORE_URL" in ''|@*@) die "no Omnuv address was built into this package; pass --core-url" ;; esac
     case "$(origin_of "$CORE_URL")" in
         https://*|http://127.*|'http://[::1]'*) ;;
         *) die "$CORE_URL is not an https:// address, and a key is never sent over plain http" ;;
@@ -337,8 +340,7 @@ enrol() {
         key=$(printf '%s' "$key" | tr -d '[:space:]')
     fi
     [ -n "$key" ] || die "usage: omnuv-connect enrol   (and paste the key from your Omnuv console when asked)"
-    [ -n "$MANAGEMENT_URL" ] && [ "$MANAGEMENT_URL" != "@MANAGEMENT_URL@" ] \
-        || die "no network address was built into this package; pass --management-url"
+    case "$MANAGEMENT_URL" in ''|@*@) die "no network address was built into this package; pass --management-url" ;; esac
 
     # **Where the key leads, before it is spent (H3).** A pasted key could be
     # anybody's, and the management address alone does not say whose network

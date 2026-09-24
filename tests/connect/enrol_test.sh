@@ -70,6 +70,20 @@ grep -q "^/v1/devices/key-info k-1234$" "$work/asked" || { echo "FAIL  the key w
 grep -q -- "--setup-key-file" "$work/netbird.log" && ! grep -q k-1234 "$work/netbird.log" \
     || { echo "FAIL  the key reached netbird's command line"; fails=$((fails+1)); }
 stop
+# **As built, with no address passed.** Every case above passes
+# --management-url and --core-url, which is not what a person does. The
+# guard that says "no address was built in" was spelled with the placeholder,
+# build.sh's `fill` rewrote it with the built address, and every package then
+# refused to enrol (found on the Linux rig, 24 September 2026). So the script
+# is rendered by build.sh's own `fill`, extracted rather than copied, and
+# enrolled with nothing but the key.
+serve usable
+eval "$(sed -n '/^fill() {/,/^}/p' "$here/../../packaging/connect/build.sh")"
+MANAGEMENT_URL=https://nb.example CORE_URL="http://127.0.0.1:$(cat "$work/port")" VERSION=0.0.0-test \
+    fill "$script" > "$work/built-omnuv-connect"
+PATH="$bin:$PATH" timeout 120 sh "$work/built-omnuv-connect" enrol k-1234 --yes < /dev/null > "$work/out" 2>&1
+check $? "as built, with no address passed" 0 yes 'organization "Acme Studio"'
+stop
 
 serve usable
 if command -v script >/dev/null 2>&1; then

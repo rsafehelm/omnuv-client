@@ -117,7 +117,7 @@ function Confirm-LinkEnrol {
 # organization. A key it did not mint, one already spent, and no answer at all
 # each stop here, before the key reaches the client. Could not ask is not a yes.
 function Confirm-KeyDestination($Key) {
-    if (-not $CoreUrl -or $CoreUrl -eq '@CORE_URL@') { Die 'no Omnuv address was built into this package; pass -CoreUrl' }
+    if (-not $CoreUrl -or $CoreUrl -match '^@.*@$') { Die 'no Omnuv address was built into this package; pass -CoreUrl' }
     $origin = try { [Uri]$CoreUrl } catch { $null }
     if (-not $origin -or -not ($origin.Scheme -eq 'https' -or ($origin.Scheme -eq 'http' -and $origin.IsLoopback))) {
         Die "$CoreUrl is not an https:// address, and a key is never sent over plain http"
@@ -215,7 +215,7 @@ switch ($Command.ToLower()) {
             $Key = [System.Net.NetworkCredential]::new('', $secure).Password.Trim()
         }
         if (-not $Key) { Die 'usage: omnuv-connect enrol   (and paste the key from your Omnuv console when asked)' }
-        if (-not $ManagementUrl -or $ManagementUrl -eq '@MANAGEMENT_URL@') {
+        if (-not $ManagementUrl -or $ManagementUrl -match '^@.*@$') {
             Die 'no network address was built into this package; pass -ManagementUrl'
         }
         Confirm-KeyDestination $Key
