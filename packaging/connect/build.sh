@@ -201,7 +201,31 @@ build_exe() {
 # A .pkg built without a Mac, using the same tools Apple's own format is made
 # of. Unsigned and unnotarised, so Gatekeeper refuses it on a double click and
 # the buyer has to open it from the right-click menu once. The README says so.
+# **The client package, when there is one (OMNUV_MACOS_PKG).** Built on the
+# lab Mac by omnuv's lab-macos-connect-pkg.yml -e connect_pkg_release=true, the
+# operator's decision of 24 September 2026 for the closed test. It is taken
+# only when its sidecar names this build's addresses and version and its
+# checksum is the one taken where it was built. A package built for the test
+# mirror must never ship beside a production .deb.
+build_pkg_released() {
+    local pkg="$OMNUV_MACOS_PKG" meta="$OMNUV_MACOS_PKG.built-for"
+    [ -f "$pkg" ] && [ -f "$meta" ] || {
+        echo "  pkg    FAILED: $pkg or its .built-for is missing" >&2; return 1; }
+    field() { sed -n "s/^$1=//p" "$meta"; }
+    if [ "$(field core_url)" != "$CORE_URL" ] || [ "$(field management_url)" != "$MANAGEMENT_URL" ] \
+        || [ "$(field version)" != "$VERSION" ]; then
+        echo "  pkg    FAILED: $pkg was built for $(field core_url) $(field version), not $CORE_URL $VERSION" >&2
+        return 1
+    fi
+    [ "$(sha256sum "$pkg" | cut -d' ' -f1)" = "$(field sha256)" ] || {
+        echo "  pkg    FAILED: $pkg does not match the checksum taken where it was built" >&2; return 1; }
+    cp "$pkg" "$OUT/OmnuvConnect-$VERSION.pkg"
+    chmod 0644 "$OUT/OmnuvConnect-$VERSION.pkg"
+    echo "  pkg    OmnuvConnect-${VERSION}.pkg (the client, built on the lab Mac)"
+}
+
 build_pkg() {
+    if [ -n "${OMNUV_MACOS_PKG:-}" ]; then build_pkg_released; return $?; fi
     local stage="$OUT/.pkg"
     local app="$stage/root/Applications/Omnuv Connect.app"
     rm -rf "$stage"

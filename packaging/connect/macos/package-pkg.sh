@@ -9,8 +9,9 @@
 #
 # **Runs on a Mac**, because macdeployqt and pkgbuild are Apple-only tools:
 # on CI's hosted macOS runners for anything that ships, or on the lab rig to
-# test. What the lab rig builds is never distributed (lab-macos.yml's header,
-# the licence).
+# test. For the closed test the package people download is the lab rig's, by
+# the operator's decision of 24 September 2026 (lab-macos.yml's header, the
+# licence).
 #
 # Layout it installs:
 #
@@ -66,6 +67,10 @@ cat > "$work/scripts/preinstall" <<'PRE'
 #!/bin/sh
 # An earlier version's daemon stops before its files are replaced.
 launchctl bootout system/dev.omnuv.tunnel 2>/dev/null || true
+# The earlier package's link-only bundle claimed omnuv:// too, and two
+# claimants leave which one opens a link to LaunchServices. The client in
+# Omnuv.app registers the scheme now.
+rm -rf "/Applications/Omnuv Connect.app"
 exit 0
 PRE
 cat > "$work/scripts/postinstall" <<'POST'
