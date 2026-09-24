@@ -87,8 +87,10 @@ jobs:
           # is Qt's rule rather than ours: setStyle() refuses once QtQuick
           # .Controls has been registered, so it has to run before the engine
           # loads any QML, and nothing of ours runs earlier than this function.
-          # .github/workflows/build.yml is the third entry, and it buys one
-          # line: `if: false` on the Windows/macOS job. Those platforms are
+          # .github/workflows/build.yml is the third entry. It buys the
+          # Windows/macOS job commented out, 22+/5- against upstream (measured
+          # 24 September 2026), all but the five commented lines being the
+          # comment that says why. Those platforms are
           # built on the lab rigs now, which have the same pinned toolchains
           # and can additionally *run* the result — CI only ever proved the
           # thing compiled, and the bug that made every Windows build exit at
@@ -102,13 +104,16 @@ jobs:
           # tolerated, and the loop that recognises those is in this file.
           # Everything the action then does is in app/omnuv/signin.cpp, which is
           # why this is four lines and not a sub-parser.
-          # scripts/build-arch.bat is the fifth entry, and it buys sixteen lines,
-          # twelve of them comment. Upstream ships Material, so it excludes every
-          # other style from windeployqt *and* deletes their QML modules
-          # afterwards -- two separate places, both of which had to stop naming
-          # FluentWinUI3 and Fusion. It could not live in a new file: this is the
-          # only invocation of windeployqt, and the deletions are in the same
-          # script a few lines below it.
+          # scripts/build-arch.bat is the fifth entry: 48+/15- against upstream
+          # (measured 24 September 2026), in three parts. The styles: upstream
+          # ships Material, so it excludes every other style from windeployqt
+          # *and* deletes their QML modules afterwards -- two separate places,
+          # both of which had to stop naming FluentWinUI3 and Fusion. The
+          # tunnel: onvtunneld.exe, wintun.dll and its licence are copied into
+          # the portable package, per architecture. And the product's names in
+          # place of Moonlight's. None could live in a new file: this is the
+          # only invocation of windeployqt and the only place the portable
+          # package is assembled.
           # app/streaming/session.cpp, app/streaming/video/ffmpeg.cpp and
           # app/streaming/video/overlaymanager.(cpp|h) are the sixth entry, and
           # they buy the in-stream half of the product: the quality mark, the
