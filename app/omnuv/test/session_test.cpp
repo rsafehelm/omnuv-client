@@ -785,6 +785,54 @@ private slots:
         QVERIFY2(unfinished.isEmpty(), qPrintable("a half answer at the deadline was taken as one: " + unfinished));
     }
 
+    // 1271: the timer's poll does not hold this thread while the daemon is
+    // slow; the reading arrives when it answers. `check()` stays synchronous.
+    void aSlowDaemonDoesNotHoldTheWindowStill() {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        QTemporaryDir empty; QVERIFY(empty.isValid());
+        const QByteArray path = (dir.path() + "/onv-tunnel.sock").toUtf8();
+        const int listener = ::socket(AF_UNIX, SOCK_STREAM, 0); QVERIFY(listener >= 0);
+        sockaddr_un addr{}; addr.sun_family = AF_UNIX;
+        qstrncpy(addr.sun_path, path.constData(), sizeof(addr.sun_path));
+        QVERIFY(::bind(listener, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0);
+        QVERIFY(::listen(listener, 8) == 0);
+        std::thread daemon([listener]() {
+            for (;;) {
+                const int peer = ::accept(listener, nullptr, nullptr);
+                if (peer < 0) return;
+                char line[512] = {}; (void)::read(peer, line, sizeof(line) - 1);
+                std::this_thread::sleep_for(std::chrono::milliseconds(700));
+                const char reply[] = "state 0 - - fixture\n";
+                (void)::send(peer, reply, sizeof(reply) - 1, MSG_NOSIGNAL);
+                ::close(peer);
+            }
+        });
+        const auto before = qgetenv("ONV_TUNNEL_DIR");
+        const auto fixture = qgetenv("OMNUV_FIXTURE_URL");
+        qunsetenv("OMNUV_FIXTURE_URL");
+        // Built against nothing, so its constructor's own check is instant.
+        qputenv("ONV_TUNNEL_DIR", empty.path().toUtf8());
+        qint64 held = -1;
+        bool answered = false;
+        {
+            OmnuvTunnel tunnel;
+            QVERIFY(!tunnel.available());
+            qputenv("ONV_TUNNEL_DIR", dir.path().toUtf8());
+            QElapsedTimer clock; clock.start();
+            tunnel.poll();
+            held = clock.elapsed();
+            // Two requests of 700 ms each, answered off this thread.
+            answered = QTest::qWaitFor([&]() { return tunnel.available(); }, 5000);
+        }
+        ::shutdown(listener, SHUT_RDWR);
+        ::close(listener);
+        daemon.join();
+        if (before.isEmpty()) qunsetenv("ONV_TUNNEL_DIR"); else qputenv("ONV_TUNNEL_DIR", before);
+        if (!fixture.isEmpty()) qputenv("OMNUV_FIXTURE_URL", fixture);
+        QVERIFY2(held < 300, qPrintable(QString("the poll held the window for %1 ms").arg(held)));
+        QVERIFY2(answered, "the poll's reading never arrived");
+    }
+
     // 1271: a daemon that does not answer costs one blocked request per poll,
     // and the polls slow to one in thirty seconds until it answers again.
     void anUnansweringDaemonIsAskedOnceAndLessOften() {

@@ -144,6 +144,23 @@ signals:
     void observationExpired();
 
 private:
+    // **The poll's I/O, apart from what it means (24 September 2026).** The
+    // timer's poll runs `fetch` on a pool thread and `apply` back on this one,
+    // so a daemon slow to answer no longer holds the window still for up to
+    // 2.6 s a request. `check()` stays synchronous: user actions and the
+    // tests read its result on the next line.
+    using Ask = std::function<QString(const QString&)>;
+    struct Polled { QString membership; QString state; };
+    static QString askMembership(const Ask& ask, const QString& core);
+    static Polled fetch(const Ask& ask, const QString& core);
+    bool applyMembership(const QString& reply);
+    void apply(const Polled& polled);
+    void poll();
+    bool m_pollInFlight = false;
+    // Bumped by every synchronous check; a poll dispatched before one is
+    // older than what that check found, and is dropped.
+    quint64 m_generation = 0;
+
     void set(bool available, omnuv::Reading reading, const QString& state, const QString& address);
     void setBusy(bool busy);
     bool m_joinDispatched = false;

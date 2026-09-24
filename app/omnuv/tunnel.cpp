@@ -5,6 +5,9 @@
 #include <QDebug>
 #include <QTimer>
 #include <QDeadlineTimer>
+#include <QCoreApplication>
+#include <QPointer>
+#include <QThreadPool>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -153,7 +156,7 @@ OmnuvTunnel::OmnuvTunnel(QObject* parent)
     // than a process to spawn, and a join takes tens of seconds to resolve —
     // so the view moves while it happens.
     m_timer.setInterval(kPollMs);
-    connect(&m_timer, &QTimer::timeout, this, &OmnuvTunnel::check);
+    connect(&m_timer, &QTimer::timeout, this, &OmnuvTunnel::poll);
     m_operationDeadline.setSingleShot(true);
     m_operationDeadline.setInterval(120000);
     connect(&m_operationDeadline, &QTimer::timeout, this, [this]() {
@@ -265,9 +268,65 @@ void OmnuvTunnel::updatePolling()
 // both on the `state` line. **Where a library answers the question, ask the
 // library** — an observation of its side effects is a different fact, arriving
 // later and for other reasons.
+QString OmnuvTunnel::askMembership(const Ask& ask, const QString& core)
+{
+    // **This Core's identity, not whichever is running** (22 September 2026).
+    // The daemon keeps one identity per deployment and runs one at a time, so
+    // after a move between Cores the running one is the other Core's: read
+    // unqualified, it looked like "another network" and offered a move, which
+    // re-enrolled a device whose identity for this Core was saved all along.
+    // An older daemon answers "takes no arguments", and is asked the old way.
+    QString reply = ask(core.isEmpty() ? QStringLiteral("membership-v1")
+                                       : QStringLiteral("membership-v1 ") + core);
+    if (!core.isEmpty() && reply.startsWith(QLatin1String("err membership-v1 takes no arguments")))
+        reply = ask(QStringLiteral("membership-v1"));
+    return reply;
+}
+
+OmnuvTunnel::Polled OmnuvTunnel::fetch(const Ask& ask, const QString& core)
+{
+    Polled polled;
+    polled.membership = askMembership(ask, core);
+    // One unanswered request per poll, not two: see apply().
+    if (!polled.membership.isEmpty()) polled.state = ask(QStringLiteral("state"));
+    return polled;
+}
+
 void OmnuvTunnel::check()
 {
-    readMembership();
+    ++m_generation;
+    apply(fetch(m_request, m_scope.value(QStringLiteral("core_url")).toString()));
+}
+
+// The timer's poll. On a pool thread only when the far end is the real daemon:
+// a test that replaced m_request drives a fixture that lives on this thread,
+// and keeps the synchronous path it asserts against.
+void OmnuvTunnel::poll()
+{
+    const auto real = m_request.target<QString (*)(const QString&)>();
+    if (!real || *real != &request) {
+        check();
+        return;
+    }
+    if (m_pollInFlight) return;
+    m_pollInFlight = true;
+    const quint64 generation = m_generation;
+    const QString core = m_scope.value(QStringLiteral("core_url")).toString();
+    QPointer<OmnuvTunnel> self(this);
+    QThreadPool::globalInstance()->start([self, generation, core]() {
+        const Polled polled = fetch(request, core);
+        QMetaObject::invokeMethod(QCoreApplication::instance(), [self, generation, polled]() {
+            if (!self) return;
+            self->m_pollInFlight = false;
+            if (self->m_generation != generation) return;
+            self->apply(polled);
+        }, Qt::QueuedConnection);
+    });
+}
+
+void OmnuvTunnel::apply(const Polled& polled)
+{
+    applyMembership(polled.membership);
     // **One unanswered request per poll, not two, and fewer polls while
     // nothing answers (24 September 2026).** These calls block the thread
     // they run on, which is the UI's, for up to 2.6 s each when the daemon
@@ -276,7 +335,7 @@ void OmnuvTunnel::check()
     // every three seconds. Now: skip it, and stretch the interval to 30 s
     // until an answer comes, when it drops back to 3 s. Not async; that would
     // mean rewriting m_request and every test built on it (TODO.md).
-    const QString reply = m_serviceAnswered ? m_request(QStringLiteral("state")) : QString();
+    const QString reply = polled.state;
     m_timer.setInterval(reply.isEmpty() ? qMin(m_timer.interval() * 2, kSlowPollMs) : kPollMs);
 
     if (reply.isEmpty()) {
@@ -398,17 +457,11 @@ bool OmnuvTunnel::membershipMatches(const QJsonObject& scope) const
 
 bool OmnuvTunnel::readMembership()
 {
-    // **This Core's identity, not whichever is running** (22 September 2026).
-    // The daemon keeps one identity per deployment and runs one at a time, so
-    // after a move between Cores the running one is the other Core's: read
-    // unqualified, it looked like "another network" and offered a move, which
-    // re-enrolled a device whose identity for this Core was saved all along.
-    // An older daemon answers "takes no arguments", and is asked the old way.
-    const QString core = m_scope.value(QStringLiteral("core_url")).toString();
-    QString reply = m_request(core.isEmpty() ? QStringLiteral("membership-v1")
-                                             : QStringLiteral("membership-v1 ") + core);
-    if (!core.isEmpty() && reply.startsWith(QLatin1String("err membership-v1 takes no arguments")))
-        reply = m_request(QStringLiteral("membership-v1"));
+    return applyMembership(askMembership(m_request, m_scope.value(QStringLiteral("core_url")).toString()));
+}
+
+bool OmnuvTunnel::applyMembership(const QString& reply)
+{
     m_serviceAnswered = !reply.isEmpty();
     const auto document = QJsonDocument::fromJson(reply.toUtf8());
     const auto value = document.object();
