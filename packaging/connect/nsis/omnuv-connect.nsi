@@ -37,6 +37,28 @@ SetCompressor /SOLID lzma
 ; package made from one the buyer pointed it at.
 !define MARKER ".omnuv-connect-installed"
 
+; **One installer owns the private network service (24 September 2026).**
+; The Omnuv Client MSI installs the same OnvTunnel service, firewall rule and
+; omnuv:// handler, from Program Files\Omnuv. With both present, whichever ran
+; last moved the service to its own copy, and uninstalling either one took the
+; service away from the other. So this refuses when the MSI is installed, and
+; the MSI refuses when this is (its Launch condition). The MSI is found by its
+; UpgradeCode, 3c64f1f8-c43d-468a-ae92-7a6da2622ce2, in the packed form
+; Windows Installer files it under, in the 64-bit view because that is where
+; a 64-bit MSI registers.
+!define CLIENT_MSI_UPGRADE "8F1F46C3D34CA864EA29A7D62A26C22E"
+
+Function .onInit
+  SetRegView 64
+  ClearErrors
+  EnumRegValue $0 HKLM "SOFTWARE\Classes\Installer\UpgradeCodes\${CLIENT_MSI_UPGRADE}" 0
+  SetRegView default
+  ${If} $0 != ""
+    MessageBox MB_ICONSTOP "Omnuv Client is installed on this device, and it already includes everything Omnuv Connect does. Use Omnuv Client, or uninstall it before installing Omnuv Connect." /SD IDOK
+    Abort
+  ${EndIf}
+FunctionEnd
+
 Var KeyBox
 Var Key
 

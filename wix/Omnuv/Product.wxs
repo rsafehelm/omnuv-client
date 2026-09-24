@@ -18,6 +18,22 @@
     <Property Id="APPDATAFOLDER" Value="%LOCALAPPDATA%\Omnuv" />
 
     <!--
+    **One installer owns the private network service (24 September 2026).**
+    Omnuv Connect's NSIS installer registers the same OnvTunnel service,
+    firewall rule and omnuv:// handler, from Program Files\Omnuv Connect, and
+    its uninstaller removes all three. With both present, each moved the service
+    to its own copy and each uninstall broke the other. That installer refuses
+    when this one is present; this refuses when it is. NSIS is 32-bit and
+    writes its uninstall key without SetRegView, hence the 32-bit view.
+    -->
+    <Property Id="OMNUVCONNECTINSTALLED">
+      <RegistrySearch Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\OmnuvConnect"
+                      Name="UninstallString" Type="raw" Bitness="always32" />
+    </Property>
+    <Launch Condition="Installed OR NOT OMNUVCONNECTINSTALLED"
+            Message="Omnuv Connect is installed on this device and runs the same private network service. Uninstall Omnuv Connect first; Omnuv Client includes everything it does." />
+
+    <!--
       **A default, so the MSI can be installed on its own.** Nothing declared
       this property: the bundle sets it and the UI sets it, so every install
       anyone had ever run supplied a value. A bare `msiexec /i … /qn` does not,
