@@ -632,6 +632,28 @@ private slots:
         QVERIFY(shot.save(qEnvironmentVariable("OMNUV_TEST_ARTIFACT_DIR",QDir::tempPath())+"/switch-deployment.png"));
         QVERIFY(QMetaObject::invokeMethod(popup,"accept"));
         QTRY_COMPARE(s.coreUrl(),QString::fromUtf8(other.url()));
+        // Emptied, the field means production, and production reopens as the
+        // empty field rather than as its address.
+        QVERIFY(QMetaObject::invokeMethod(popup,"open")); QTRY_VERIFY(popup->property("visible").toBool());
+        field->setProperty("text",QString()); QVERIFY(QMetaObject::invokeMethod(popup,"accept"));
+        QTRY_COMPARE(s.coreUrl(),QString("https://api.omnuv.com"));
+        QVERIFY(QMetaObject::invokeMethod(popup,"open")); QTRY_VERIFY(popup->property("visible").toBool());
+        QCOMPARE(field->property("text").toString(),QString());
+    }
+
+    // The operator, 25 September 2026: a person is never asked for the
+    // address. The first screen has no field for one, and no address in
+    // its text: Sign in, and a link to choose another deployment.
+    void theFirstScreenAsksForNoAddress() {
+        QFile source("/src/app/omnuv/OmnuvView.qml"); QVERIFY(source.open(QIODevice::ReadOnly));
+        const auto text=QString::fromUtf8(source.readAll());
+        const auto marker=QString("// ---------------------------------------------------------------- ");
+        const auto begin=text.indexOf(marker+"signed out"); QVERIFY(begin>=0);
+        const auto end=text.indexOf("// ------",begin+marker.size()); QVERIFY(end>begin);
+        const auto screen=text.mid(begin,end-begin);
+        QVERIFY2(!screen.contains("TextField"),"the signed-out screen has a text field");
+        QVERIFY2(!screen.contains("Omnuv.coreUrl"),"the signed-out screen shows or sets the address");
+        QVERIFY(screen.contains("objectName: \"anotherDeployment\"") && screen.contains("switchDeployment.open()"));
     }
 
     // The overlay's address from Core's own field, with a command that names
@@ -651,6 +673,40 @@ private slots:
             {"setup_key","fixture-only"},{"command","OmnuvClient enrol fixture-only"},{"management_url","https://overlay.field.invalid"}}).toJson());
         QTRY_VERIFY(daemon.commands.contains("enrol-v1"));
         QCOMPARE(QJsonDocument::fromJson(sent.toUtf8()).object().value("management_url").toString(),QString("https://overlay.field.invalid"));
+    }
+
+    // Nothing named, the session is on production; OMNUV_CORE_URL beats it,
+    // a saved choice beats both, and an emptied address goes back to it. A
+    // real session, not a fixture, on settings of its own.
+    void productionIsTheAddressNobodyHasToType() {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        QSettings::setPath(QSettings::NativeFormat, QSettings::UserScope, dir.path());
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, dir.path());
+        const auto fixture = qgetenv("OMNUV_FIXTURE_URL"), env = qgetenv("OMNUV_CORE_URL");
+        qunsetenv("OMNUV_FIXTURE_URL"); qunsetenv("OMNUV_CORE_URL");
+        QSettings().remove("omnuv/coreUrl");
+        const QString production("https://api.omnuv.com");
+        {
+            OmnuvSession s;
+            QCOMPARE(s.coreUrl(), production);
+            QCOMPARE(s.productionCoreUrl(), production);
+        }
+        qputenv("OMNUV_CORE_URL", "https://env.example.test");
+        {
+            OmnuvSession s;
+            QCOMPARE(s.coreUrl(), QString("https://env.example.test"));
+        }
+        QSettings().setValue("omnuv/coreUrl", "https://saved.example.test");
+        {
+            OmnuvSession s;
+            QCOMPARE(s.coreUrl(), QString("https://saved.example.test"));
+            s.setCoreUrl("  ");
+            QCOMPARE(s.coreUrl(), production);
+        }
+        QCOMPARE(QSettings().value("omnuv/coreUrl").toString(), production);
+        qunsetenv("OMNUV_CORE_URL");
+        if (!env.isEmpty()) qputenv("OMNUV_CORE_URL", env);
+        if (!fixture.isEmpty()) qputenv("OMNUV_FIXTURE_URL", fixture);
     }
 
     // B10: an address named for one run beats the saved one, and is never

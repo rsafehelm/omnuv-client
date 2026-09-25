@@ -22,7 +22,8 @@ use serde::Deserialize;
 #[derive(Parser)]
 #[command(name = "omnuv", version, about = "The Omnuv marketplace, from a terminal")]
 struct Cli {
-    /// Where Core lives. Remembered after the first sign-in.
+    /// Where Core lives: production unless named. Remembered after the
+    /// first sign-in.
     #[arg(long, global = true)]
     core: Option<String>,
     /// Which project to act on, by id or name; OMNUV_PROJECT if unset.
@@ -120,6 +121,10 @@ fn config_path() -> Result<std::path::PathBuf> {
     config_path_from(|k| std::env::var(k).ok(), cfg!(windows))
         .context("no place to keep the sign-in: set APPDATA on Windows, or HOME")
 }
+
+/// Where a sign-in goes when nobody named a Core and none is remembered: the
+/// operator's decision of 25 September 2026, the same default as the window.
+const PRODUCTION_CORE: &str = "https://api.omnuv.com";
 
 fn load_session(core_override: Option<String>, project: Option<String>) -> Result<Session> {
     let path = config_path()?;
@@ -329,7 +334,7 @@ async fn main() -> Result<()> {
             let core = cli
                 .core
                 .or_else(|| load_session(None, None).ok().map(|s| s.core))
-                .context("say where Core is: omnuv --core https://… login")?;
+                .unwrap_or_else(|| PRODUCTION_CORE.to_string());
             login(&core).await
         }
         Command::Logout => {

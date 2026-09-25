@@ -166,8 +166,11 @@ OmnuvSession::OmnuvSession(QObject* parent)
             m_coreUrl = settings.value(QStringLiteral("omnuv/coreUrl")).toString();
         }
         if (m_coreUrl.isEmpty()) {
-            // Set at build time for a packaged client; typed in by hand otherwise.
             m_coreUrl = QString::fromLocal8Bit(qgetenv("OMNUV_CORE_URL"));
+        }
+        if (m_coreUrl.isEmpty()) {
+            // Nobody named one, so production: nothing asks a person for it.
+            m_coreUrl = productionCoreUrl();
         }
         // H2: whichever of the three it came from, an address the token cannot
         // safely go to is not used, so no token is loaded for it either. One
@@ -429,6 +432,10 @@ void OmnuvSession::setCoreUrl(const QString& url)
     while (trimmed.endsWith(QLatin1Char('/'))) {
         trimmed.chop(1);
     }
+    // A field left empty means production, the address nobody has to type.
+    if (trimmed.isEmpty()) {
+        trimmed = productionCoreUrl();
+    }
     if (trimmed == m_coreUrl) {
         return;
     }
@@ -536,10 +543,6 @@ void OmnuvSession::signIn()
 {
     if (m_coreUrl.isEmpty() && !m_insecureCoreUrl.isEmpty()) {
         setStatus(tr("%1 is not an https:// address, so Omnuv will not sign in there. Enter its https:// address.").arg(m_insecureCoreUrl));
-        return;
-    }
-    if (m_coreUrl.isEmpty()) {
-        setStatus(tr("Enter the address of your Omnuv deployment first."));
         return;
     }
 

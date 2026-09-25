@@ -276,8 +276,9 @@ void start(const QStringList& args, QObject* parent)
         "else — progress, and anything that went wrong — goes to stderr.\n"
         "\n"
         "The deployment comes from --core-url, then the address this client\n"
-        "was last pointed at, then OMNUV_CORE_URL. --core-url is used for this\n"
-        "run only and never saved, and each deployment keeps its own sign-in.");
+        "was last pointed at, then OMNUV_CORE_URL, then production\n"
+        "(https://api.omnuv.com). --core-url is used for this run only and\n"
+        "never saved, and each deployment keeps its own sign-in.");
     parser.addHelpOption();
     parser.addVersionOption();
     parser.addPositionalArgument("signin", "Sign this device in");
@@ -338,12 +339,6 @@ void start(const QStringList& args, QObject* parent)
     if (session->coreUrl().isEmpty() && !session->refusedCoreUrl().isEmpty()) {
         complain(QStringLiteral("%1 is not an https:// address, and a sign-in is never sent over "
                                 "plain http. Use its https:// address.").arg(session->refusedCoreUrl()));
-        ::exit(1);
-    }
-    if (session->coreUrl().isEmpty()) {
-        complain(QStringLiteral(
-            "No Omnuv deployment to sign in to. Set OMNUV_CORE_URL, or sign in "
-            "once from the window."));
         ::exit(1);
     }
 

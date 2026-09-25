@@ -321,20 +321,25 @@ Item {
         modal: true
         title: qsTr("Switch to another Omnuv deployment")
         standardButtons: Dialog.Ok | Dialog.Cancel
-        onAboutToShow: deploymentField.text = Omnuv.coreUrl
+        // Production shows as the empty field it means, so nobody meets its
+        // address unless they chose another.
+        onAboutToShow: deploymentField.text = Omnuv.coreUrl === Omnuv.productionCoreUrl ? "" : Omnuv.coreUrl
         contentItem: ColumnLayout {
             spacing: Theme.spacing
             Label {
                 Layout.fillWidth: true
-                text: qsTr("You stay signed in here. If you have signed in to the other one before, " +
-                           "you will be again; otherwise it asks you to.")
+                text: (Omnuv.signedIn
+                       ? qsTr("You stay signed in here. If you have signed in to the other one before, " +
+                              "you will be again; otherwise it asks you to.")
+                       : qsTr("Only if your organization runs its own Omnuv. ")) +
+                      qsTr("Leave it empty for Omnuv itself.")
                 wrapMode: Text.WordWrap
             }
             TextField {
                 id: deploymentField
                 objectName: "deploymentField"
                 Layout.fillWidth: true
-                placeholderText: qsTr("https://your-omnuv-address")
+                placeholderText: Omnuv.productionCoreUrl
                 Accessible.name: qsTr("Omnuv address")
             }
         }
@@ -526,26 +531,29 @@ Item {
             opacity: 0.78
         }
 
-        TextField {
-            id: coreField
-            Layout.fillWidth: true
-            visible: Omnuv.userCode === ""
-            text: Omnuv.coreUrl
-            placeholderText: qsTr("https://your-omnuv-address")
-            onEditingFinished: Omnuv.coreUrl = text
-        }
-
+        // **No address on the first screen** (the operator, 25 September
+        // 2026: a URL is not something a person should be shown or asked
+        // for). Sign in goes to production unless another deployment was
+        // chosen, and choosing one is the link below, not a field here.
         Button {
+            objectName: "signInButton"
             Layout.alignment: Qt.AlignHCenter
             visible: Omnuv.userCode === ""
-            enabled: !Omnuv.busy && coreField.text.trim() !== ""
+            enabled: !Omnuv.busy
             text: Omnuv.busy ? qsTr("Working…") : qsTr("Sign in")
             highlighted: true
             implicitWidth: Math.max(140, implicitContentWidth + leftPadding + rightPadding)
-            onClicked: {
-                Omnuv.coreUrl = coreField.text
-                Omnuv.signIn()
-            }
+            onClicked: Omnuv.signIn()
+        }
+
+        Button {
+            objectName: "anotherDeployment"
+            Layout.alignment: Qt.AlignHCenter
+            visible: Omnuv.userCode === "" && !Omnuv.busy
+            flat: true
+            text: qsTr("Use another Omnuv deployment…")
+            font.pixelSize: Theme.captionSize
+            onClicked: switchDeployment.open()
         }
 
         // Waiting for the browser. The code is the whole interface here.

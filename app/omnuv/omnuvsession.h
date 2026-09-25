@@ -40,8 +40,10 @@ class OmnuvSession : public QObject
 {
     Q_OBJECT
 
-    // The deployment this client talks to. Typed once, remembered after.
+    // The deployment this client talks to: production unless another was
+    // chosen, and remembered once it was.
     Q_PROPERTY(QString coreUrl READ coreUrl WRITE setCoreUrl NOTIFY coreUrlChanged)
+    Q_PROPERTY(QString productionCoreUrl READ productionCoreUrl CONSTANT)
     Q_PROPERTY(bool signedIn READ signedIn NOTIFY signedInChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
 
@@ -105,6 +107,11 @@ public:
     // and is not written back, so a test run against one Core cannot move a
     // device's saved choice to it. Set before the session is built.
     static void setCoreUrlOverride(const QString& url);
+    // **Where a client goes when nobody said otherwise** (the operator, 25
+    // September 2026: a person is never asked for the address). The flag, the
+    // saved choice and `OMNUV_CORE_URL` each beat it; the window's "Switch
+    // deployment…" is where a person changes it.
+    static QString productionCoreUrl() { return QStringLiteral("https://api.omnuv.com"); }
 
     QString coreUrl() const { return m_coreUrl; }
     // An address refused at startup for not being https (H2); empty otherwise.
