@@ -1,0 +1,29 @@
+#!/bin/sh
+# Refuses, in words, where another netbird agent already holds this device's
+# network (the operator's decision of 24 September 2026: refuse, never take
+# over the image's agent).
+#
+# This replaced `Conflicts: netbird`, which answered in two bad ways. On a
+# machine rented from Omnuv, whose image carries netbird held, apt refused
+# with a solver dump nobody could read. On a person's own machine with
+# netbird not held, apt resolved the conflict by removing their netbird.
+# A preinst runs before anything is unpacked, so refusing here installs
+# nothing.
+#
+# ONV_ROOT is for the test beside this file; dpkg never sets it.
+set -e
+case "$1" in
+    install|upgrade)
+        if dpkg-query -W -f '${Status}' netbird 2>/dev/null | grep -q ' ok installed'; then
+            # Written by the Omnuv image bake (bake-overlay.sh), and by
+            # nothing else: the marketplace names what it creates `onv`.
+            if [ -f "${ONV_ROOT:-}/etc/apt/sources.list.d/onv-netbird.list" ]; then
+                echo "omnuv-connect: this is a machine you rent from Omnuv, and it is already on your private network. Omnuv Connect is for your own devices: install it on your laptop or desktop instead." >&2
+            else
+                echo "omnuv-connect: netbird is installed on this device. Omnuv Connect brings its own network agent, and the two would fight over this device's network. Remove netbird first (sudo apt remove netbird), then install Omnuv Connect again." >&2
+            fi
+            exit 1
+        fi
+        ;;
+esac
+exit 0

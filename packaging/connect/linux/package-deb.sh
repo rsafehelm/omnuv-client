@@ -72,7 +72,6 @@ Section: net
 Priority: optional
 Architecture: amd64
 Depends: $depends
-Conflicts: netbird
 Maintainer: Omnuv <ops@omnuv.com>
 Description: Omnuv on this device: the app and its private network
  The Omnuv client, the service that holds this device on its private network,
@@ -80,6 +79,10 @@ Description: Omnuv on this device: the app and its private network
  console. Machines are then reachable by name, for example gpu-1.internal.
  Built for Ubuntu 26.04.
 CTL
+# No `Conflicts: netbird`: the preinst beside this script refuses in words
+# instead (the operator's decision of 24 September 2026), and a conflict would
+# answer first, with a solver dump or by removing a person's own netbird.
+install -m 0755 "$here/preinst" "$root/DEBIAN/preinst"
 cat > "$root/DEBIAN/postinst" <<'POST'
 #!/bin/sh
 set -e

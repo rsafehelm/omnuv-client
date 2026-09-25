@@ -26,6 +26,8 @@ jobs:
         run: sh tests/connect/signin_test.sh
       - name: Shell enrol names where a key leads before spending it
         run: sh tests/connect/enrol_test.sh
+      - name: The .deb refuses in words where netbird already holds the network
+        run: sh packaging/connect/linux/preinst_test.sh
       - name: PowerShell handler (Windows)
         shell: pwsh
         run: pwsh -NoProfile -File tests/connect/handle_test.ps1

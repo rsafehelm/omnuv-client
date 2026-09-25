@@ -34,7 +34,15 @@ CORE_HOST="$(printf '%s' "$CORE_URL" | sed -E 's#^[a-z]+://##; s#[/:].*$##')"
 [ -n "$CORE_HOST" ] || { echo "OMNUV_CORE_URL has no host: $CORE_URL" >&2; exit 1; }
 OUT="${OMNUV_CONNECT_OUT:-$HERE/dist/$CORE_HOST}"
 
-rm -rf "$OUT" && mkdir -p "$OUT"
+# A full build starts from an empty directory. A partial one
+# (OMNUV_CONNECT_ONLY) must not: emptying it took the other platforms'
+# artifacts with it, and the next platform.yml run ships the directory as it
+# is, so the mirror would have lost its macOS package (24 September 2026,
+# restored from the mirror's own copy by its hash).
+if [ -z "${OMNUV_CONNECT_ONLY:-}" ]; then
+    rm -rf "$OUT"
+fi
+mkdir -p "$OUT"
 echo "omnuv-connect $VERSION -> overlay $MANAGEMENT_URL, core $CORE_URL"
 # **What this build points at, written beside it.** Every installer bakes in
 # one deployment's addresses, and the directory's name alone is a convention;
@@ -288,8 +296,14 @@ DIST
     echo "  pkg    OmnuvConnect-${VERSION}.pkg"
 }
 
-build_deb
-build_exe
-build_pkg
+# **Only what changed** (OMNUV_CONNECT_ONLY="deb", say): a packaging change to
+# one platform rebuilds that one, and leaves the others' artifacts in the
+# directory untouched rather than rebuilt from inputs this run may not have.
+for platform in ${OMNUV_CONNECT_ONLY:-deb exe pkg}; do
+    case "$platform" in
+        deb|exe|pkg) "build_$platform" ;;
+        *) echo "OMNUV_CONNECT_ONLY names $platform; it is deb, exe or pkg" >&2; exit 1 ;;
+    esac
+done
 echo "artifacts in ${OUT#"$ROOT"/}"
 ls -1 "$OUT" 2>/dev/null | sed 's/^/  /'
