@@ -73,8 +73,8 @@ func TestAnAdministratorClaimsNothing(t *testing.T) {
 // peerOf reads the kernel's record of the other end, on a real socket: here,
 // this test's own uid.
 func TestThePeerIsWhoTheKernelSaysItIs(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("peer credentials are read on Linux and Windows only")
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("peer credentials over a Unix socket are read on Linux and macOS")
 	}
 	path := filepath.Join(t.TempDir(), "s")
 	ln, err := net.Listen("unix", path)

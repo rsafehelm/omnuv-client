@@ -30,6 +30,8 @@ jobs:
         run: sh packaging/connect/linux/preinst_test.sh
       - name: The .deb records whoever installed it as the tunnel's owner
         run: sh packaging/connect/linux/postinst_test.sh
+      - name: The macOS package records whoever installed it as the tunnel's owner
+        run: sh packaging/connect/macos/postinstall_test.sh
       - name: PowerShell handler (Windows)
         shell: pwsh
         run: pwsh -NoProfile -File tests/connect/handle_test.ps1

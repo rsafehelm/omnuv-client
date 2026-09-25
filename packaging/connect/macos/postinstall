@@ -1,0 +1,31 @@
+#!/bin/sh
+set -e
+# ONV_ROOT is for the test beside this file; the Installer never sets it.
+
+# **Whoever installed it owns it** (the operator's decision of 25 September
+# 2026), as on Linux. A command-line install names its person in SUDO_UID;
+# the Installer app runs this as root, and the person is whoever owns the
+# console. Root, or nobody at the console, names nobody, and the first change
+# claims it. An owner already recorded is never replaced.
+owner="${ONV_ROOT:-}/var/lib/onv/tunnel/owner"
+if [ ! -s "$owner" ]; then
+    who=""
+    if [ -n "${SUDO_UID:-}" ] && [ "$SUDO_UID" != 0 ]; then
+        who="$SUDO_UID"
+    else
+        console=$(stat -f %u /dev/console 2>/dev/null || true)
+        [ -n "$console" ] && [ "$console" != 0 ] && who="$console"
+    fi
+    case "$who" in
+        ''|*[!0-9]*) echo "omnuv-connect: installed by no named person; the first account to join a network will own it" ;;
+        *)
+            mkdir -p "${ONV_ROOT:-}/var/lib/onv/tunnel"
+            chmod 0700 "${ONV_ROOT:-}/var/lib/onv/tunnel"
+            ( umask 077; printf '%s\n' "$who" > "$owner.tmp" && mv "$owner.tmp" "$owner" )
+            ;;
+    esac
+fi
+
+[ -n "${ONV_ROOT:-}" ] && exit 0
+launchctl enable system/dev.omnuv.tunnel
+launchctl bootstrap system /Library/LaunchDaemons/dev.omnuv.tunnel.plist

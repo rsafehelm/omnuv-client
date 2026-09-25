@@ -73,12 +73,9 @@ launchctl bootout system/dev.omnuv.tunnel 2>/dev/null || true
 rm -rf "/Applications/Omnuv Connect.app"
 exit 0
 PRE
-cat > "$work/scripts/postinstall" <<'POST'
-#!/bin/sh
-set -e
-launchctl enable system/dev.omnuv.tunnel
-launchctl bootstrap system /Library/LaunchDaemons/dev.omnuv.tunnel.plist
-POST
+# The postinstall is a file beside this script, so its test can run it: it
+# records the installing person as the tunnel's owner, and starts the daemon.
+cp "$(dirname "$0")/postinstall" "$work/scripts/postinstall"
 chmod 0755 "$work/scripts/preinstall" "$work/scripts/postinstall"
 
 mkdir -p "$out"
