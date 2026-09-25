@@ -1,4 +1,5 @@
 #include "../omnuvsession.h"
+#include "../settingsmove.h"
 #include "../pairing.h"
 #include "../signin.h"
 #include "../../backend/nvpairingmanager.h"
@@ -881,6 +882,31 @@ private slots:
         QTRY_VERIFY(server.find(path)>=0);
         const auto body=QJsonDocument::fromJson(server.calls[server.find(path)].body).object();
         QCOMPARE(body["gpu"].toObject()["model"].toString(),QString("RTX 3090"));
+    }
+
+    // The macOS identity moved from Moonlight's domain to Omnuv's (25
+    // September 2026): a person's settings (paired machines, the saved
+    // deployment) come along once; a second start, or a person who already
+    // has Omnuv settings, changes nothing; the old copy is kept.
+    void settingsMoveOnceToTheNewIdentity() {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        QSettings old(dir.filePath("old.ini"), QSettings::IniFormat), now(dir.filePath("new.ini"), QSettings::IniFormat);
+        old.setValue("omnuv/coreUrl","https://api.omnuv.com");
+        old.setValue("hosts/1/hostname","gamerig"); old.setValue("hosts/size",1);
+        old.sync();
+        QVERIFY(omnuvMoveSettingsOnce(old, now));
+        QCOMPARE(now.value("omnuv/coreUrl").toString(),QString("https://api.omnuv.com"));
+        QCOMPARE(now.value("hosts/1/hostname").toString(),QString("gamerig"));
+        QCOMPARE(now.value("omnuv/settingsMovedFrom").toString(),old.fileName());
+        QCOMPARE(old.value("omnuv/coreUrl").toString(),QString("https://api.omnuv.com"));
+        // Once: a later change on the old side is not copied over the new.
+        old.setValue("omnuv/coreUrl","https://api.test.omnuv.com"); old.sync();
+        QVERIFY(!omnuvMoveSettingsOnce(old, now));
+        QCOMPARE(now.value("omnuv/coreUrl").toString(),QString("https://api.omnuv.com"));
+        // Nothing to move, nothing written.
+        QSettings none(dir.filePath("none.ini"), QSettings::IniFormat), fresh(dir.filePath("fresh.ini"), QSettings::IniFormat);
+        QVERIFY(!omnuvMoveSettingsOnce(none, fresh));
+        QVERIFY(fresh.allKeys().isEmpty());
     }
 
     // Nothing named, the session is on production; OMNUV_CORE_URL beats it,

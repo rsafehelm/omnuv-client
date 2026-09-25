@@ -50,6 +50,7 @@
 #include "omnuv/paircli.h"
 #include "omnuv/appearance.h"
 #include "omnuv/devqml.h"
+#include "omnuv/settingsmove.h"
 #include "path.h"
 #include "utils.h"
 #include "gui/computermodel.h"
@@ -441,8 +442,21 @@ int main(int argc, char *argv[])
     // may rename itself; upstream's copyright, licence and credit are
     // untouched and the About box still names them.
     QCoreApplication::setOrganizationName("Omnuv");
-    QCoreApplication::setOrganizationDomain("moonlight-stream.com");
+    // Omnuv's own domain since 25 September 2026: on macOS this names the
+    // settings (dev.omnuv.OmnuvClient, beside the bundle identifier in
+    // Info.plist). It was upstream's, moonlight-stream.com; the settings kept
+    // there are moved once, below (omnuv/settingsmove.h).
+    QCoreApplication::setOrganizationDomain("omnuv.dev");
     QCoreApplication::setApplicationName("OmnuvClient");
+#ifdef Q_OS_DARWIN
+    {
+        QSettings upstream(QStringLiteral("moonlight-stream.com"), QStringLiteral("OmnuvClient"));
+        QSettings own;
+        if (omnuvMoveSettingsOnce(upstream, own)) {
+            qInfo() << "omnuv: settings moved from" << upstream.fileName() << "to" << own.fileName();
+        }
+    }
+#endif
 
     if (QFile(QDir::currentPath() + "/portable.dat").exists()) {
         QSettings::setDefaultFormat(QSettings::IniFormat);
