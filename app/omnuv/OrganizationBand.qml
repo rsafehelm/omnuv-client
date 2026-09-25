@@ -20,6 +20,7 @@ RowLayout {
 
     // The window owns the dialog; the bar only asks for it.
     signal switchDeploymentRequested()
+    signal deployRequested()
 
     readonly property var estate: Omnuv.estate
     readonly property var members: estate.members.data
@@ -141,6 +142,16 @@ RowLayout {
 
     Item {
         Layout.fillWidth: true
+    }
+
+    // Renting a machine is what this window is for when it has none, so it is
+    // a labelled button on the bar rather than an entry in the menu.
+    Button {
+        objectName: "deployButton"
+        text: qsTr("Deploy a machine")
+        Accessible.name: text
+        enabled: !Omnuv.ordering
+        onClicked: bar.deployRequested()
     }
 
     ToolButton {

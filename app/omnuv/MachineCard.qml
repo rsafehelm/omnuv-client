@@ -53,6 +53,7 @@ ItemDelegate {
     signal chooseAppRequested()
     signal terminalRequested()
     signal settingsRequested()
+    signal deleteRequested()
 
     onClicked: if (model.ready) card.primaryActivated()
 
@@ -559,11 +560,11 @@ ItemDelegate {
                     font.family: Theme.iconsInstalled ? Theme.iconFamily : Theme.textFamily
                     font.pixelSize: Theme.bodySize
                     hoverEnabled: true
-                    // Only where there is more. A machine whose one action is a
-                    // terminal has nothing under here, and a menu that opens on an
-                    // empty list is worse than no menu.
-                    visible: model.streamed
-                    enabled: model.ready
+                    // On every machine since Delete lives here (25 September
+                    // 2026): a stopped or broken machine is the one most often
+                    // taken away. What only a stream can use is shown on a
+                    // streamed machine, and pressable when it is ready.
+                    visible: true
                     // Screen readers and the tooltip get a word; the glyph is only
                     // for the eye.
                     Accessible.name: qsTr("More actions for %1").arg(model.name)
@@ -577,6 +578,9 @@ ItemDelegate {
 
                         MenuItem {
                             text: qsTr("Choose what to stream")
+                            visible: model.streamed
+                            height: visible ? implicitHeight : 0
+                            enabled: model.ready
                             onTriggered: card.chooseAppRequested()
                         }
 
@@ -586,12 +590,26 @@ ItemDelegate {
                         // it most.
                         MenuItem {
                             text: qsTr("Terminal")
+                            visible: model.streamed
+                            height: visible ? implicitHeight : 0
+                            enabled: model.ready
                             onTriggered: card.terminalRequested()
                         }
 
                         MenuItem {
                             text: qsTr("Stream settings")
+                            visible: model.streamed
+                            height: visible ? implicitHeight : 0
                             onTriggered: card.settingsRequested()
+                        }
+
+                        // Asks first: the window's confirmation names what
+                        // goes with the machine.
+                        MenuItem {
+                            objectName: "deleteMachine"
+                            text: qsTr("Delete machine…")
+                            enabled: !Omnuv.ordering
+                            onTriggered: card.deleteRequested()
                         }
 
                         // ponytail: the design's menu also lists *Console in

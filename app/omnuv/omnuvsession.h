@@ -43,6 +43,14 @@ class OmnuvSession : public QObject
     // The deployment this client talks to: production unless another was
     // chosen, and remembered once it was.
     Q_PROPERTY(QString coreUrl READ coreUrl WRITE setCoreUrl NOTIFY coreUrlChanged)
+    // **What this window can deploy** (the operator, 25 September 2026: a
+    // machine is created and torn down from the client). The recipes that
+    // are reached over the project network only, each with the GPU models on
+    // sale when it takes one. A public recipe also needs the acceptable-use
+    // policy accepted, which is the console's page, so it is not offered here.
+    Q_PROPERTY(QVariantList offers READ offers NOTIFY offersChanged)
+    // True while a deploy or a delete this window asked for is unanswered.
+    Q_PROPERTY(bool ordering READ ordering NOTIFY orderingChanged)
     Q_PROPERTY(QString productionCoreUrl READ productionCoreUrl CONSTANT)
     Q_PROPERTY(bool signedIn READ signedIn NOTIFY signedInChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
@@ -50,6 +58,9 @@ class OmnuvSession : public QObject
     // Shown while a sign-in is waiting for the browser. Empty otherwise.
     Q_PROPERTY(QString userCode READ userCode NOTIFY pendingChanged)
     Q_PROPERTY(QString verificationUri READ verificationUri NOTIFY pendingChanged)
+    // The approval page with this attempt's code already in it, which the
+    // window opens by itself; empty while there is no attempt.
+    Q_PROPERTY(QString signInPage READ signInPage NOTIFY pendingChanged)
 
     // One line, in a person's words, about what just happened. The view shows
     // it verbatim; nothing here composes a sentence out of an error code.
@@ -127,6 +138,7 @@ public:
     bool busy() const { return m_busy; }
     QString userCode() const { return m_userCode; }
     QString verificationUri() const { return m_verificationUri; }
+    QString signInPage() const;
     QString status() const { return m_status; }
     QString credentialWarning() const { return m_credentialWarning; }
     QString readProblem() const {
@@ -197,6 +209,20 @@ public:
     Q_INVOKABLE void refresh(bool everything = false);
     Q_INVOKABLE void retryReads();
 
+    // Read the recipes and the GPUs on sale into `offers`.
+    Q_INVOKABLE void loadOffers();
+    // Rent a machine from one of `offers`: its id, a name, and a GPU model
+    // (empty for none). The answer arrives on `deployFinished`, and the
+    // machine in the list on the next refresh, which this starts.
+    Q_INVOKABLE void deploy(const QString& recipe, const QString& name, const QString& gpuModel);
+    // Take away the machine in `row` and everything on it. A machine that came
+    // from a recipe is removed as that deployment, so its login and its GPU go
+    // with it; any other is removed as an instance. Answers on
+    // `deleteFinished`.
+    Q_INVOKABLE void deleteMachine(int row);
+    QVariantList offers() const { return m_offers; }
+    bool ordering() const { return m_ordering; }
+
     // Open a terminal on an ordinary machine. Returns false when no terminal
     // could be started, which the view turns into a command to copy rather
     // than into an error — a person with no terminal installed is not stuck,
@@ -262,6 +288,13 @@ signals:
     void credentialWarningChanged();
     void readProblemChanged();
     void enrollmentChanged();
+    void offersChanged();
+    void orderingChanged();
+    // `ok` and one sentence for the person. On a request that went unanswered
+    // `ok` is false and the sentence says to look before asking again: a
+    // deploy rents a machine, so a blind retry can rent two.
+    void deployFinished(bool ok, const QString& message);
+    void deleteFinished(bool ok, const QString& message);
 
     // The machine took the code. Whether the pairing then completed is
     // ComputerModel::pairingCompleted's answer; this only says the delivery
@@ -308,6 +341,10 @@ private:
     QPointer<QObject> m_pairManager;
     QString m_claimAttempt;
     QString m_claimDeployment;
+    QVariantList m_offers;
+    bool m_ordering = false;
+    void setOrdering(bool ordering);
+    void removeAt(const QString& path, const QString& name);
 
     void poll();
     void collect();

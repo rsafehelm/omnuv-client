@@ -26,6 +26,7 @@
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QUrl>
+#include <QUrlQuery>
 #include <QSysInfo>
 #include <QtQml>
 
@@ -1549,3 +1550,179 @@ static void registerOmnuvTypes()
     // withdrawn with the belief.
 }
 Q_COREAPP_STARTUP_FUNCTION(registerOmnuvTypes)
+
+// ------------------------------------------------------------ deploy, delete
+
+void OmnuvSession::setOrdering(bool ordering)
+{
+    if (m_ordering == ordering) return;
+    m_ordering = ordering;
+    emit orderingChanged();
+}
+
+namespace {
+// Core's sentence when it gave one, else the status, so a refusal is never
+// shown as nothing.
+QString refusalOf(QNetworkReply* reply, const QByteArray& body)
+{
+    const auto said = QJsonDocument::fromJson(body).object().value("error").toString().trimmed();
+    if (!said.isEmpty()) return said;
+    return QObject::tr("Omnuv answered %1.")
+        .arg(reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt());
+}
+}
+
+void OmnuvSession::loadOffers()
+{
+    if (!signedIn()) return;
+    const auto context = m_context;
+    // Two reads, joined here: the recipes, and what is on sale to run them.
+    auto recipes = m_net.get(request(QStringLiteral("/v1/recipes"), true));
+    auto capacity = m_net.get(request(QStringLiteral("/v1/capacity"), true));
+    auto left = std::make_shared<int>(2);
+    auto recipeList = std::make_shared<QJsonArray>();
+    auto gpus = std::make_shared<QVariantList>();
+    auto joined = [this, context, left, recipeList, gpus]() {
+        if (--*left > 0 || context != m_context) return;
+        QVariantList offers;
+        for (const auto& value : *recipeList) {
+            const auto r = value.toObject();
+            // Private only: see `offers` in the header for why.
+            if (!r.value("private_only").toBool()) continue;
+            const auto gpu = r.value("gpu").toString();
+            offers.append(QVariantMap{
+                {"id", r.value("id").toString()},
+                {"name", r.value("display_name").toString()},
+                {"description", r.value("description").toString()},
+                {"gpu", gpu},
+                {"machine", tr("%1 vCPU · %2 GiB · %3 GiB disk")
+                     .arg(r.value("vcpus").toInt()).arg(r.value("memory_gb").toInt()).arg(r.value("disk_gb").toInt())},
+                {"gpus", gpu == QLatin1String("none") ? QVariantList() : *gpus},
+            });
+        }
+        m_offers = offers;
+        emit offersChanged();
+    };
+    connect(recipes, &QNetworkReply::finished, this, [recipes, recipeList, joined]() {
+        recipes->deleteLater();
+        if (recipes->error() == QNetworkReply::NoError)
+            *recipeList = QJsonDocument::fromJson(recipes->readAll()).array();
+        joined();
+    });
+    connect(capacity, &QNetworkReply::finished, this, [capacity, gpus, joined]() {
+        capacity->deleteLater();
+        if (capacity->error() == QNetworkReply::NoError) {
+            // The console sells from eu-west; the first region with cards
+            // stands in when a site has no region of that name.
+            QJsonArray regions = QJsonDocument::fromJson(capacity->readAll()).array(), chosen;
+            for (const auto& r : regions)
+                if (r.toObject().value("region").toString() == QLatin1String("eu-west")) chosen = r.toObject().value("gpus").toArray();
+            for (int i = 0; chosen.isEmpty() && i < regions.size(); ++i) chosen = regions[i].toObject().value("gpus").toArray();
+            for (const auto& g : chosen) {
+                const auto o = g.toObject();
+                const int available = o.value("available").toInt();
+                gpus->append(QVariantMap{
+                    {"model", o.value("model").toString()},
+                    {"available", available},
+                    // A price is an estimate while nothing charges.
+                    {"label", available > 0
+                         ? tr("%1 · about €%2/h").arg(o.value("model").toString(), o.value("price_per_hour").toString())
+                         : tr("%1 · none free").arg(o.value("model").toString())},
+                });
+            }
+        }
+        joined();
+    });
+}
+
+void OmnuvSession::deploy(const QString& recipe, const QString& name, const QString& gpuModel)
+{
+    if (!signedIn() || m_ordering) return;
+    const auto trimmed = name.trimmed();
+    if (recipe.isEmpty() || trimmed.isEmpty()) {
+        emit deployFinished(false, tr("Give the machine a name."));
+        return;
+    }
+    QJsonObject body{{"name", trimmed}};
+    if (!gpuModel.isEmpty()) body.insert("gpu", QJsonObject{{"model", gpuModel}, {"count", 1}});
+    setOrdering(true);
+    const auto context = m_context;
+    auto reply = m_net.post(request(QStringLiteral("/v1/recipes/%1/deploy").arg(recipe) + projectQuery(), true),
+                            QJsonDocument(body).toJson(QJsonDocument::Compact));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, trimmed, context]() {
+        reply->deleteLater();
+        setOrdering(false);
+        if (context != m_context) return;
+        const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const auto bytes = reply->readAll();
+        if (code == 200 || code == 201) {
+            emit deployFinished(true, tr("%1 is on its way. It appears here once its provider has it running.").arg(trimmed));
+        } else if (code == 0) {
+            emit deployFinished(false, tr("Omnuv did not answer, so %1 may or may not exist. Wait for the list to refresh before deploying again.").arg(trimmed));
+        } else {
+            emit deployFinished(false, refusalOf(reply, bytes));
+        }
+        refresh(true);
+    });
+}
+
+void OmnuvSession::deleteMachine(int row)
+{
+    if (!signedIn() || m_ordering) return;
+    const auto id = m_machines->idAt(row);
+    const auto name = m_machines->data(m_machines->index(row), MachineModel::NameRole).toString();
+    if (id.isEmpty()) return;
+    setOrdering(true);
+    const auto context = m_context;
+    // The instance view names no deployment; the deployment view names its
+    // instance (see MachineModel::idAt).
+    auto reply = m_net.get(request(QStringLiteral("/v1/deployments") + projectQuery(), true));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, id, name, context]() {
+        reply->deleteLater();
+        if (context != m_context) { setOrdering(false); return; }
+        if (reply->error() != QNetworkReply::NoError) {
+            setOrdering(false);
+            emit deleteFinished(false, tr("Omnuv could not be reached, so %1 was not deleted.").arg(name));
+            return;
+        }
+        QString deployment;
+        for (const auto& value : QJsonDocument::fromJson(reply->readAll()).array())
+            if (value.toObject().value("instance_id").toString() == id) deployment = value.toObject().value("id").toString();
+        removeAt(deployment.isEmpty() ? QStringLiteral("/v1/instances/%1").arg(id)
+                                      : QStringLiteral("/v1/deployments/%1").arg(deployment), name);
+    });
+}
+
+void OmnuvSession::removeAt(const QString& path, const QString& name)
+{
+    const auto context = m_context;
+    auto reply = m_net.deleteResource(request(path + projectQuery(), true));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, name, context]() {
+        reply->deleteLater();
+        setOrdering(false);
+        if (context != m_context) return;
+        const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const auto bytes = reply->readAll();
+        // 404: already gone, which is what was asked for.
+        if (code == 200 || code == 202 || code == 204 || code == 404) {
+            emit deleteFinished(true, tr("%1 is being taken away, with everything on it.").arg(name));
+        } else if (code == 0) {
+            emit deleteFinished(false, tr("Omnuv did not answer. Wait for the list to refresh to see whether %1 is going.").arg(name));
+        } else {
+            emit deleteFinished(false, refusalOf(reply, bytes));
+        }
+        refresh(true);
+    });
+}
+
+QString OmnuvSession::signInPage() const
+{
+    if (m_verificationUri.isEmpty() || m_userCode.isEmpty()) return QString();
+    QUrl page(m_verificationUri);
+    QUrlQuery query(page);
+    // QUrlQuery encodes the value itself; a code carrying `&` or a space
+    // stays one value (the session test holds both).
+    query.addQueryItem(QStringLiteral("code"), m_userCode);
+    page.setQuery(query);
+    return page.toString(QUrl::FullyEncoded);
+}

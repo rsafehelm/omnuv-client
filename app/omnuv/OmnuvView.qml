@@ -292,6 +292,8 @@ Item {
             else networkMove.close()
         }
         function onHostPairingFinished(address, error) { root.pairingFinished(address, error) }
+        function onDeployFinished(ok, text) { message.show(text) }
+        function onDeleteFinished(ok, text) { message.show(text) }
         function onPairingFailed(why, detail) {
             if (!root.validTarget(pairing.target)) return
             pairing.why = why
@@ -330,7 +332,7 @@ Item {
                 Layout.fillWidth: true
                 text: (Omnuv.signedIn
                        ? qsTr("You stay signed in here. If you have signed in to the other one before, " +
-                              "you will be again; otherwise it asks you to.")
+                              "you will be again; otherwise it asks you to. ")
                        : qsTr("Only if your organization runs its own Omnuv. ")) +
                       qsTr("Leave it empty for Omnuv itself.")
                 wrapMode: Text.WordWrap
@@ -345,6 +347,148 @@ Item {
         }
         onAccepted: Omnuv.coreUrl = deploymentField.text
     }
+    // **Renting a machine from the window** (the operator, 25 September 2026:
+    // a machine is created and torn down from the client). What can be
+    // rented is Core's list, read when the dialog opens; each choice is a
+    // button, so a person sees them all and a screen reader can press one.
+    Dialog {
+        id: deployMachine
+        objectName: "deployMachine"
+        anchors.centerIn: parent
+        width: Math.min(root.width - 80, 620)
+        modal: true
+        title: qsTr("Deploy a machine")
+        property string recipe: ""
+        readonly property var chosen: {
+            for (var i = 0; i < Omnuv.offers.length; ++i)
+                if (Omnuv.offers[i].id === recipe) return Omnuv.offers[i]
+            return null
+        }
+        readonly property var freeGpus: chosen ? chosen.gpus.filter(function (g) { return g.available > 0 }) : []
+        function choose(offer) {
+            recipe = offer.id
+            deployName.text = offer.id.split("-")[0]
+            gpuChoice.currentIndex = 0
+        }
+        onAboutToShow: {
+            recipe = ""
+            deployName.text = ""
+            Omnuv.loadOffers()
+        }
+        Connections {
+            target: Omnuv
+            // One offer is chosen for the person; more are theirs to pick.
+            function onOffersChanged() {
+                if (deployMachine.visible && deployMachine.recipe === "" && Omnuv.offers.length > 0)
+                    deployMachine.choose(Omnuv.offers[0])
+            }
+        }
+        contentItem: ColumnLayout {
+            spacing: Theme.spacing
+            Label {
+                Layout.fillWidth: true
+                visible: Omnuv.offers.length === 0
+                text: qsTr("Reading what you can deploy…")
+                wrapMode: Text.WordWrap
+            }
+            Repeater {
+                model: Omnuv.offers
+                delegate: Button {
+                    required property var modelData
+                    Layout.fillWidth: true
+                    checkable: true
+                    checked: deployMachine.recipe === modelData.id
+                    highlighted: checked
+                    text: modelData.name
+                    Accessible.name: modelData.name
+                    onClicked: deployMachine.choose(modelData)
+                }
+            }
+            Label {
+                Layout.fillWidth: true
+                visible: deployMachine.chosen !== null
+                text: deployMachine.chosen ? deployMachine.chosen.description + "\n" + deployMachine.chosen.machine : ""
+                wrapMode: Text.WordWrap
+                opacity: 0.78
+            }
+            TextField {
+                id: deployName
+                objectName: "deployName"
+                Layout.fillWidth: true
+                visible: deployMachine.chosen !== null
+                placeholderText: qsTr("Name")
+                Accessible.name: qsTr("Machine name")
+                maximumLength: 48
+            }
+            ComboBox {
+                id: gpuChoice
+                objectName: "gpuChoice"
+                Layout.fillWidth: true
+                visible: deployMachine.chosen !== null && deployMachine.chosen.gpu !== "none"
+                model: deployMachine.freeGpus
+                textRole: "label"
+                Accessible.name: qsTr("Graphics card")
+            }
+            Label {
+                Layout.fillWidth: true
+                visible: deployMachine.chosen !== null && deployMachine.chosen.gpu === "required"
+                         && deployMachine.freeGpus.length === 0
+                text: qsTr("No graphics card is free right now, and this machine needs one.")
+                wrapMode: Text.WordWrap
+            }
+        }
+        footer: DialogButtonBox {
+            Button {
+                objectName: "deployConfirm"
+                text: Omnuv.ordering ? qsTr("Deploying…") : qsTr("Deploy")
+                Accessible.name: qsTr("Deploy")
+                highlighted: true
+                enabled: !Omnuv.ordering && deployMachine.chosen !== null && deployName.text.trim() !== ""
+                         && (deployMachine.chosen.gpu !== "required" || deployMachine.freeGpus.length > 0)
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+            }
+            Button {
+                text: qsTr("Cancel")
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+            }
+        }
+        onAccepted: {
+            var gpu = ""
+            if (chosen && chosen.gpu !== "none" && freeGpus.length > 0)
+                gpu = freeGpus[Math.max(0, gpuChoice.currentIndex)].model
+            Omnuv.deploy(recipe, deployName.text, gpu)
+        }
+    }
+
+    // Taking a machine away, asked once, in words that say what goes with it.
+    Dialog {
+        id: deleteMachine
+        objectName: "deleteMachineDialog"
+        anchors.centerIn: parent
+        width: Math.min(root.width - 80, 520)
+        modal: true
+        title: qsTr("Delete %1?").arg(targetName)
+        property int row: -1
+        property string targetName: ""
+        contentItem: Label {
+            text: qsTr("The machine and everything on it are taken away, and its graphics card goes back on sale. This cannot be undone.")
+            wrapMode: Text.WordWrap
+        }
+        footer: DialogButtonBox {
+            Button {
+                objectName: "deleteConfirm"
+                text: qsTr("Delete")
+                Accessible.name: text
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+            }
+            Button {
+                text: qsTr("Cancel")
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+            }
+        }
+        onAccepted: Omnuv.deleteMachine(row)
+    }
+
     Dialog {
         id: networkMove
         objectName: "networkMove"
@@ -557,21 +701,44 @@ Item {
         }
 
         // Waiting for the browser. The code is the whole interface here.
+        //
+        // **The window opens the page itself** (25 September 2026), with the
+        // code already in it: the console's /connect takes `?code=`. Nobody
+        // is shown an address to copy unless the browser could not be opened;
+        // the code stays, because comparing it by eye is what tells a person
+        // the page is approving this device and not somebody else's.
         ColumnLayout {
+            id: waiting
             Layout.fillWidth: true
             spacing: 12
             visible: Omnuv.userCode !== ""
 
+            property string openedFor: ""
+            property bool browserFailed: false
+            readonly property string page: Omnuv.signInPage
+            function openPage() {
+                openedFor = Omnuv.userCode
+                browserFailed = !Qt.openUrlExternally(page)
+            }
+            Connections {
+                target: Omnuv
+                function onPendingChanged() {
+                    if (Omnuv.userCode !== "" && waiting.page !== "" && waiting.openedFor !== Omnuv.userCode)
+                        waiting.openPage()
+                }
+            }
+
             Label {
                 Layout.fillWidth: true
-                text: qsTr("Open this address and enter the code:")
+                text: qsTr("Approve this sign-in in your browser. The page shows this code:")
                 wrapMode: Text.WordWrap
                 horizontalAlignment: Text.AlignHCenter
             }
 
             Label {
                 Layout.fillWidth: true
-                text: Omnuv.verificationUri
+                visible: waiting.browserFailed
+                text: qsTr("The browser did not open. Go to %1 and enter the code.").arg(Omnuv.verificationUri)
                 wrapMode: Text.WrapAnywhere
                 horizontalAlignment: Text.AlignHCenter
                 opacity: 0.7
@@ -611,6 +778,15 @@ Item {
                         }
                     }
                 }
+            }
+
+            Button {
+                objectName: "openSignInPage"
+                Layout.alignment: Qt.AlignHCenter
+                highlighted: true
+                text: qsTr("Open the sign-in page again")
+                Accessible.name: text
+                onClicked: waiting.openPage()
             }
 
             Button {
@@ -806,6 +982,7 @@ Item {
         OrganizationBand {
             Layout.fillWidth: true
             onSwitchDeploymentRequested: switchDeployment.open()
+            onDeployRequested: deployMachine.open()
         }
 
         Notice {
@@ -1043,6 +1220,11 @@ Item {
                             root.connectTo(index, true)
                         }
                         onSettingsRequested: streamSettings.open()
+                        onDeleteRequested: {
+                            deleteMachine.row = index
+                            deleteMachine.targetName = name
+                            deleteMachine.open()
+                        }
                     }
 
                     // After the machines: what is waiting for capacity, as

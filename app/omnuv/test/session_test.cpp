@@ -21,6 +21,7 @@
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QSignalSpy>
+#include <QDesktopServices>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QtTest>
@@ -37,7 +38,7 @@ QAtomicInt g_AsyncLoggingEnabled;
 // Requests can finish in any order. Tests exercise the real QNAM callbacks.
 class HeldServer : public QTcpServer {
 public:
-    struct Call { QByteArray path, body; QPointer<QTcpSocket> socket; };
+    struct Call { QByteArray path, body; QPointer<QTcpSocket> socket; QByteArray method; };
     QList<Call> calls;
     HeldServer() {
         listen(QHostAddress::LocalHost);
@@ -56,7 +57,7 @@ public:
                         if (line.toLower().startsWith("content-length:")) length=line.mid(15).trimmed().toInt();
                     if (buffer->size()<split+4+length) return;
                     *captured=true;
-                    calls.append({buffer->split(' ').at(1),buffer->mid(split+4,length),socket});
+                    calls.append({buffer->split(' ').at(1),buffer->mid(split+4,length),socket,buffer->split(' ').at(0)});
                 });
             }
         });
@@ -75,6 +76,16 @@ public:
         socket->write("HTTP/1.1 "+QByteArray::number(status)+" Result\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "+QByteArray::number(body.size())+"\r\n\r\n"+body);
         socket->disconnectFromHost();
     }
+};
+
+// Catches what the window hands the system browser, so a test can say which
+// page was opened, and how many times, without a browser.
+class OpenedPages : public QObject {
+    Q_OBJECT
+public:
+    QList<QUrl> pages;
+public slots:
+    void open(const QUrl& url) { pages.append(url); }
 };
 
 // Intercepts HTTPS in memory: no request can leave the test process.
@@ -673,6 +684,163 @@ private slots:
             {"setup_key","fixture-only"},{"command","OmnuvClient enrol fixture-only"},{"management_url","https://overlay.field.invalid"}}).toJson());
         QTRY_VERIFY(daemon.commands.contains("enrol-v1"));
         QCOMPARE(QJsonDocument::fromJson(sent.toUtf8()).object().value("management_url").toString(),QString("https://overlay.field.invalid"));
+    }
+
+    // The approval page carries the code, so nobody types it; a page that
+    // already has a query keeps it; no attempt, no page.
+    void theSignInPageCarriesTheCode() {
+        HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
+        QCOMPARE(s.signInPage(),QString());
+        s.m_verificationUri="https://console.omnuv.com/connect"; s.m_userCode="ABCD-EFGH";
+        QCOMPARE(s.signInPage(),QString("https://console.omnuv.com/connect?code=ABCD-EFGH"));
+        s.m_userCode="AB CD&x";
+        QCOMPARE(s.signInPage(),QString("https://console.omnuv.com/connect?code=AB%20CD%26x"));
+        s.m_verificationUri="https://console.omnuv.com/connect?lang=pt"; s.m_userCode="ABCD-EFGH";
+        QCOMPARE(s.signInPage(),QString("https://console.omnuv.com/connect?lang=pt&code=ABCD-EFGH"));
+    }
+    // The waiting screen opens that page by itself, once per code, and again
+    // only when asked. Rendered on its own, with the browser intercepted.
+    void theWaitingScreenOpensThePageOncePerCode() {
+        HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
+        OpenedPages opened; QDesktopServices::setUrlHandler("https",&opened,"open");
+        QFile source("/src/app/omnuv/OmnuvView.qml"); QVERIFY(source.open(QIODevice::ReadOnly));
+        const auto text=QString::fromUtf8(source.readAll());
+        const auto begin=text.indexOf("        ColumnLayout {\n            id: waiting");
+        const auto tiles=text.indexOf("            // The code, a character to a tile",begin);
+        const auto buttons=text.indexOf("            Button {\n                objectName: \"openSignInPage\"",tiles);
+        const auto cancel=text.indexOf("            Button {\n                Layout.alignment: Qt.AlignHCenter\n                text: qsTr(\"Cancel\")",buttons);
+        QVERIFY(begin>=0 && tiles>begin && buttons>tiles && cancel>buttons);
+        auto screen=(text.mid(begin,tiles-begin)+text.mid(buttons,cancel-buttons)+"        }\n")
+            .replace("target: Omnuv","target: sample").replace("Omnuv.","sample.");
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::Software); QQuickView view;
+        view.engine()->rootContext()->setContextProperty("sample",&s); QQmlComponent component(view.engine());
+        component.setData(("import QtQuick\nimport QtQuick.Controls\nimport QtQuick.Layouts\nItem { width: 600; height: 400\n"+screen+"\n}").toUtf8(),QUrl("qrc:/omnuv/WaitingTest.qml"));
+        QTRY_VERIFY_WITH_TIMEOUT(!component.isLoading(),2000); QVERIFY2(component.isReady(),qPrintable(component.errorString()));
+        std::unique_ptr<QObject> object(component.create()); QVERIFY2(object,qPrintable(component.errorString()));
+        s.m_verificationUri="https://console.omnuv.com/connect"; s.m_userCode="ABCD-EFGH"; emit s.pendingChanged();
+        QTRY_COMPARE(opened.pages.size(),1);
+        QCOMPARE(opened.pages[0].toString(),QString("https://console.omnuv.com/connect?code=ABCD-EFGH"));
+        emit s.pendingChanged(); QTest::qWait(50); QCOMPARE(opened.pages.size(),1);
+        auto again=object->findChild<QObject*>("openSignInPage"); QVERIFY(again);
+        QVERIFY(QMetaObject::invokeMethod(again,"clicked")); QTRY_COMPARE(opened.pages.size(),2);
+        s.m_userCode="WXYZ-2345"; emit s.pendingChanged();
+        QTRY_COMPARE(opened.pages.size(),3);
+        QCOMPARE(opened.pages[2].toString(),QString("https://console.omnuv.com/connect?code=WXYZ-2345"));
+        QDesktopServices::unsetUrlHandler("https");
+    }
+
+    // The operator, 25 September 2026: a machine is created and torn down
+    // from the client. What is offered is Core's list less the public
+    // recipes, whose policy is the console's page; the GPUs are eu-west's.
+    void offersAreThePrivateRecipesWithTheGpusOnSale(HeldServer& server, OmnuvSession& s) {
+        s.loadOffers();
+        QTRY_VERIFY(server.find("/v1/recipes")>=0 && server.find("/v1/capacity")>=0);
+        server.answer(server.find("/v1/recipes"),200,R"([
+            {"id":"steam-gaming","display_name":"Steam · remote gaming rig","description":"Games.","gpu":"required","private_only":true,"vcpus":8,"memory_gb":32,"disk_gb":80},
+            {"id":"open-webui","display_name":"Open WebUI","description":"Chat.","gpu":"optional","private_only":false,"vcpus":2,"memory_gb":4,"disk_gb":20}])");
+        server.answer(server.find("/v1/capacity"),200,R"([
+            {"region":"us-east","gpus":[{"model":"Elsewhere","available":1,"price_per_hour":"9"}]},
+            {"region":"eu-west","gpus":[{"model":"RTX 3090","available":1,"price_per_hour":"0.40"},{"model":"RTX 4090","available":0,"price_per_hour":"0.80"}]}])");
+        QTRY_COMPARE(s.offers().size(),1);
+        const auto offer=s.offers().first().toMap();
+        QCOMPARE(offer["id"].toString(),QString("steam-gaming"));
+        const auto gpus=offer["gpus"].toList();
+        QCOMPARE(gpus.size(),2); QCOMPARE(gpus[0].toMap()["model"].toString(),QString("RTX 3090"));
+        QCOMPARE(gpus[1].toMap()["available"].toInt(),0);
+    }
+    void theWindowOffersAndDeploysAPrivateRecipe() {
+        HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
+        offersAreThePrivateRecipesWithTheGpusOnSale(server,s); if (QTest::currentTestFailed()) return;
+        QSignalSpy done(&s,&OmnuvSession::deployFinished);
+        s.deploy("steam-gaming"," steam ","RTX 3090");
+        QVERIFY(s.ordering());
+        s.deploy("steam-gaming","steam","RTX 3090");   // a second press while one is out is not a second machine
+        const QByteArray path="/v1/recipes/steam-gaming/deploy?project=a";
+        QTRY_VERIFY(server.find(path)>=0); QTest::qWait(50); QCOMPARE(server.count(path),1);
+        const auto post=server.find(path); QCOMPARE(server.calls[post].method,QByteArray("POST"));
+        const auto body=QJsonDocument::fromJson(server.calls[post].body).object();
+        QCOMPARE(body["name"].toString(),QString("steam"));
+        QCOMPARE(body["gpu"].toObject()["model"].toString(),QString("RTX 3090"));
+        QCOMPARE(body["gpu"].toObject()["count"].toInt(),1);
+        QVERIFY(!body.contains("provider"));
+        server.answer(post,200,R"({"id":"d-1","instance_id":"i-1","status":"Deploying"})");
+        QTRY_COMPARE(done.size(),1); QVERIFY(done[0][0].toBool()); QVERIFY(!s.ordering());
+        QVERIFY(done[0][1].toString().contains("steam"));
+    }
+    void aRefusedOrUnansweredDeploySaysSo() {
+        HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
+        QSignalSpy done(&s,&OmnuvSession::deployFinished);
+        const QByteArray path="/v1/recipes/steam-gaming/deploy?project=a";
+        s.deploy("steam-gaming","steam","RTX 3090"); QTRY_VERIFY(server.find(path)>=0);
+        server.answer(server.find(path),409,R"({"error":"No RTX 3090 is free right now."})");
+        QTRY_COMPARE(done.size(),1); QVERIFY(!done[0][0].toBool());
+        QCOMPARE(done[0][1].toString(),QString("No RTX 3090 is free right now."));
+        s.deploy("steam-gaming","steam","RTX 3090"); QTRY_VERIFY(server.find(path,server.find(path)+1)>=0);
+        server.calls[server.find(path,server.find(path)+1)].socket->abort();
+        QTRY_COMPARE(done.size(),2); QVERIFY(!done[1][0].toBool());
+        QVERIFY2(done[1][1].toString().contains("may or may not exist"),qPrintable(done[1][1].toString()));
+        s.deploy("steam-gaming","  ","RTX 3090");
+        QCOMPARE(done.size(),3); QVERIFY(!done[2][0].toBool());
+    }
+    // A machine from a recipe goes as its deployment, so its login and card go
+    // with it; any other goes as an instance. Deleting what is already gone
+    // (404) is what was asked for.
+    void deleteTakesAMachineAwayByWhatMadeIt() {
+        HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
+        s.m_machines->replace(QJsonArray{
+            QJsonObject{{"id","i-1"},{"name","steam"},{"status","Running"}},
+            QJsonObject{{"id","i-2"},{"name","plain"},{"status","Running"}}});
+        QSignalSpy done(&s,&OmnuvSession::deleteFinished);
+        s.deleteMachine(0);
+        QTRY_VERIFY(server.find("/v1/deployments?project=a")>=0);
+        server.answer(server.find("/v1/deployments?project=a"),200,R"([{"id":"d-9","instance_id":"i-7"},{"id":"d-1","instance_id":"i-1"}])");
+        QTRY_VERIFY(server.find("/v1/deployments/d-1?project=a")>=0);
+        const auto del=server.find("/v1/deployments/d-1?project=a");
+        QCOMPARE(server.calls[del].method,QByteArray("DELETE"));
+        QCOMPARE(server.count("/v1/instances/i-1?project=a"),0);
+        server.answer(del,202,"{}");
+        QTRY_COMPARE(done.size(),1); QVERIFY(done[0][0].toBool()); QVERIFY(done[0][1].toString().contains("steam"));
+        const auto second=server.find("/v1/deployments?project=a",server.find("/v1/deployments?project=a")+1);
+        s.deleteMachine(1);
+        QTRY_VERIFY(server.count("/v1/deployments?project=a")>=2);
+        server.answer(server.find("/v1/deployments?project=a",server.find("/v1/deployments?project=a")+1),200,R"([{"id":"d-1","instance_id":"i-1"}])");
+        QTRY_VERIFY(server.find("/v1/instances/i-2?project=a")>=0);
+        const auto inst=server.find("/v1/instances/i-2?project=a");
+        QCOMPARE(server.calls[inst].method,QByteArray("DELETE"));
+        server.answer(inst,404,R"({"error":"not found"})");
+        QTRY_COMPARE(done.size(),2); QVERIFY(done[1][0].toBool());
+        Q_UNUSED(second);
+    }
+    // The dialog itself, rendered on its own: it reads the offers when it
+    // opens, chooses the one there is, and Deploy sends the card it shows.
+    void theDeployDialogSendsWhatItShows() {
+        HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
+        QFile source("/src/app/omnuv/OmnuvView.qml"); QVERIFY(source.open(QIODevice::ReadOnly));
+        const auto text=QString::fromUtf8(source.readAll());
+        const auto begin=text.indexOf("    Dialog {\n        id: deployMachine");
+        const auto end=text.indexOf("    // Taking a machine away",begin); QVERIFY(begin>=0 && end>begin);
+        auto dialog=text.mid(begin,end-begin).replace("target: Omnuv","target: sample").replace("Omnuv.","sample.").replace("Theme.spacing","8");
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::Software); QQuickView view;
+        view.engine()->rootContext()->setContextProperty("sample",&s); QQmlComponent component(view.engine());
+        component.setData(("import QtQuick\nimport QtQuick.Controls\nimport QtQuick.Layouts\nRectangle { id: root; width: 900; height: 600; color: \"white\"\n"+dialog+"\n}").toUtf8(),QUrl("qrc:/omnuv/DeployTest.qml"));
+        QTRY_VERIFY_WITH_TIMEOUT(!component.isLoading(),2000); QVERIFY2(component.isReady(),qPrintable(component.errorString()));
+        auto object=component.create(); QVERIFY2(object,qPrintable(component.errorString()));
+        view.setContent(QUrl("qrc:/omnuv/DeployTest.qml"),&component,object); view.show();
+        auto popup=object->findChild<QObject*>("deployMachine"); QVERIFY(popup); QVERIFY(QMetaObject::invokeMethod(popup,"open"));
+        QTRY_VERIFY(popup->property("visible").toBool());
+        offersAreThePrivateRecipesWithTheGpusOnSale(server,s); if (QTest::currentTestFailed()) return;
+        auto name=object->findChild<QObject*>("deployName"); QVERIFY(name);
+        QTRY_COMPARE(name->property("text").toString(),QString("steam"));
+        auto confirm=object->findChild<QObject*>("deployConfirm"); QVERIFY(confirm);
+        QTRY_VERIFY(confirm->property("enabled").toBool());
+        QTest::qWait(100);
+        auto shot=view.grabWindow(); QVERIFY(!shot.isNull());
+        QVERIFY(shot.save(qEnvironmentVariable("OMNUV_TEST_ARTIFACT_DIR",QDir::tempPath())+"/deploy-machine.png"));
+        QVERIFY(QMetaObject::invokeMethod(popup,"accept"));
+        const QByteArray path="/v1/recipes/steam-gaming/deploy?project=a";
+        QTRY_VERIFY(server.find(path)>=0);
+        const auto body=QJsonDocument::fromJson(server.calls[server.find(path)].body).object();
+        QCOMPARE(body["gpu"].toObject()["model"].toString(),QString("RTX 3090"));
     }
 
     // Nothing named, the session is on production; OMNUV_CORE_URL beats it,
