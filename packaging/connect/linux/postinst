@@ -1,0 +1,39 @@
+#!/bin/sh
+set -e
+# ONV_ROOT is for the test beside this file; dpkg never sets it.
+
+# **Whoever installed it owns it** (the operator's decision of 25 September
+# 2026). The tunnel answers only its owner and root (H4, owner.go), and
+# until now its owner was the first account to ask for a change, so on a
+# machine with several accounts another could claim it first. The person
+# who ran the install is known here: sudo says so in SUDO_UID, pkexec in
+# PKEXEC_UID. An install by root itself, or by a package service with no
+# person behind it, names nobody, and the first change claims it as before.
+# An owner already recorded is never replaced: an upgrade keeps it.
+owner="${ONV_ROOT:-}/var/lib/onv/tunnel/owner"
+if [ "$1" = configure ] && [ ! -s "$owner" ]; then
+    who=""
+    if [ -n "${SUDO_UID:-}" ] && [ "$SUDO_UID" != 0 ]; then
+        who="$SUDO_UID"
+    elif [ -n "${PKEXEC_UID:-}" ] && [ "$PKEXEC_UID" != 0 ]; then
+        who="$PKEXEC_UID"
+    fi
+    case "$who" in
+        ''|*[!0-9]*) echo "omnuv-connect: installed by no named person; the first account to join a network will own it" ;;
+        *)
+            install -d -m 0700 "${ONV_ROOT:-}/var/lib/onv/tunnel"
+            ( umask 077; printf '%s\n' "$who" > "$owner.tmp" && mv "$owner.tmp" "$owner" )
+            ;;
+    esac
+fi
+
+# The tunnel service runs as root because making the adapter needs it; the
+# client talks to it over /run/onv-tunnel.sock. Started only where systemd
+# is the init, which it is not inside a container.
+if [ -d /run/systemd/system ] && [ -z "${ONV_ROOT:-}" ]; then
+    systemctl daemon-reload
+    systemctl enable --now onv-tunnel.service
+fi
+if command -v update-desktop-database >/dev/null 2>&1 && [ -z "${ONV_ROOT:-}" ]; then
+    update-desktop-database -q /usr/share/applications || true
+fi

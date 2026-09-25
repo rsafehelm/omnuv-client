@@ -83,20 +83,10 @@ CTL
 # instead (the operator's decision of 24 September 2026), and a conflict would
 # answer first, with a solver dump or by removing a person's own netbird.
 install -m 0755 "$here/preinst" "$root/DEBIAN/preinst"
-cat > "$root/DEBIAN/postinst" <<'POST'
-#!/bin/sh
-set -e
-# The tunnel service runs as root because making the adapter needs it; the
-# client talks to it over /run/onv-tunnel.sock. Started only where systemd
-# is the init, which it is not inside a container.
-if [ -d /run/systemd/system ]; then
-    systemctl daemon-reload
-    systemctl enable --now onv-tunnel.service
-fi
-if command -v update-desktop-database >/dev/null 2>&1; then
-    update-desktop-database -q /usr/share/applications || true
-fi
-POST
+# The postinst is a file beside this script, so its test can run it: it
+# records the installing person as the tunnel's owner, and enables the
+# service.
+install -m 0755 "$here/postinst" "$root/DEBIAN/postinst"
 cat > "$root/DEBIAN/prerm" <<'PRERM'
 #!/bin/sh
 set -e
@@ -105,7 +95,7 @@ if [ -d /run/systemd/system ] && [ "$1" = remove ]; then
     systemctl disable --now onv-tunnel.service || true
 fi
 PRERM
-chmod 0755 "$root/DEBIAN/postinst" "$root/DEBIAN/prerm"
+chmod 0755 "$root/DEBIAN/prerm"
 
 mkdir -p "$out"
 dpkg-deb --root-owner-group --build "$root" "$out/omnuv-connect_${version}_amd64.deb" >/dev/null
