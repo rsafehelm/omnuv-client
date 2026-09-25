@@ -894,6 +894,18 @@ int main(int argc, char *argv[])
     }
 
     // Apply the initial translation based on user preference
+    // **No search of the local network** (25 September 2026). Moonlight
+    // browses mDNS for gaming PCs on the LAN; an Omnuv machine is never on the
+    // buyer's LAN (it is reached over the project network), so the search found
+    // nothing and only made macOS ask the person for local-network access.
+    // Off on every start, before the preferences are read and anything polls.
+    {
+        QSettings prefs;
+        if (prefs.value(QStringLiteral("mdns"), true).toBool()) {
+            prefs.setValue(QStringLiteral("mdns"), false);
+            qInfo() << "omnuv: local-network discovery turned off";
+        }
+    }
     StreamingPreferences::get()->retranslate();
 
     // Trickily declare the translation for dialog buttons

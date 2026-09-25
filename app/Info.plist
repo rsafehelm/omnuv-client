@@ -42,10 +42,6 @@
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Omnuv uses the local network to reach your machines and stream from them.</string>
-	<key>NSBonjourServices</key>
-	<array>
-		<string>_nvstream._tcp</string>
-	</array>
 	<key>CFBundleVersion</key>
 	<string>VERSION</string>
 	<key>CFBundleShortVersionString</key>
