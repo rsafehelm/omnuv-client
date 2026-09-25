@@ -207,8 +207,6 @@
                                   IgnoreFailure="yes"
                                   Name="Omnuv private network" />
         </File>
-        <File Id="RecordOwnerPs1"
-              Source="$(var.ConnectDir)\nsis\record-owner.ps1" />
         <ServiceInstall Id="OnvTunnelService"
                         Name="OnvTunnel"
                         DisplayName="Omnuv private network"
@@ -231,6 +229,18 @@
                         Stop="both"
                         Remove="uninstall"
                         Wait="no" />
+      </Component>
+      <!--
+        record-owner.ps1, which the RecordTunnelOwner action runs. A component
+        of its own: WiX generates a component's GUID only when it holds one
+        file or a versioned key path, and onvtunneld.exe carries no version,
+        so adding this file to OnvTunnel failed the build (WIX0367, 25
+        September 2026).
+      -->
+      <Component Id="OnvTunnelOwner">
+        <File Id="RecordOwnerPs1"
+              KeyPath="yes"
+              Source="$(var.ConnectDir)\nsis\record-owner.ps1" />
       </Component>
 
       <!--
@@ -269,6 +279,7 @@
       <ComponentRef Id="OmnuvDesktopShortcutState" />
       <ComponentRef Id="OmnuvDesktopShortcut" />
       <ComponentRef Id="OnvTunnel" />
+      <ComponentRef Id="OnvTunnelOwner" />
       <ComponentRef Id="OnvWintun" />
       <ComponentRef Id="OmnuvLinks" />
       <ComponentGroupRef Id="OmnuvDependencies" />
