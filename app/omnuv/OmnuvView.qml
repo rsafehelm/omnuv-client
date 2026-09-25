@@ -317,6 +317,15 @@ Item {
     // the other Core's sign-in, if there is one, is simply read.
     Dialog {
         id: switchDeployment
+        // **Opaque, and drawn here** (25 September 2026): with the window's
+        // own background given to Mica, the style's dialog fill let the page
+        // behind show through the content, on the rig and in every render
+        // (journey run 41201d8e: "No machines yet" through the deploy form).
+        background: Rectangle {
+            color: switchDeployment.palette.base
+            radius: Theme.radiusOverlay
+            border.color: Theme.strokeCard
+        }
         objectName: "switchDeployment"
         anchors.centerIn: parent
         width: Math.min(root.width - 80, 560)
@@ -353,6 +362,11 @@ Item {
     // button, so a person sees them all and a screen reader can press one.
     Dialog {
         id: deployMachine
+        background: Rectangle {
+            color: deployMachine.palette.base
+            radius: Theme.radiusOverlay
+            border.color: Theme.strokeCard
+        }
         objectName: "deployMachine"
         anchors.centerIn: parent
         width: Math.min(root.width - 80, 620)
@@ -398,8 +412,11 @@ Item {
                     Layout.fillWidth: true
                     checkable: true
                     checked: deployMachine.recipe === modelData.id
-                    highlighted: checked
-                    text: modelData.name
+                    // A mark, not `highlighted`: Material draws a highlighted,
+                    // checked button white on white (the session test's
+                    // render, 25 September 2026), and Material is the style
+                    // everywhere but Windows. The name stays the recipe's.
+                    text: (checked ? "\u2713  " : "") + modelData.name
                     Accessible.name: modelData.name
                     onClicked: deployMachine.choose(modelData)
                 }
@@ -463,6 +480,11 @@ Item {
     // Taking a machine away, asked once, in words that say what goes with it.
     Dialog {
         id: deleteMachine
+        background: Rectangle {
+            color: deleteMachine.palette.base
+            radius: Theme.radiusOverlay
+            border.color: Theme.strokeCard
+        }
         objectName: "deleteMachineDialog"
         anchors.centerIn: parent
         width: Math.min(root.width - 80, 520)
@@ -491,6 +513,11 @@ Item {
 
     Dialog {
         id: networkMove
+        background: Rectangle {
+            color: networkMove.palette.base
+            radius: Theme.radiusOverlay
+            border.color: Theme.strokeCard
+        }
         objectName: "networkMove"
         anchors.centerIn: parent
         width: Math.min(root.width - 80, 560)
@@ -503,6 +530,11 @@ Item {
     }
     Dialog {
         id: revokeEnrollment
+        background: Rectangle {
+            color: revokeEnrollment.palette.base
+            radius: Theme.radiusOverlay
+            border.color: Theme.strokeCard
+        }
         anchors.centerIn: parent
         width: Math.min(root.width - 80, 520)
         modal: true
@@ -526,6 +558,11 @@ Item {
     // has lost nothing.
     Dialog {
         id: pairing
+        background: Rectangle {
+            color: pairing.palette.base
+            radius: Theme.radiusOverlay
+            border.color: Theme.strokeCard
+        }
         property string machine
         property string host
         property string pin
@@ -619,6 +656,11 @@ Item {
 
     Dialog {
         id: message
+        background: Rectangle {
+            color: message.palette.base
+            radius: Theme.radiusOverlay
+            border.color: Theme.strokeCard
+        }
         property alias text: messageLabel.text
 
         function show(what) {
