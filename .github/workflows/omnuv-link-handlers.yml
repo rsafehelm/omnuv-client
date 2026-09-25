@@ -32,6 +32,9 @@ jobs:
         run: sh packaging/connect/linux/postinst_test.sh
       - name: The macOS package records whoever installed it as the tunnel's owner
         run: sh packaging/connect/macos/postinstall_test.sh
+      - name: The Windows installers record the person at the desk as the tunnel's owner
+        shell: pwsh
+        run: pwsh -NoProfile -File packaging/connect/nsis/record-owner_test.ps1
       - name: PowerShell handler (Windows)
         shell: pwsh
         run: pwsh -NoProfile -File tests/connect/handle_test.ps1

@@ -171,6 +171,16 @@ Section "Install"
   Pop $0
   nsExec::ExecToLog 'sc.exe description OnvTunnel "Holds this device on its Omnuv private network."'
   Pop $0
+  ; **Whoever sits at this device owns its network** (the operator's
+  ; decision of 25 September 2026). Before the service starts, so its first
+  ; start already knows its owner. This installer runs elevated, possibly as
+  ; another account than the person at the desk, so the script names the
+  ; interactive user, not the one running it (record-owner.ps1).
+  InitPluginsDir
+  File /oname=$PLUGINSDIR\record-owner.ps1 "record-owner.ps1"
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\record-owner.ps1"'
+  Pop $0
+
   nsExec::ExecToLog 'sc.exe start OnvTunnel'
   Pop $0
   ${If} $0 != 0
