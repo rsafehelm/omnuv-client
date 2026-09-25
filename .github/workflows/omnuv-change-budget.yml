@@ -87,6 +87,16 @@ jobs:
           # is Qt's rule rather than ours: setStyle() refuses once QtQuick
           # .Controls has been registered, so it has to run before the engine
           # loads any QML, and nothing of ours runs earlier than this function.
+          # .github/workflows/build.yml, build-appimage.yml and
+          # build-steamlink.yml are removed (the operator's decision of 25
+          # September 2026): Build existed only to run the AppImage and Steam
+          # Link jobs, both failed on every run since at least 17 September,
+          # and neither is an Omnuv target: Linux ships as the .deb, and
+          # Windows and macOS are built on the lab rigs. build-win-mac.yml is
+          # kept, unchanged and uncalled: to build there again, call it from a
+          # workflow of our own (`uses: ./.github/workflows/build-win-mac.yml`
+          # with a `ci_version`), which is an added file, not an upstream edit.
+          # (What follows is build.yml's earlier entry, kept for its history.)
           # .github/workflows/build.yml is the third entry. It buys the
           # Windows/macOS job commented out, 22+/5- against upstream (measured
           # 24 September 2026), all but the five commented lines being the
@@ -176,7 +186,7 @@ jobs:
           #   generate-bundle.bat, generate-dmg.sh, generate-ico.sh
           #       the artefact names and icons they produce are Omnuv's
           #   wix/Moonlight/, wix/MoonlightSetup/   removed, replaced by wix/Omnuv*
-          EDITED='^(app/backend/(nvpairingmanager|computermanager).(cpp|h)|app/gui/main.qml|app/main.cpp|app/app.pro|app/cli/commandlineparser.(cpp|h)|app/streaming/session.cpp|app/streaming/video/ffmpeg.cpp|app/streaming/video/overlaymanager.(cpp|h)|app/Info.plist|app/version.txt|app/deploy/.*|app/res/.*|scripts/build-arch.bat|.github/workflows/build.yml|.github/dependabot.yml|app/gui/NavigableToolButton.qml|app/OmnuvClient.exe.manifest|scripts/(build-appimage.sh|build-steamlink-app.sh|generate-bundle.bat|generate-dmg.sh|generate-ico.sh)|wix/Moonlight/.*|wix/MoonlightSetup/.*)$'
+          EDITED='^(app/backend/(nvpairingmanager|computermanager).(cpp|h)|app/gui/main.qml|app/main.cpp|app/app.pro|app/cli/commandlineparser.(cpp|h)|app/streaming/session.cpp|app/streaming/video/ffmpeg.cpp|app/streaming/video/overlaymanager.(cpp|h)|app/Info.plist|app/version.txt|app/deploy/.*|app/res/.*|scripts/build-arch.bat|.github/workflows/build(-appimage|-steamlink)?.yml|.github/dependabot.yml|app/gui/NavigableToolButton.qml|app/OmnuvClient.exe.manifest|scripts/(build-appimage.sh|build-steamlink-app.sh|generate-bundle.bat|generate-dmg.sh|generate-ico.sh)|wix/Moonlight/.*|wix/MoonlightSetup/.*)$'
 
           base=$(git merge-base HEAD upstream/master)
           echo "base: $base"
