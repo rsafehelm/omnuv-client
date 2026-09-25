@@ -197,6 +197,11 @@ public:
     // again: an unfinished attempt is abandoned first.
     Q_INVOKABLE void signIn();
     Q_INVOKABLE void cancelSignIn();
+    // **Signing in here, with the account's email and password** (the
+    // operator, 25 September 2026: approving in a browser is a web page, not
+    // the application). Answers through `status` and `signedIn`, as `signIn`
+    // does; the password is sent once and never kept.
+    Q_INVOKABLE void signInWithPassword(const QString& email, const QString& password);
 
     // Forgets the token on this device. The token stays valid until it is
     // revoked in the console, which is where taking access back belongs.
@@ -341,6 +346,7 @@ private:
     QPointer<QObject> m_pairManager;
     QString m_claimAttempt;
     QString m_claimDeployment;
+    void acceptToken(const QString& token);
     QVariantList m_offers;
     bool m_ordering = false;
     void setOrdering(bool ordering);

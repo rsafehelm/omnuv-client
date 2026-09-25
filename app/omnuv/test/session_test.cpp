@@ -653,8 +653,9 @@ private slots:
     }
 
     // The operator, 25 September 2026: a person is never asked for the
-    // address. The first screen has no field for one, and no address in
-    // its text: Sign in, and a link to choose another deployment.
+    // address. The first screen's only fields are the account's email and
+    // password, nothing on it reads or sets the address, and another
+    // deployment is a link.
     void theFirstScreenAsksForNoAddress() {
         QFile source("/src/app/omnuv/OmnuvView.qml"); QVERIFY(source.open(QIODevice::ReadOnly));
         const auto text=QString::fromUtf8(source.readAll());
@@ -662,7 +663,8 @@ private slots:
         const auto begin=text.indexOf(marker+"signed out"); QVERIFY(begin>=0);
         const auto end=text.indexOf("// ------",begin+marker.size()); QVERIFY(end>begin);
         const auto screen=text.mid(begin,end-begin);
-        QVERIFY2(!screen.contains("TextField"),"the signed-out screen has a text field");
+        QCOMPARE(screen.count("TextField {"),2);
+        QVERIFY(screen.contains("objectName: \"emailField\"") && screen.contains("objectName: \"passwordField\""));
         QVERIFY2(!screen.contains("Omnuv.coreUrl"),"the signed-out screen shows or sets the address");
         QVERIFY(screen.contains("objectName: \"anotherDeployment\"") && screen.contains("switchDeployment.open()"));
     }
@@ -727,6 +729,44 @@ private slots:
         QTRY_COMPARE(opened.pages.size(),3);
         QCOMPARE(opened.pages[2].toString(),QString("https://console.omnuv.com/connect?code=WXYZ-2345"));
         QDesktopServices::unsetUrlHandler("https");
+    }
+
+    // Signing in in the window (25 September 2026): the password goes to
+    // Core once, the answer is the device token, and it is kept as a browser
+    // approval's is. Wrong password, closed account, no answer and empty
+    // fields each say their own sentence and leave the window signed out.
+    void aPasswordSignsTheWindowIn() {
+        HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
+        s.m_token.clear(); QVERIFY(!s.signedIn());
+        const QByteArray path="/v1/auth/device/password";
+        s.signInWithPassword("  buyer@example.test ","pw");
+        QTRY_VERIFY(server.find(path)>=0); QVERIFY(s.busy());
+        const auto post=server.find(path); QCOMPARE(server.calls[post].method,QByteArray("POST"));
+        const auto body=QJsonDocument::fromJson(server.calls[post].body).object();
+        QCOMPARE(body["email"].toString(),QString("buyer@example.test"));
+        QCOMPARE(body["password"].toString(),QString("pw"));
+        QVERIFY(body["client"].toString().startsWith("Omnuv on "));
+        server.answer(post,200,R"({"token":"omnuv_pat_fixture","name":"Omnuv on a test"})");
+        QTRY_VERIFY(s.signedIn()); QVERIFY(!s.busy());
+        QCOMPARE(s.m_token,QString("omnuv_pat_fixture"));
+        QTRY_VERIFY(server.find("/v1/me")>=0);
+    }
+    void aRefusedPasswordSaysWhyAndStaysSignedOut() {
+        HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
+        s.m_token.clear();
+        const QByteArray path="/v1/auth/device/password";
+        s.signInWithPassword("buyer@example.test","wrong"); QTRY_VERIFY(server.find(path)>=0);
+        server.answer(server.find(path),401,"");
+        QTRY_VERIFY(!s.busy()); QVERIFY(!s.signedIn());
+        QCOMPARE(s.status(),QString("That email and password do not match."));
+        s.signInWithPassword("buyer@example.test","right"); QTRY_VERIFY(server.find(path,server.find(path)+1)>=0);
+        server.answer(server.find(path,server.find(path)+1),403,R"({"error":"this account has been closed"})");
+        QTRY_VERIFY(!s.busy()); QVERIFY(!s.signedIn());
+        QCOMPARE(s.status(),QString("Omnuv did not sign you in: this account has been closed."));
+        const int asked=server.count(path);
+        s.signInWithPassword("  ","x"); QCOMPARE(s.status(),QString("Enter your email and password."));
+        s.signInWithPassword("a@b.test",""); QTest::qWait(50); QCOMPARE(server.count(path),asked);
+        QVERIFY(!s.signedIn());
     }
 
     // The operator, 25 September 2026: a machine is created and torn down

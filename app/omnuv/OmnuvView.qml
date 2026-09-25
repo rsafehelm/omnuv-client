@@ -666,8 +666,7 @@ Item {
         Label {
             Layout.fillWidth: true
             visible: Omnuv.userCode === ""
-            text: qsTr("Your machines appear here once this device is approved. " +
-                       "You will not be asked for a password.")
+            text: qsTr("Use the email and password of your Omnuv account.")
             wrapMode: Text.WordWrap
             horizontalAlignment: Text.AlignHCenter
             font.family: Theme.textFamily
@@ -675,18 +674,64 @@ Item {
             opacity: 0.78
         }
 
-        // **No address on the first screen** (the operator, 25 September
-        // 2026: a URL is not something a person should be shown or asked
-        // for). Sign in goes to production unless another deployment was
-        // chosen, and choosing one is the link below, not a field here.
+        // **Signing in happens here** (the operator, 25 September 2026:
+        // approving in a browser is a web page, not the application). The
+        // password goes to Core once and is never kept; the device keeps the
+        // token Core answers, as it keeps the one a browser approval gives.
+        //
+        // **And still no address on this screen**: Sign in goes to production
+        // unless another deployment was chosen, and choosing one is the link
+        // below, not a field here.
+        TextField {
+            id: emailField
+            objectName: "emailField"
+            Layout.fillWidth: true
+            visible: Omnuv.userCode === ""
+            enabled: !Omnuv.busy
+            placeholderText: qsTr("Email")
+            Accessible.name: qsTr("Email")
+            inputMethodHints: Qt.ImhEmailCharactersOnly | Qt.ImhNoAutoUppercase
+            onAccepted: passwordField.forceActiveFocus()
+        }
+
+        TextField {
+            id: passwordField
+            objectName: "passwordField"
+            Layout.fillWidth: true
+            visible: Omnuv.userCode === ""
+            enabled: !Omnuv.busy
+            placeholderText: qsTr("Password")
+            Accessible.name: qsTr("Password")
+            echoMode: TextInput.Password
+            onAccepted: signInButton.clicked()
+        }
+
         Button {
+            id: signInButton
             objectName: "signInButton"
             Layout.alignment: Qt.AlignHCenter
             visible: Omnuv.userCode === ""
-            enabled: !Omnuv.busy
-            text: Omnuv.busy ? qsTr("Working…") : qsTr("Sign in")
+            enabled: !Omnuv.busy && emailField.text.trim() !== "" && passwordField.text !== ""
+            text: Omnuv.busy ? qsTr("Signing in…") : qsTr("Sign in")
+            Accessible.name: qsTr("Sign in")
             highlighted: true
             implicitWidth: Math.max(140, implicitContentWidth + leftPadding + rightPadding)
+            onClicked: {
+                Omnuv.signInWithPassword(emailField.text, passwordField.text)
+                // Not held by the window once it has been sent.
+                passwordField.text = ""
+            }
+        }
+
+        // The browser exchange stays, for whoever would rather not type a
+        // password into an application: the page opens with the code in it.
+        Button {
+            objectName: "signInWithBrowser"
+            Layout.alignment: Qt.AlignHCenter
+            visible: Omnuv.userCode === "" && !Omnuv.busy
+            flat: true
+            text: qsTr("Sign in with your browser instead")
+            font.pixelSize: Theme.captionSize
             onClicked: Omnuv.signIn()
         }
 

@@ -664,37 +664,94 @@ void OmnuvSession::poll()
             return;
         }
 
-        invalidateContext();
-        m_token = token;
-        // **A device that holds a token remembers the deployment it holds it
-        // for.** The address is otherwise persisted only by `setCoreUrl()` —
-        // which is a person typing it into the window — so a device signed in
-        // from a shell, where the address came from `OMNUV_CORE_URL`, forgot
-        // it the moment that process ended. The next run built its requests
-        // against an empty base, and `QNetworkAccessManager` failed them
-        // locally: nothing reached the network, and the client reported
-        // "Could not find your network" for an address it no longer had.
-        // Found on the rig on 16 September, by an access log that showed the
-        // request had never been made. Not for an address named for this run
-        // only: see setCoreUrlOverride.
-        //
-        // **The address first, and on disk, then the token (H15).** In the
-        // other order a crash between the two left the new Core's token in
-        // its slot and the old Core's address saved, and the next launch
-        // opened the old Core. This way round the worst case is the new
-        // address with no token yet, which asks for a sign-in: what it is.
-        if (!m_coreUrlOverridden && !m_fixture) {
-            remember(QStringLiteral("omnuv/coreUrl"), m_coreUrl);
-            QSettings().sync();
+        acceptToken(token);
+    });
+}
+
+// A token in hand, however it was got: the code the browser approved, or the
+// account's password typed here. Everything after that is one path.
+void OmnuvSession::acceptToken(const QString& token)
+{
+    invalidateContext();
+    m_token = token;
+    // **A device that holds a token remembers the deployment it holds it
+    // for.** The address is otherwise persisted only by `setCoreUrl()` —
+    // which is a person typing it into the window — so a device signed in
+    // from a shell, where the address came from `OMNUV_CORE_URL`, forgot
+    // it the moment that process ended. The next run built its requests
+    // against an empty base, and `QNetworkAccessManager` failed them
+    // locally: nothing reached the network, and the client reported
+    // "Could not find your network" for an address it no longer had.
+    // Found on the rig on 16 September, by an access log that showed the
+    // request had never been made. Not for an address named for this run
+    // only: see setCoreUrlOverride.
+    //
+    // **The address first, and on disk, then the token (H15).** In the
+    // other order a crash between the two left the new Core's token in
+    // its slot and the old Core's address saved, and the next launch
+    // opened the old Core. This way round the worst case is the new
+    // address with no token yet, which asks for a sign-in: what it is.
+    if (!m_coreUrlOverridden && !m_fixture) {
+        remember(QStringLiteral("omnuv/coreUrl"), m_coreUrl);
+        QSettings().sync();
+    }
+    saveToken(token);
+
+    clearPending();
+    emit signedInChanged();
+    setStatus(QString());
+
+    m_refreshTimer.start();
+    fetchIdentity();
+}
+
+void OmnuvSession::signInWithPassword(const QString& email, const QString& password)
+{
+    if (m_coreUrl.isEmpty() && !m_insecureCoreUrl.isEmpty()) {
+        setStatus(tr("%1 is not an https:// address, so Omnuv will not sign in there. Enter its https:// address.").arg(m_insecureCoreUrl));
+        return;
+    }
+    if (m_busy) return;
+    if (email.trimmed().isEmpty() || password.isEmpty()) {
+        setStatus(tr("Enter your email and password."));
+        return;
+    }
+    clearPending();
+    setBusy(true);
+    setStatus(tr("Signing in…"));
+    const auto context = m_context;
+    const QJsonObject body{
+        {QStringLiteral("email"), email.trimmed()},
+        {QStringLiteral("password"), password},
+        // Named as the browser exchange names it, so the console's list of
+        // signed-in devices reads the same whichever way it was done.
+        {QStringLiteral("client"), QStringLiteral("Omnuv on %1").arg(QSysInfo::prettyProductName())},
+    };
+    QNetworkReply* reply = m_net.post(request(QStringLiteral("/v1/auth/device/password"), false),
+                                      QJsonDocument(body).toJson(QJsonDocument::Compact));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, context]() {
+        reply->deleteLater();
+        setBusy(false);
+        if (context != m_context) return;
+        const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const auto o = QJsonDocument::fromJson(reply->readAll()).object();
+        const auto token = o.value(QStringLiteral("token")).toString();
+        if (code == 200 && !token.isEmpty()) {
+            acceptToken(token);
+            return;
         }
-        saveToken(token);
-
-        clearPending();
-        emit signedInChanged();
-        setStatus(QString());
-
-        m_refreshTimer.start();
-        fetchIdentity();
+        // Core's words for a closed account and for too many tries; one
+        // sentence for a wrong password or an unknown address, which Core
+        // answers alike on purpose.
+        const auto said = o.value(QStringLiteral("error")).toString().trimmed();
+        if (code == 401)
+            setStatus(tr("That email and password do not match."));
+        else if (code == 0 || code >= 500)
+            setStatus(tr("Omnuv could not be reached. Check your connection and try again."));
+        else if (!said.isEmpty())
+            setStatus(tr("Omnuv did not sign you in: %1.").arg(said));
+        else
+            setStatus(tr("Omnuv did not sign you in (%1).").arg(code));
     });
 }
 
