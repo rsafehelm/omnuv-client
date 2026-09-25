@@ -903,6 +903,22 @@ private slots:
         old.setValue("omnuv/coreUrl","https://api.test.omnuv.com"); old.sync();
         QVERIFY(!omnuvMoveSettingsOnce(old, now));
         QCOMPARE(now.value("omnuv/coreUrl").toString(),QString("https://api.omnuv.com"));
+        // Fallbacks do not count as settings (macOS reads the global domain
+        // into every QSettings, so a brand-new one never looked empty: the
+        // move was skipped on 9101). The same shape on any platform: an
+        // organization-wide file that the application's settings fall back to.
+        {
+            QTemporaryDir scoped; QVERIFY(scoped.isValid());
+            QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, scoped.path());
+            QSettings orgWide(QSettings::IniFormat, QSettings::UserScope, "OmnuvTest");
+            orgWide.setValue("global/locale", "en_GB"); orgWide.sync();
+            QSettings upstream(QSettings::IniFormat, QSettings::UserScope, "OldOrg", "OmnuvClient");
+            upstream.setValue("omnuv/coreUrl", "https://api.omnuv.com"); upstream.sync();
+            QSettings target(QSettings::IniFormat, QSettings::UserScope, "OmnuvTest", "OmnuvClient");
+            QVERIFY(!target.allKeys().isEmpty());   // what the check used to see
+            QVERIFY(omnuvMoveSettingsOnce(upstream, target));
+            QCOMPARE(target.value("omnuv/coreUrl").toString(), QString("https://api.omnuv.com"));
+        }
         // Nothing to move, nothing written.
         QSettings none(dir.filePath("none.ini"), QSettings::IniFormat), fresh(dir.filePath("fresh.ini"), QSettings::IniFormat);
         QVERIFY(!omnuvMoveSettingsOnce(none, fresh));

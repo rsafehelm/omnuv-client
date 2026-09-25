@@ -443,10 +443,11 @@ int main(int argc, char *argv[])
     // untouched and the About box still names them.
     QCoreApplication::setOrganizationName("Omnuv");
     // Omnuv's own domain since 25 September 2026: on macOS this names the
-    // settings (dev.omnuv.OmnuvClient, beside the bundle identifier in
-    // Info.plist). It was upstream's, moonlight-stream.com; the settings kept
-    // there are moved once, below (omnuv/settingsmove.h).
-    QCoreApplication::setOrganizationDomain("omnuv.dev");
+    // settings, com.omnuv.OmnuvClient. It was upstream's, moonlight-stream.com;
+    // the settings kept there are moved once, below (omnuv/settingsmove.h).
+    // Not omnuv.dev: Qt reverses only suffixes it knows, and made that one
+    // com.omnuv-dev (measured on rig 9101).
+    QCoreApplication::setOrganizationDomain("omnuv.com");
     QCoreApplication::setApplicationName("OmnuvClient");
 #ifdef Q_OS_DARWIN
     {
