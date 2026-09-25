@@ -80,7 +80,20 @@ chmod 0755 "$work/scripts/preinstall" "$work/scripts/postinstall"
 
 mkdir -p "$out"
 pkg="$out/OmnuvConnect-$version.pkg"
-pkgbuild --root "$root" --scripts "$work/scripts" --identifier dev.omnuv.connect \
-    --version "$version" --install-location / --ownership recommended "$pkg" >/dev/null
+# **Not relocatable** (25 September 2026). By default Installer "upgrades" a
+# bundle it finds registered anywhere with the same identifier, so on the lab
+# Mac, where the build tree's copy had been opened once, the install went into
+# ~/client/build/app and /Applications/Omnuv.app never existed. A person with
+# an older copy somewhere would have it replaced in place, wherever it is.
+pkgbuild --analyze --root "$root" "$work/components.plist" >/dev/null
+count=$(/usr/libexec/PlistBuddy -c 'Print' "$work/components.plist" | grep -c 'BundleIsRelocatable')
+[ "$count" -ge 1 ] || { echo "no bundle in the package to pin" >&2; exit 1; }
+i=0
+while [ "$i" -lt "$count" ]; do
+    /usr/libexec/PlistBuddy -c "Set :$i:BundleIsRelocatable false" "$work/components.plist"
+    i=$((i + 1))
+done
+pkgbuild --root "$root" --component-plist "$work/components.plist" --scripts "$work/scripts" \
+    --identifier dev.omnuv.connect --version "$version" --install-location / --ownership recommended "$pkg" >/dev/null
 echo "PKG=$pkg"
 echo "SIZE=$(du -h "$pkg" | cut -f1)"
