@@ -1201,7 +1201,7 @@ Item {
                         y: Math.max(0, (machineList.height - height) / 2 - 24)
                         icon: Theme.icon.game
                         title: qsTr("No machines yet")
-                        text: qsTr("Rent one in the Omnuv console and it appears here, ready to play.")
+                        text: qsTr("Choose Deploy a machine above, and it appears here, ready to play.")
                     }
 
                     // The cards arrive, one after another, rising a little as
