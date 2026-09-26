@@ -5,8 +5,8 @@
 // plan's own check — *feed every local probe a failure and assert no row is
 // green* — and a check that needs a Qt build, a window and a notification area
 // is a check nobody runs. So everything the icon decides is a pure function of
-// enumerated readings, and `.github/workflows/omnuv-change-budget.yml`
-// compiles this header with a bare `g++` and asserts on it on every push,
+// enumerated readings, and `app/omnuv/test/checks.sh`
+// compiles this header with a bare `g++` and asserts on it before a push,
 // off the rig and in a second.
 //
 // That is also why there is no QString here and no QObject: `tray.cpp` fills a

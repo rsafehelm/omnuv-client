@@ -12,7 +12,7 @@
 // the change budget, and it should not be: `CliQuitStreamSegue` pushes it for
 // the `quit` verb and expects upstream's behaviour, dialog included — and the
 // budget check pins that file as the one place upstream's numeric-code dialog
-// is referenced from, so editing it out would fail CI on the step that exists
+// is referenced from, so editing it out would fail the very check that exists
 // to keep that dialog away from buyers. The two share nothing but the seven
 // signals on `Session`, which is the contract that actually matters.
 //
@@ -277,7 +277,7 @@ Item {
         // An upstream release that adds a stage lands here. A plain sentence
         // and no invented cause — the stage name itself is in Details, which
         // is where somebody who can act on it will look.
-        // `.github/workflows/omnuv-change-budget.yml` fails the build when a
+        // `app/omnuv/test/checks.sh` fails when a
         // name in `stageNames[]` has no case above, so this should never be
         // reached in a shipped build.
         return { step: segue.rung, text: qsTr("Streaming to %1 stopped before it started.").arg(machineName), actions: [] }

@@ -93,7 +93,7 @@ namespace {
 // of that succeeded. The repository's own answer to a vocabulary that must not
 // drift across a boundary it cannot share is a pin — the launch ladder is
 // pinned against the web console's the same way — so
-// `.github/workflows/omnuv-change-budget.yml` extracts these six pairs from
+// `app/omnuv/test/checks.sh` extracts these six pairs from
 // `Theme.qml` and asserts they appear here.
 //
 // Light and dark are the *taskbar's*, not the window's: see

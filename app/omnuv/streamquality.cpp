@@ -22,7 +22,7 @@ using namespace OmnuvStreamQuality;
 //
 // Theme is a QML singleton and QML does not run during a stream, so these
 // cannot be read from it — they are copied, and
-// `.github/workflows/omnuv-change-budget.yml` fails the build when the copy
+// `app/omnuv/test/checks.sh` fails when the copy
 // and the original disagree. That check is the only thing that makes a mirror
 // safe; without it this is a second definition waiting to drift.
 //
@@ -382,8 +382,8 @@ void writePanel(const Sample& s, char* out, int len)
 // `SDL_LogInfo` on SDL_LOG_CATEGORY_APPLICATION reaches
 // %TEMP%\Moonlight-<epoch>.log through `sdlLogToDiskHandler` in app/main.cpp;
 // only the `list` action suppresses INFO, and `stream` is not `list`.
-// Never stdout: that channel belongs to `signin`, and the change-budget
-// workflow fails the build if this file writes to it.
+// Never stdout: that channel belongs to `signin`, and
+// app/omnuv/test/checks.sh fails if this file writes to it.
 void writeLogLine(const Sample& s, uint32_t elapsedS, double gapS, Verdict v)
 {
     char fps[32], host[32], rtt[32];

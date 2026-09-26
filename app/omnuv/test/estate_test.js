@@ -8,7 +8,7 @@ const path = require('path');
 const vm = require('vm');
 const assert = require('assert');
 
-// `ESTATE_JS` points at a deliberately broken copy when CI proves this can fail.
+// `ESTATE_JS` points at a deliberately broken copy when checks.sh proves this can fail.
 const src = fs.readFileSync(process.env.ESTATE_JS || path.join(__dirname, '..', 'estate.js'), 'utf8')
     .split('\n').filter((l) => !l.startsWith('.pragma') && !l.startsWith('.import')).join('\n');
 const E = {};

@@ -65,8 +65,8 @@ class OmnuvProbe;
 //     what they ask for is not interpretation. A row is a name Core sent, the
 //     status word Core chose, and a dot keyed on that word by the *same*
 //     grouping `MachineCard.qml` already uses — pinned against it in
-//     `.github/workflows/omnuv-change-budget.yml`, so there is exactly one
-//     grouping and the build fails if a second appears.
+//     `app/omnuv/test/checks.sh`, so there is exactly one
+//     grouping and the check fails if a second appears.
 //
 // What is still refused, because that is the half that was load-bearing: no
 // vocabulary of this application's own, nothing derived from a field Core did

@@ -4,7 +4,7 @@
 //
 // **Not part of the application.** It is deliberately absent from
 // `app/app.pro`, so qmake never sees it; it is compiled and run by
-// `.github/workflows/omnuv-change-budget.yml` on every push, and by anybody
+// `app/omnuv/test/checks.sh` before every push, and by anybody
 // who wants to, in one line and about a second:
 //
 //     g++ -std=c++17 -Iapp/omnuv app/omnuv/traystate_check.cpp -o /tmp/c && /tmp/c

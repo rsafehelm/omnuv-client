@@ -98,7 +98,7 @@
 // main.cpp's doing and it is why this works at all. Upstream's `list` writes to
 // stdout too, but it is a different action and cannot be running; within
 // app/omnuv/ this file is the only writer, which is checked rather than
-// remembered by the step in .github/workflows/omnuv-change-budget.yml.
+// remembered by a step in app/omnuv/test/checks.sh.
 
 namespace OmnuvSignIn
 {

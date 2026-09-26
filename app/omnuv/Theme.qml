@@ -364,9 +364,8 @@ QtObject {
     // **A view never carries the code point itself.** A private-use character
     // pasted into a QML file is invisible to whoever reviews the diff, is not
     // greppable, and cannot be told apart from the next one along; the name is
-    // the only part of it a person can check. `.github/workflows/
-    // omnuv-change-budget.yml` fails the build if one appears outside this
-    // file.
+    // the only part of it a person can check. `app/omnuv/test/checks.sh`
+    // fails if one appears outside this file.
     //
     // Each name below is Microsoft's own name for that glyph, kept verbatim in
     // the comment where ours differs, because the documentation is indexed by

@@ -11,7 +11,7 @@
 //         -o /tmp/sqt app/omnuv/test/streamquality_test.cpp && /tmp/sqt
 //
 // It is not in app.pro and never ships: that file lists its sources one by one.
-// `.github/workflows/omnuv-change-budget.yml` builds and runs it.
+// `app/omnuv/test/checks.sh` builds and runs it.
 //
 // Everything worth testing is in the anonymous namespace of the file under
 // test, which is why it is included as source rather than linked. What the

@@ -83,8 +83,8 @@ struct Machine
     // This is the same grouping `MachineCard.qml`'s `statusColour()` makes,
     // and it has to stay the same grouping: a machine whose card is amber and
     // whose tray row is red is the client telling a person two things about
-    // one machine. `.github/workflows/omnuv-change-budget.yml` pins the two
-    // against each other and fails the build if they drift.
+    // one machine. `app/omnuv/test/checks.sh` pins the two
+    // against each other and fails if they drift.
     //
     // It is a *grouping*, not an interpretation — every word here is one Core
     // sends, and nothing is derived from a field Core did not set. That is the
