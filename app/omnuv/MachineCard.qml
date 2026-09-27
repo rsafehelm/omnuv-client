@@ -55,6 +55,11 @@ ItemDelegate {
     signal settingsRequested()
     signal deleteRequested()
 
+    // Protected against deletion: Core's `protected` (0195), read so the
+    // view's confirmation can say so when this card asks for its machine to
+    // go. An older Core sends nothing, which is not protected.
+    readonly property bool deletionProtected: model.protected === true
+
     onClicked: if (model.ready) card.primaryActivated()
 
     // ---- The evidence, named once ---------------------------------------
@@ -604,7 +609,8 @@ ItemDelegate {
                         }
 
                         // Asks first: the window's confirmation names what
-                        // goes with the machine.
+                        // goes with the machine and, for a protected one
+                        // (`deletionProtected`), that confirming clears it.
                         MenuItem {
                             objectName: "deleteMachine"
                             text: qsTr("Delete machine…")

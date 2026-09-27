@@ -1723,18 +1723,26 @@ void OmnuvSession::deploy(const QString& recipe, const QString& name, const QStr
     });
 }
 
-void OmnuvSession::deleteMachine(int row)
+void OmnuvSession::deleteMachine(int row, const QString& confirmed, bool unprotect)
 {
     if (!signedIn() || m_ordering) return;
     const auto id = m_machines->idAt(row);
     const auto name = m_machines->data(m_machines->index(row), MachineModel::NameRole).toString();
     if (id.isEmpty()) return;
+    if (name != confirmed) {
+        emit deleteFinished(false, tr("The list changed while you were deciding, so nothing was deleted. Ask again to delete %1.").arg(confirmed));
+        return;
+    }
+    // A machine protected since the dialog opened was not named as protected
+    // to the person, so Core refuses it in its own words rather than this
+    // clearing it unseen.
+    const bool clear = unprotect && m_machines->protectedAt(row);
     setOrdering(true);
     const auto context = m_context;
     // The instance view names no deployment; the deployment view names its
     // instance (see MachineModel::idAt).
     auto reply = m_net.get(request(QStringLiteral("/v1/deployments") + projectQuery(), true));
-    connect(reply, &QNetworkReply::finished, this, [this, reply, id, name, context]() {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, id, name, clear, context]() {
         reply->deleteLater();
         if (context != m_context) { setOrdering(false); return; }
         if (reply->error() != QNetworkReply::NoError) {
@@ -1745,15 +1753,17 @@ void OmnuvSession::deleteMachine(int row)
         QString deployment;
         for (const auto& value : QJsonDocument::fromJson(reply->readAll()).array())
             if (value.toObject().value("instance_id").toString() == id) deployment = value.toObject().value("id").toString();
-        removeAt(deployment.isEmpty() ? QStringLiteral("/v1/instances/%1").arg(id)
-                                      : QStringLiteral("/v1/deployments/%1").arg(deployment), name);
+        if (deployment.isEmpty()) removeAt(QStringLiteral("/v1/instances/%1").arg(id), name, clear);
+        else removeAt(QStringLiteral("/v1/deployments/%1").arg(deployment), name);
     });
 }
 
-void OmnuvSession::removeAt(const QString& path, const QString& name)
+void OmnuvSession::removeAt(const QString& path, const QString& name, bool unprotect)
 {
     const auto context = m_context;
-    auto reply = m_net.deleteResource(request(path + projectQuery(), true));
+    auto query = projectQuery();
+    if (unprotect) query += (query.isEmpty() ? QStringLiteral("?") : QStringLiteral("&")) + QStringLiteral("unprotect=true");
+    auto reply = m_net.deleteResource(request(path + query, true));
     connect(reply, &QNetworkReply::finished, this, [this, reply, name, context]() {
         reply->deleteLater();
         setOrdering(false);

@@ -224,7 +224,14 @@ public:
     // from a recipe is removed as that deployment, so its login and its GPU go
     // with it; any other is removed as an instance. Answers on
     // `deleteFinished`.
-    Q_INVOKABLE void deleteMachine(int row);
+    //
+    // `name` is the machine the person confirmed: the list refreshes under an
+    // open dialog, and a row that holds another machine by now deletes
+    // nothing. `unprotect` says the confirmation named the machine's
+    // protection (Core's `protected`, 0195): only then, and only while the
+    // machine is protected, does an instance's delete ask Core to clear it. A
+    // deployment's removal clears it in Core and carries nothing.
+    Q_INVOKABLE void deleteMachine(int row, const QString& name, bool unprotect);
     QVariantList offers() const { return m_offers; }
     bool ordering() const { return m_ordering; }
 
@@ -350,7 +357,7 @@ private:
     QVariantList m_offers;
     bool m_ordering = false;
     void setOrdering(bool ordering);
-    void removeAt(const QString& path, const QString& name);
+    void removeAt(const QString& path, const QString& name, bool unprotect = false);
 
     void poll();
     void collect();

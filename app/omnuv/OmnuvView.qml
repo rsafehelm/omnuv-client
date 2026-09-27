@@ -492,8 +492,15 @@ Item {
         title: qsTr("Delete %1?").arg(targetName)
         property int row: -1
         property string targetName: ""
+        // Core's `protected` (0195), as the card had it when this opened. Said
+        // in the console's words, and only this confirmation asks Core to
+        // clear it.
+        property bool targetProtected: false
         contentItem: Label {
             text: qsTr("The machine and everything on it are taken away, and its graphics card goes back on sale. This cannot be undone.")
+                  + (deleteMachine.targetProtected
+                     ? " " + qsTr("It is protected against deletion: confirming clears that protection and deletes it.")
+                     : "")
             wrapMode: Text.WordWrap
         }
         footer: DialogButtonBox {
@@ -508,7 +515,7 @@ Item {
                 DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
             }
         }
-        onAccepted: Omnuv.deleteMachine(row)
+        onAccepted: Omnuv.deleteMachine(row, targetName, targetProtected)
     }
 
     Dialog {
@@ -1310,6 +1317,7 @@ Item {
                         onDeleteRequested: {
                             deleteMachine.row = index
                             deleteMachine.targetName = name
+                            deleteMachine.targetProtected = deletionProtected
                             deleteMachine.open()
                         }
                     }

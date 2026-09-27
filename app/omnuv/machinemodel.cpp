@@ -103,6 +103,7 @@ QVariant MachineModel::data(const QModelIndex& index, int role) const
     case ObservedRole:            return m.observed;
     case ObservedAtRole:          return m.observedAt;
     case ObservationCompleteRole: return m.observationComplete;
+    case ProtectedRole:           return m.deletionProtected;
     // Running *and* reachable. A machine Core has not yet given a private name
     // has no address to connect to, and a Connect button that opens nothing is
     // worse than one that is plainly disabled.
@@ -131,6 +132,7 @@ QHash<int, QByteArray> MachineModel::roleNames() const
         { ObservedRole,             "observed" },
         { ObservedAtRole,           "observedAt" },
         { ObservationCompleteRole,  "observationComplete" },
+        { ProtectedRole,            "protected" },
         { ReadyRole,     "ready" },
     };
 }
@@ -168,6 +170,7 @@ void MachineModel::replace(const QJsonArray& machines)
         m.host = o["private_name"].toString();
         m.privateIp = o["private_ip"].toString();
         m.lastError = o["last_error"].toString();
+        m.deletionProtected = o["protected"].toBool();
 
         // Both objects are omitted entirely when Core has nothing to say, so
         // the test is on the object and not on a field inside it. Core builds
@@ -314,6 +317,11 @@ Machine::Health MachineModel::healthAt(int row) const
 {
     return (row >= 0 && row < m_machines.count()) ? m_machines.at(row).health()
                                                   : Machine::Health::Bad;
+}
+
+bool MachineModel::protectedAt(int row) const
+{
+    return (row >= 0 && row < m_machines.count()) && m_machines.at(row).deletionProtected;
 }
 
 QString MachineModel::nameAt(int row) const

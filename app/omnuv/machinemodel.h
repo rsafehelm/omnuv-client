@@ -76,6 +76,12 @@ struct Machine
     QDateTime observedAt;
     bool observationComplete = false;
 
+    // Protected against deletion: Core's `protected` (migration 0195, D26).
+    // Core refuses its delete unless the owner confirms, so the view's
+    // confirmation says so, and only then asks Core to clear it. An older
+    // Core sends nothing, which is not protected.
+    bool deletionProtected = false;
+
     bool streamed() const { return !streamApp.isEmpty(); }
 
     // **Core's seven words, grouped into the four things a dot can mean.**
@@ -132,6 +138,8 @@ public:
         ObservedRole,
         ObservedAtRole,
         ObservationCompleteRole,
+        // `protected` to QML, as Core names it.
+        ProtectedRole,
         // True when this machine can be connected to right now. A stopped or
         // starting machine is shown, and shown as unreachable, rather than
         // hidden — somebody who cannot find their machine assumes it is lost.
@@ -161,6 +169,10 @@ public:
     // `MachineCard.qml`'s own switch on the same words and does not need a
     // second way to ask, and the tray is C++.
     Machine::Health healthAt(int row) const;
+
+    // Whether the machine in `row` is protected now. C++-only: OmnuvSession
+    // asks it when a confirmed delete is sent; QML reads the role.
+    bool protectedAt(int row) const;
 
     Q_INVOKABLE QString nameAt(int row) const;
     Q_INVOKABLE QString hostAt(int row) const;

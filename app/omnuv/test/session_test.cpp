@@ -832,7 +832,7 @@ private slots:
             QJsonObject{{"id","i-1"},{"name","steam"},{"status","Running"}},
             QJsonObject{{"id","i-2"},{"name","plain"},{"status","Running"}}});
         QSignalSpy done(&s,&OmnuvSession::deleteFinished);
-        s.deleteMachine(0);
+        s.deleteMachine(0,"steam",false);
         QTRY_VERIFY(server.find("/v1/deployments?project=a")>=0);
         server.answer(server.find("/v1/deployments?project=a"),200,R"([{"id":"d-9","instance_id":"i-7"},{"id":"d-1","instance_id":"i-1"}])");
         QTRY_VERIFY(server.find("/v1/deployments/d-1?project=a")>=0);
@@ -842,7 +842,7 @@ private slots:
         server.answer(del,202,"{}");
         QTRY_COMPARE(done.size(),1); QVERIFY(done[0][0].toBool()); QVERIFY(done[0][1].toString().contains("steam"));
         const auto second=server.find("/v1/deployments?project=a",server.find("/v1/deployments?project=a")+1);
-        s.deleteMachine(1);
+        s.deleteMachine(1,"plain",false);
         QTRY_VERIFY(server.count("/v1/deployments?project=a")>=2);
         server.answer(server.find("/v1/deployments?project=a",server.find("/v1/deployments?project=a")+1),200,R"([{"id":"d-1","instance_id":"i-1"}])");
         QTRY_VERIFY(server.find("/v1/instances/i-2?project=a")>=0);
