@@ -852,6 +852,127 @@ private slots:
         QTRY_COMPARE(done.size(),2); QVERIFY(done[1][0].toBool());
         Q_UNUSED(second);
     }
+    // Core's `protected` (0195, D26) reaches the card as `protected`. An older
+    // Core sends nothing, which is not protected.
+    void theCardReadsProtectionFromTheView() {
+        MachineModel m;
+        m.replace(QJsonArray{
+            QJsonObject{{"id","i-1"},{"name","kept"},{"status","Running"},{"protected",true}},
+            QJsonObject{{"id","i-2"},{"name","loose"},{"status","Running"},{"protected",false}},
+            QJsonObject{{"id","i-3"},{"name","older"},{"status","Running"}}});
+        const int role=m.roleNames().key("protected",-1); QVERIFY2(role>=0,"no role named protected");
+        QCOMPARE(m.data(m.index(0),role),QVariant(true));
+        QCOMPARE(m.data(m.index(1),role),QVariant(false));
+        QCOMPARE(m.data(m.index(2),role),QVariant(false));
+    }
+    // A protected machine goes only with its owner's confirmation, and only a
+    // protected one asks Core to clear it: `unprotect=true` when the person
+    // confirmed a protected machine and the machine is protected now. A
+    // recipe's machine goes as its deployment, whose removal clears it in
+    // Core, and that request carries nothing.
+    void aProtectedMachineGoesOnlyWithItsOwnersConfirmation_data() {
+        QTest::addColumn<bool>("isProtected"); QTest::addColumn<bool>("confirmed");
+        QTest::addColumn<QString>("project"); QTest::addColumn<QByteArray>("deployments");
+        QTest::addColumn<QByteArray>("path");
+        const QByteArray none=R"([{"id":"d-9","instance_id":"i-7"}])", made=R"([{"id":"d-1","instance_id":"i-1"}])";
+        QTest::newRow("protected, confirmed")<<true<<true<<"a"<<none<<QByteArray("/v1/instances/i-1?project=a&unprotect=true");
+        QTest::newRow("protected, confirmed, default project")<<true<<true<<""<<none<<QByteArray("/v1/instances/i-1?unprotect=true");
+        QTest::newRow("not protected")<<false<<false<<"a"<<none<<QByteArray("/v1/instances/i-1?project=a");
+        QTest::newRow("not protected, the dialog said it was")<<false<<true<<"a"<<none<<QByteArray("/v1/instances/i-1?project=a");
+        QTest::newRow("protected, not told")<<true<<false<<"a"<<none<<QByteArray("/v1/instances/i-1?project=a");
+        QTest::newRow("protected, from a recipe")<<true<<true<<"a"<<made<<QByteArray("/v1/deployments/d-1?project=a");
+    }
+    void aProtectedMachineGoesOnlyWithItsOwnersConfirmation() {
+        QFETCH(bool,isProtected); QFETCH(bool,confirmed); QFETCH(QString,project);
+        QFETCH(QByteArray,deployments); QFETCH(QByteArray,path);
+        HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s); s.m_projectId=project;
+        const QByteArray list="/v1/deployments"+(project.isEmpty() ? QByteArray() : "?project="+project.toLatin1());
+        s.m_machines->replace(QJsonArray{QJsonObject{{"id","i-1"},{"name","kept"},{"status","Running"},{"protected",isProtected}}});
+        QSignalSpy done(&s,&OmnuvSession::deleteFinished);
+        QVERIFY(QMetaObject::invokeMethod(&s,"deleteMachine",Q_ARG(int,0),Q_ARG(QString,QStringLiteral("kept")),Q_ARG(bool,confirmed)));
+        QTRY_VERIFY(server.find(list)>=0); server.answer(server.find(list),200,deployments);
+        QTRY_VERIFY(server.find(path)>=0);
+        QTest::qWait(50);
+        int deletes=0; for (const auto& call:server.calls) if (call.method=="DELETE") ++deletes;
+        QCOMPARE(deletes,1); QCOMPARE(server.calls[server.find(path)].method,QByteArray("DELETE"));
+        server.answer(server.find(path),202,"{}");
+        QTRY_COMPARE(done.size(),1); QVERIFY(done[0][0].toBool());
+    }
+    // Core refuses a protected machine's delete that did not ask to clear it,
+    // and says why (409). The person reads Core's sentence, not a code.
+    void aRefusedDeleteSaysCoresReason() {
+        HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
+        s.m_machines->replace(QJsonArray{QJsonObject{{"id","i-1"},{"name","kept"},{"status","Running"},{"protected",true}}});
+        QSignalSpy done(&s,&OmnuvSession::deleteFinished);
+        QVERIFY(QMetaObject::invokeMethod(&s,"deleteMachine",Q_ARG(int,0),Q_ARG(QString,QStringLiteral("kept")),Q_ARG(bool,false)));
+        QTRY_VERIFY(server.find("/v1/deployments?project=a")>=0);
+        server.answer(server.find("/v1/deployments?project=a"),200,"[]");
+        QTRY_VERIFY(server.find("/v1/instances/i-1?project=a")>=0);
+        const QString said="this machine is protected against deletion; delete it with unprotect=true to clear its protection and remove it";
+        server.answer(server.find("/v1/instances/i-1?project=a"),409,QJsonDocument(QJsonObject{{"error",said}}).toJson());
+        QTRY_COMPARE(done.size(),1); QVERIFY(!done[0][0].toBool());
+        QCOMPARE(done[0][1].toString(),said); QVERIFY(!s.ordering());
+    }
+    // The confirmation is for the machine it named. The list refreshes under
+    // an open dialog, so the row it was opened on can hold another machine by
+    // the time it is accepted; nothing is asked of Core then.
+    void aConfirmationIsForTheMachineItNamed() {
+        HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
+        s.m_machines->replace(QJsonArray{QJsonObject{{"id","i-2"},{"name","other"},{"status","Running"},{"protected",true}}});
+        QSignalSpy done(&s,&OmnuvSession::deleteFinished);
+        QVERIFY(QMetaObject::invokeMethod(&s,"deleteMachine",Q_ARG(int,0),Q_ARG(QString,QStringLiteral("kept")),Q_ARG(bool,true)));
+        QTRY_COMPARE(done.size(),1); QVERIFY(!done[0][0].toBool());
+        QVERIFY2(done[0][1].toString().contains("kept"),qPrintable(done[0][1].toString()));
+        QTest::qWait(50);
+        QCOMPARE(server.find("/v1/deployments?project=a"),-1);
+        for (const auto& call:server.calls) QVERIFY(call.method!="DELETE");
+        QVERIFY(!s.ordering());
+    }
+    // The confirmation itself, rendered on its own: it names the protection
+    // in the console's words for a protected machine and for no other, and
+    // only a confirmation that named it asks Core to clear it.
+    void theDeleteDialogNamesTheProtectionAndOnlyThenClearsIt() {
+        HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
+        s.m_machines->replace(QJsonArray{
+            QJsonObject{{"id","i-1"},{"name","kept"},{"status","Running"},{"protected",true}},
+            QJsonObject{{"id","i-2"},{"name","loose"},{"status","Running"},{"protected",false}}});
+        QFile source("/src/app/omnuv/OmnuvView.qml"); QVERIFY(source.open(QIODevice::ReadOnly));
+        const auto text=QString::fromUtf8(source.readAll());
+        const auto begin=text.indexOf("    // Taking a machine away");
+        const auto end=text.indexOf("    Dialog {",text.indexOf("    Dialog {",begin)+1); QVERIFY(begin>=0 && end>begin);
+        auto dialog=text.mid(begin,end-begin).replace("Omnuv.","sample.");
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::Software); QQuickView view;
+        view.engine()->rootContext()->setContextProperty("sample",&s); QQmlComponent component(view.engine());
+        component.setData(("import QtQuick\nimport QtQuick.Controls\nimport QtQuick.Layouts\nRectangle { id: root; width: 900; height: 500; color: \"white\"\n"+dialog+"\n}").toUtf8(),QUrl("qrc:/omnuv/DeleteTest.qml"));
+        QTRY_VERIFY_WITH_TIMEOUT(!component.isLoading(),2000); QVERIFY2(component.isReady(),qPrintable(component.errorString()));
+        auto object=component.create(); QVERIFY2(object,qPrintable(component.errorString()));
+        view.setContent(QUrl("qrc:/omnuv/DeleteTest.qml"),&component,object); view.show();
+        auto popup=object->findChild<QObject*>("deleteMachineDialog"); QVERIFY(popup);
+        const QString guard="It is protected against deletion: confirming clears that protection and deletes it.";
+        auto says=[popup]() { auto body=popup->property("contentItem").value<QObject*>(); return body ? body->property("text").toString() : QString(); };
+        QSignalSpy done(&s,&OmnuvSession::deleteFinished);
+        const QByteArray list="/v1/deployments?project=a";
+
+        popup->setProperty("row",0); popup->setProperty("targetName",QStringLiteral("kept")); popup->setProperty("targetProtected",true);
+        QVERIFY(QMetaObject::invokeMethod(popup,"open")); QTRY_VERIFY(popup->property("visible").toBool());
+        QVERIFY2(says().contains(guard),qPrintable(says()));
+        QTest::qWait(100);
+        auto shot=view.grabWindow(); QVERIFY(!shot.isNull());
+        QVERIFY(shot.save(qEnvironmentVariable("OMNUV_TEST_ARTIFACT_DIR",QDir::tempPath())+"/delete-protected.png"));
+        QVERIFY(QMetaObject::invokeMethod(popup,"accept"));
+        QTRY_VERIFY(server.find(list)>=0); server.answer(server.find(list),200,"[]");
+        QTRY_VERIFY(server.find("/v1/instances/i-1?project=a&unprotect=true")>=0);
+        server.answer(server.find("/v1/instances/i-1?project=a&unprotect=true"),202,"{}");
+        QTRY_COMPARE(done.size(),1);
+
+        popup->setProperty("row",1); popup->setProperty("targetName",QStringLiteral("loose")); popup->setProperty("targetProtected",false);
+        QVERIFY(QMetaObject::invokeMethod(popup,"open")); QTRY_VERIFY(popup->property("visible").toBool());
+        QVERIFY2(!says().contains("protected"),qPrintable(says()));
+        QVERIFY(QMetaObject::invokeMethod(popup,"accept"));
+        QTRY_COMPARE(server.count(list),2); server.answer(server.find(list,server.find(list)+1),200,"[]");
+        QTRY_VERIFY(server.find("/v1/instances/i-2?project=a")>=0);
+        QCOMPARE(server.count("/v1/instances/i-2?project=a&unprotect=true"),0);
+    }
     // The dialog itself, rendered on its own: it reads the offers when it
     // opens, chooses the one there is, and Deploy sends the card it shows.
     void theDeployDialogSendsWhatItShows() {
