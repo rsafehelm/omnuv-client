@@ -1692,7 +1692,7 @@ void OmnuvSession::loadOffers()
     });
 }
 
-void OmnuvSession::deploy(const QString& recipe, const QString& name, const QString& gpuModel)
+void OmnuvSession::deploy(const QString& recipe, const QString& name, const QString& gpuModel, int count)
 {
     if (!signedIn() || m_ordering) return;
     const auto trimmed = name.trimmed();
@@ -1700,22 +1700,39 @@ void OmnuvSession::deploy(const QString& recipe, const QString& name, const QStr
         emit deployFinished(false, tr("Give the machine a name."));
         return;
     }
+    if (count < 1) {
+        emit deployFinished(false, tr("Ask for at least one machine."));
+        return;
+    }
     QJsonObject body{{"name", trimmed}};
     if (!gpuModel.isEmpty()) body.insert("gpu", QJsonObject{{"model", gpuModel}, {"count", 1}});
+    // One machine is a recipe deployed alone. More are a group, held whole and
+    // started together (Core's machine groups): all of them or none, so a
+    // refusal leaves nothing behind to clean up.
+    const bool group = count > 1;
+    QString path = QStringLiteral("/v1/recipes/%1/deploy").arg(recipe);
+    if (group) {
+        body.insert("count", count);
+        body.insert("recipe", recipe);
+        path = QStringLiteral("/v1/instance-groups");
+    }
     setOrdering(true);
     const auto context = m_context;
-    auto reply = m_net.post(request(QStringLiteral("/v1/recipes/%1/deploy").arg(recipe) + projectQuery(), true),
-                            QJsonDocument(body).toJson(QJsonDocument::Compact));
-    connect(reply, &QNetworkReply::finished, this, [this, reply, trimmed, context]() {
+    auto reply = m_net.post(request(path + projectQuery(), true), QJsonDocument(body).toJson(QJsonDocument::Compact));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, trimmed, count, group, context]() {
         reply->deleteLater();
         setOrdering(false);
         if (context != m_context) return;
         const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const auto bytes = reply->readAll();
         if (code == 200 || code == 201) {
-            emit deployFinished(true, tr("%1 is on its way. It appears here once its provider has it running.").arg(trimmed));
+            emit deployFinished(true, group
+                ? tr("%1 machines, %2-1 to %2-%1, are held together and start at the same time. They appear here once their provider has them running.").arg(count).arg(trimmed)
+                : tr("%1 is on its way. It appears here once its provider has it running.").arg(trimmed));
         } else if (code == 0) {
-            emit deployFinished(false, tr("Omnuv did not answer, so %1 may or may not exist. Wait for the list to refresh before deploying again.").arg(trimmed));
+            emit deployFinished(false, group
+                ? tr("Omnuv did not answer, so the %1 machines named %2 may or may not exist. Wait for the list to refresh before deploying again.").arg(count).arg(trimmed)
+                : tr("Omnuv did not answer, so %1 may or may not exist. Wait for the list to refresh before deploying again.").arg(trimmed));
         } else {
             emit deployFinished(false, refusalOf(reply, bytes));
         }

@@ -383,10 +383,12 @@ Item {
             recipe = offer.id
             deployName.text = offer.id.split("-")[0]
             gpuChoice.currentIndex = 0
+            deployCount.value = 1
         }
         onAboutToShow: {
             recipe = ""
             deployName.text = ""
+            deployCount.value = 1
             Omnuv.loadOffers()
         }
         Connections {
@@ -437,6 +439,31 @@ Item {
                 Accessible.name: qsTr("Machine name")
                 maximumLength: 48
             }
+            RowLayout {
+                Layout.fillWidth: true
+                visible: deployMachine.chosen !== null
+                spacing: Theme.spacing
+                Label {
+                    text: qsTr("How many")
+                    Layout.fillWidth: true
+                }
+                SpinBox {
+                    id: deployCount
+                    objectName: "deployCount"
+                    from: 1
+                    to: 16
+                    editable: true
+                    Accessible.name: qsTr("How many machines")
+                }
+            }
+            Label {
+                Layout.fillWidth: true
+                visible: deployCount.value > 1
+                text: qsTr("They are held together and start at the same time, or none of them does. Named %1-1 to %1-%2.")
+                          .arg(deployName.text.trim()).arg(deployCount.value)
+                wrapMode: Text.WordWrap
+                opacity: 0.78
+            }
             ComboBox {
                 id: gpuChoice
                 objectName: "gpuChoice"
@@ -473,7 +500,7 @@ Item {
             var gpu = ""
             if (chosen && chosen.gpu !== "none" && freeGpus.length > 0)
                 gpu = freeGpus[Math.max(0, gpuChoice.currentIndex)].model
-            Omnuv.deploy(recipe, deployName.text, gpu)
+            Omnuv.deploy(recipe, deployName.text, gpu, deployCount.value)
         }
     }
 

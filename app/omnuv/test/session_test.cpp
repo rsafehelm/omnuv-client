@@ -793,9 +793,9 @@ private slots:
         HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
         offersAreThePrivateRecipesWithTheGpusOnSale(server,s); if (QTest::currentTestFailed()) return;
         QSignalSpy done(&s,&OmnuvSession::deployFinished);
-        s.deploy("steam-gaming"," steam ","RTX 3090");
+        s.deploy("steam-gaming"," steam ","RTX 3090",1);
         QVERIFY(s.ordering());
-        s.deploy("steam-gaming","steam","RTX 3090");   // a second press while one is out is not a second machine
+        s.deploy("steam-gaming","steam","RTX 3090",1);   // a second press while one is out is not a second machine
         const QByteArray path="/v1/recipes/steam-gaming/deploy?project=a";
         QTRY_VERIFY(server.find(path)>=0); QTest::qWait(50); QCOMPARE(server.count(path),1);
         const auto post=server.find(path); QCOMPARE(server.calls[post].method,QByteArray("POST"));
@@ -808,19 +808,47 @@ private slots:
         QTRY_COMPARE(done.size(),1); QVERIFY(done[0][0].toBool()); QVERIFY(!s.ordering());
         QVERIFY(done[0][1].toString().contains("steam"));
     }
+    // "How many" above one is a group, held whole: the recipe rides in the
+    // request, and the machines' names are the name, numbered.
+    void aDeployOfSeveralIsAGroupOfTheRecipe() {
+        HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
+        QSignalSpy done(&s,&OmnuvSession::deployFinished);
+        const QByteArray path="/v1/instance-groups?project=a";
+        s.deploy("steam-gaming","steam","RTX 3090",3); QVERIFY(s.ordering());
+        QTRY_VERIFY(server.find(path)>=0);
+        QCOMPARE(server.count("/v1/recipes/steam-gaming/deploy?project=a"),0);
+        const auto post=server.find(path); QCOMPARE(server.calls[post].method,QByteArray("POST"));
+        const auto body=QJsonDocument::fromJson(server.calls[post].body).object();
+        QCOMPARE(body["recipe"].toString(),QString("steam-gaming"));
+        QCOMPARE(body["name"].toString(),QString("steam"));
+        QCOMPARE(body["count"].toInt(),3);
+        QCOMPARE(body["gpu"].toObject()["model"].toString(),QString("RTX 3090"));
+        QCOMPARE(body["gpu"].toObject()["count"].toInt(),1);
+        QVERIFY(!body.contains("vcpus") && !body.contains("image"));   // the recipe's, never the client's
+        server.answer(post,201,R"({"id":"g-1","phase":"holding","count":3})");
+        QTRY_COMPARE(done.size(),1); QVERIFY(done[0][0].toBool()); QVERIFY(!s.ordering());
+        QVERIFY2(done[0][1].toString().contains("steam-1") && done[0][1].toString().contains("steam-3"),qPrintable(done[0][1].toString()));
+        // Refused whole, in Core's words; and a count below one is not sent.
+        s.deploy("steam-gaming","steam","RTX 3090",2); QTRY_VERIFY(server.find(path,post+1)>=0);
+        server.answer(server.find(path,post+1),400,R"({"error":"groups of machines are not offered yet"})");
+        QTRY_COMPARE(done.size(),2); QVERIFY(!done[1][0].toBool());
+        QCOMPARE(done[1][1].toString(),QString("groups of machines are not offered yet"));
+        s.deploy("steam-gaming","steam","RTX 3090",0);
+        QCOMPARE(done.size(),3); QVERIFY(!done[2][0].toBool());
+    }
     void aRefusedOrUnansweredDeploySaysSo() {
         HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
         QSignalSpy done(&s,&OmnuvSession::deployFinished);
         const QByteArray path="/v1/recipes/steam-gaming/deploy?project=a";
-        s.deploy("steam-gaming","steam","RTX 3090"); QTRY_VERIFY(server.find(path)>=0);
+        s.deploy("steam-gaming","steam","RTX 3090",1); QTRY_VERIFY(server.find(path)>=0);
         server.answer(server.find(path),409,R"({"error":"No RTX 3090 is free right now."})");
         QTRY_COMPARE(done.size(),1); QVERIFY(!done[0][0].toBool());
         QCOMPARE(done[0][1].toString(),QString("No RTX 3090 is free right now."));
-        s.deploy("steam-gaming","steam","RTX 3090"); QTRY_VERIFY(server.find(path,server.find(path)+1)>=0);
+        s.deploy("steam-gaming","steam","RTX 3090",1); QTRY_VERIFY(server.find(path,server.find(path)+1)>=0);
         server.calls[server.find(path,server.find(path)+1)].socket->abort();
         QTRY_COMPARE(done.size(),2); QVERIFY(!done[1][0].toBool());
         QVERIFY2(done[1][1].toString().contains("may or may not exist"),qPrintable(done[1][1].toString()));
-        s.deploy("steam-gaming","  ","RTX 3090");
+        s.deploy("steam-gaming","  ","RTX 3090",1);
         QCOMPARE(done.size(),3); QVERIFY(!done[2][0].toBool());
     }
     // A machine from a recipe goes as its deployment, so its login and card go
@@ -998,10 +1026,19 @@ private slots:
         QTest::qWait(100);
         auto shot=view.grabWindow(); QVERIFY(!shot.isNull());
         QVERIFY(shot.save(qEnvironmentVariable("OMNUV_TEST_ARTIFACT_DIR",QDir::tempPath())+"/deploy-machine.png"));
+        // "How many" starts at one; asked for three, the dialog sends one group
+        // of the recipe (a count of one is the recipe deployed alone, which
+        // theWindowOffersAndDeploysAPrivateRecipe holds).
+        auto count=object->findChild<QObject*>("deployCount"); QVERIFY(count);
+        QCOMPARE(count->property("value").toInt(),1);
+        QVERIFY(count->setProperty("value",3));
         QVERIFY(QMetaObject::invokeMethod(popup,"accept"));
-        const QByteArray path="/v1/recipes/steam-gaming/deploy?project=a";
+        const QByteArray path="/v1/instance-groups?project=a";
         QTRY_VERIFY(server.find(path)>=0);
+        QCOMPARE(server.count("/v1/recipes/steam-gaming/deploy?project=a"),0);
         const auto body=QJsonDocument::fromJson(server.calls[server.find(path)].body).object();
+        QCOMPARE(body["count"].toInt(),3); QCOMPARE(body["recipe"].toString(),QString("steam-gaming"));
+        QCOMPARE(body["name"].toString(),QString("steam"));
         QCOMPARE(body["gpu"].toObject()["model"].toString(),QString("RTX 3090"));
     }
 

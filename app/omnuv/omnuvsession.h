@@ -219,7 +219,7 @@ public:
     // Rent a machine from one of `offers`: its id, a name, and a GPU model
     // (empty for none). The answer arrives on `deployFinished`, and the
     // machine in the list on the next refresh, which this starts.
-    Q_INVOKABLE void deploy(const QString& recipe, const QString& name, const QString& gpuModel);
+    Q_INVOKABLE void deploy(const QString& recipe, const QString& name, const QString& gpuModel, int count);
     // Take away the machine in `row` and everything on it. A machine that came
     // from a recipe is removed as that deployment, so its login and its GPU go
     // with it; any other is removed as an instance. Answers on
