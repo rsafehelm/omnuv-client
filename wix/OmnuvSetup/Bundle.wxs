@@ -18,7 +18,7 @@
           HelpUrl="https://omnuv.com"
           UpdateUrl="https://omnuv.com"
           DisableModify="yes"
-          IconSourceFile="..\..\app\moonlight.ico">
+          IconSourceFile="..\..\app\omnuv.ico">
 
     <bal:Condition Message="Omnuv Client requires Windows 10 or later." Condition="VersionNT &gt;= v10.0" />
     <bal:Condition Message="Omnuv Client requires a 64-bit version of Windows." Condition="NativeMachine &lt;&gt; 332" />
@@ -46,11 +46,11 @@
     <BootstrapperApplication>
       <bal:WixStandardBootstrapperApplication ShowVersion="yes"
                                               LicenseFile="license.rtf"
-                                              LogoFile="..\..\app\moonlight_wix.png"
+                                              LogoFile="omnuv_logo.png"
                                               LaunchTarget="[InstallFolder]\OmnuvClient.exe"
                                               ThemeFile="RtfTheme.xml"
                                               Theme="rtfLicense" />
-      <Payload Name="Omnuv.ico" SourceFile="..\..\app\moonlight.ico" Compressed="yes" />
+      <Payload Name="Omnuv.ico" SourceFile="..\..\app\omnuv.ico" Compressed="yes" />
     </BootstrapperApplication>
 
     <!--
