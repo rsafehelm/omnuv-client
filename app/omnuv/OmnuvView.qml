@@ -524,7 +524,7 @@ Item {
         // clear it.
         property bool targetProtected: false
         contentItem: Label {
-            text: qsTr("The machine and everything on it are taken away, and its graphics card goes back on sale. This cannot be undone.")
+            text: qsTr("The machine and everything on it are taken away, and the capacity it held goes back on sale. This cannot be undone.")
                   + (deleteMachine.targetProtected
                      ? " " + qsTr("It is protected against deletion: confirming clears that protection and deletes it.")
                      : "")
