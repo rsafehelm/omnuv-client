@@ -93,6 +93,10 @@ public:
     // ours is only to report it.
     static OmnuvTray* create(OmnuvSession* session, QObject* parent = nullptr);
 
+protected:
+    // macOS: a click on the Dock icon while every window is hidden reopens one.
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
 private slots:
     void refresh();
     void checkRegistered();

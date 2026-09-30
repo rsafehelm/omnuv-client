@@ -22,6 +22,7 @@
 #include "tunnel.h"
 
 #include <QAction>
+#include <QEvent>
 #include <QApplication>
 #include <QColor>
 #include <QFile>
@@ -323,6 +324,19 @@ OmnuvTray::OmnuvTray(OmnuvSession* session, QObject* parent)
 
     m_icon->setContextMenu(m_menu);
     connect(m_icon, &QSystemTrayIcon::activated, this, &OmnuvTray::activated);
+
+#ifdef Q_OS_MACOS
+    // **Closing the window only hides it, so the Dock has to bring it back.**
+    // A person on a Mac reaches a running app through its Dock icon, not the
+    // menu bar: a click reopens the window (`eventFilter`), and the Dock's own
+    // menu offers Show. Without these a closed window was reachable only from
+    // the menu-bar icon, which nobody looked for.
+    auto* dock = new QMenu();
+    QAction* show = dock->addAction(tr("Show Omnuv"));
+    connect(show, &QAction::triggered, this, &OmnuvTray::openWindow);
+    dock->setAsDockMenu();
+    qApp->installEventFilter(this);
+#endif
 
     if (m_session != nullptr) {
         connect(m_session, &OmnuvSession::signedInChanged, this, &OmnuvTray::refresh);
@@ -906,6 +920,27 @@ void OmnuvTray::toggleAutostart(bool on)
     // policy, permissions, a locked-down machine — the menu should show what
     // is true, not what was attempted.
     refresh();
+}
+
+bool OmnuvTray::eventFilter(QObject* watched, QEvent* event)
+{
+    // Qt turns the Dock's "reopen" into ApplicationActivate on the
+    // application object. Only when nothing is showing: an activation that
+    // comes with a visible window is a person switching to us, not asking
+    // for the window back.
+    if (watched == qApp && event->type() == QEvent::ApplicationActivate) {
+        bool anyVisible = false;
+        for (QWindow* w : QGuiApplication::topLevelWindows()) {
+            if (w->isVisible() && w->type() == Qt::Window) {
+                anyVisible = true;
+                break;
+            }
+        }
+        if (!anyVisible) {
+            openWindow();
+        }
+    }
+    return QObject::eventFilter(watched, event);
 }
 
 void OmnuvTray::activated(QSystemTrayIcon::ActivationReason reason)
