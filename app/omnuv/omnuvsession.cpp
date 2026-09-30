@@ -1031,9 +1031,18 @@ bool OmnuvSession::openTerminal(const QString& host, const QString& user)
 
 #if defined(Q_OS_WIN)
     // Windows has had OpenSSH since 2018, and `start` gives it its own window.
-    return QProcess::startDetached(QStringLiteral("cmd"),
-                                   { QStringLiteral("/c"), QStringLiteral("start"),
-                                     QStringLiteral("ssh"), target });
+    // **A failure stays on screen.** `start ssh <target>` closed the window
+    // the moment ssh exited, so a name that did not resolve (this device not
+    // yet on the project network) flashed and vanished with its reason. ssh
+    // runs under its own `cmd /c` now, and `pause`s when it fails. Native
+    // arguments, because cmd's quoting is its own and `start` reads the first
+    // quoted word as the window's title; `target` passed `sshTargetIsSafe`,
+    // so it holds no character cmd treats specially.
+    QProcess terminal;
+    terminal.setProgram(QStringLiteral("cmd.exe"));
+    terminal.setNativeArguments(
+        QStringLiteral("/c start \"Omnuv - %1\" cmd /c \"ssh %1 || pause\"").arg(target));
+    return terminal.startDetached();
 #elif defined(Q_OS_DARWIN)
     // Terminal.app registers itself for ssh:// URLs, so this is the one
     // platform where the system already knows the answer.
