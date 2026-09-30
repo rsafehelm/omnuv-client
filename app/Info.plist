@@ -48,6 +48,8 @@
 	<string>VERSION</string>
 	<key>CFBundleDisplayName</key>
 	<string>Omnuv Client</string>
+	<key>CFBundleName</key>
+	<string>Omnuv Client</string>
     <key>LSApplicationCategoryType</key>
 	<string>public.app-category.games</string>
 </dict>
