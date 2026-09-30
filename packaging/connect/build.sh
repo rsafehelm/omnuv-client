@@ -138,7 +138,23 @@ CTL
 }
 
 # ---------- Windows ----------
+# **The installer people get, when there is one (OMNUV_WINDOWS_SETUP).** The
+# rig's WiX bundle (lab-windows-msi.yml, `dist/OmnuvSetup.exe`): the client,
+# the tunnel service and its rule, the omnuv:// handler and the VC++ runtime,
+# proved on 9102 by lab-windows-install.yml. Published under the name Core's
+# downloads offer as Windows (`-setup.exe`). Nothing in it names a site: the
+# client signs in to production unless a person chooses another deployment.
+build_exe_released() {
+    local exe="$OMNUV_WINDOWS_SETUP"
+    [ -f "$exe" ] && [ "$(stat -c%s "$exe")" -gt 10000000 ] || {
+        echo "  exe    FAILED: $exe is missing or too small to carry the client" >&2; return 1; }
+    cp "$exe" "$OUT/OmnuvConnect-$VERSION-setup.exe"
+    chmod 0644 "$OUT/OmnuvConnect-$VERSION-setup.exe"
+    echo "  exe    OmnuvConnect-${VERSION}-setup.exe (the rig's bundle, $(stat -c%s "$exe") bytes)"
+}
+
 build_exe() {
+    if [ -n "${OMNUV_WINDOWS_SETUP:-}" ]; then build_exe_released; return $?; fi
     local stage="$OUT/.nsis"
     rm -rf "$stage" && mkdir -p "$stage"
     fill "$HERE/omnuv-connect.ps1" > "$stage/omnuv-connect.ps1"
