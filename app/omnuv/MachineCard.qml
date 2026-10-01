@@ -25,6 +25,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import StreamingPreferences 1.0
 
 import Omnuv 1.0
 
@@ -352,6 +353,22 @@ ItemDelegate {
                 font.pixelSize: Theme.captionSize
                 opacity: 0.6
                 elide: Label.ElideMiddle
+            }
+
+            // **What Play will use, before it is pressed** (1 October 2026: a
+            // first stream ran at upstream's 1280x720 and nothing on the card
+            // said so). The same preferences the stream reads.
+            Label {
+                Layout.fillWidth: true
+                visible: model.streamed
+                text: qsTr("Streams at %1 × %2 · %3 fps · %4 Mbps")
+                    .arg(StreamingPreferences.width).arg(StreamingPreferences.height)
+                    .arg(StreamingPreferences.fps)
+                    .arg(Math.round(StreamingPreferences.bitrateKbps / 1000))
+                font.family: Theme.textFamily
+                font.pixelSize: Theme.captionSize
+                opacity: 0.6
+                elide: Label.ElideRight
             }
 
             // ---- The state, in its colour and its word --------------------
