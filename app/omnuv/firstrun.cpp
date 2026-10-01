@@ -1,0 +1,32 @@
+#include "firstrun.h"
+
+#include <QGuiApplication>
+#include <QScreen>
+#include <QDebug>
+#include <QSettings>
+
+// **A first stream at this display's size, not upstream's 1280x720** (the
+// operator's Windows client on a 1440p screen, 30 September 2026: text was
+// unreadable until Stream settings were opened). The largest standard size
+// that fits the primary screen in physical pixels. Written as the saved
+// choice only when there is none, before StreamingPreferences reads it, so
+// upstream's preferences code and its bitrate default (which follows the
+// resolution) stay as they are. A person's own choice is never touched.
+void omnuvApplyFirstRunResolution()
+{
+    QSettings settings;
+    if (settings.contains(QStringLiteral("width")) || settings.contains(QStringLiteral("height"))) return;
+    QScreen* screen = QGuiApplication::primaryScreen();
+    if (screen == nullptr) return;
+    const QSize native = screen->size() * screen->devicePixelRatio();
+    static const QSize standard[] = { {3840, 2160}, {2560, 1440}, {1920, 1080} };
+    for (const QSize& s : standard) {
+        if (s.width() <= native.width() && s.height() <= native.height()) {
+            settings.setValue(QStringLiteral("width"), s.width());
+            settings.setValue(QStringLiteral("height"), s.height());
+            qInfo().noquote() << "omnuv: first run: streaming at" << s.width() << "x" << s.height()
+                              << "on a" << native.width() << "x" << native.height() << "display";
+            return;
+        }
+    }
+}

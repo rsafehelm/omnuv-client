@@ -280,6 +280,7 @@ SOURCES += \
     omnuv/signin.cpp \
     omnuv/streamquality.cpp \
     omnuv/tray.cpp \
+    omnuv/firstrun.cpp \
     omnuv/tunnel.cpp
 
 HEADERS += \
@@ -297,6 +298,7 @@ HEADERS += \
     omnuv/signin.h \
     omnuv/streamquality.h \
     omnuv/tray.h \
+    omnuv/firstrun.h \
     omnuv/traystate.h \
     omnuv/tunnel.h
 

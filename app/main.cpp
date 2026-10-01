@@ -45,6 +45,7 @@
 #include "cli/startstream.h"
 #include "cli/pair.h"
 #include "cli/commandlineparser.h"
+#include "omnuv/firstrun.h"
 #include "omnuv/signin.h"
 #include "omnuv/enrolcli.h"
 #include "omnuv/paircli.h"
@@ -785,6 +786,9 @@ int main(int argc, char *argv[])
     // platform has no native tray, and its documentation requires the widgets
     // application object. `QT += widgets` is in app.pro beside the same reason.
     QApplication app(argc, argv);
+
+    // Omnuv: a first stream at this display's size (omnuv/firstrun.cpp).
+    omnuvApplyFirstRunResolution();
 
     // Omnuv: closing the window hides it; only Quit in the tray ends the
     // program. This one line is the whole of residency — everything else this
