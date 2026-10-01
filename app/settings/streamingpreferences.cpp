@@ -9,6 +9,8 @@
 #include <QtMath>
 
 #include <QtDebug>
+#include <QGuiApplication>
+#include <QScreen>
 
 #define SER_STREAMSETTINGS "streamsettings"
 #define SER_WIDTH "width"
@@ -58,6 +60,24 @@
 static StreamingPreferences* s_GlobalPrefs;
 
 Q_GLOBAL_STATIC(QReadWriteLock, s_GlobalPrefsLock)
+
+// **A first stream at this display's size, not upstream's 1280x720** (the
+// operator's Windows client on a 1440p screen, 30 September 2026: text was
+// unreadable until Stream settings were opened). The largest standard size
+// that fits the primary screen in physical pixels; 1280x720 where nothing
+// can be read. A saved choice always wins over this.
+static QSize firstRunResolution()
+{
+    QScreen* screen = qobject_cast<QGuiApplication*>(QCoreApplication::instance())
+        ? QGuiApplication::primaryScreen() : nullptr;
+    if (screen == nullptr) return QSize(1280, 720);
+    const QSize native = screen->size() * screen->devicePixelRatio();
+    static const QSize standard[] = { {3840, 2160}, {2560, 1440}, {1920, 1080}, {1280, 720} };
+    for (const QSize& s : standard) {
+        if (s.width() <= native.width() && s.height() <= native.height()) return s;
+    }
+    return QSize(1280, 720);
+}
 
 StreamingPreferences::StreamingPreferences(QQmlEngine *qmlEngine)
     : m_QmlEngine(qmlEngine)
@@ -122,8 +142,9 @@ void StreamingPreferences::reload()
     }
 #endif
 
-    width = settings.value(SER_WIDTH, 1280).toInt();
-    height = settings.value(SER_HEIGHT, 720).toInt();
+    const QSize firstRun = settings.contains(SER_WIDTH) ? QSize() : firstRunResolution();
+    width = settings.value(SER_WIDTH, firstRun.isValid() ? firstRun.width() : 1280).toInt();
+    height = settings.value(SER_HEIGHT, firstRun.isValid() ? firstRun.height() : 720).toInt();
     fps = settings.value(SER_FPS, 60).toInt();
     enableYUV444 = settings.value(SER_YUV444, false).toBool();
     bitrateKbps = settings.value(SER_BITRATE, getDefaultBitrate(width, height, fps, enableYUV444)).toInt();
