@@ -108,6 +108,7 @@ Item {
     Connections {
         target: ComputerManager
         function onComputerAddCompleted(success, detectedPortBlocking) {
+            if (root.abandonedAdds > 0) { root.abandonedAdds--; return }
             if (!root.pendingTarget) return
             var target = root.pendingTarget
             root.pendingTarget = null
@@ -272,9 +273,50 @@ Item {
             message.show(qsTr("No terminal could be started. Connect with:\n\nssh %1@%2").arg(user).arg(host))
     }
     function connectTo(row, choose) { connectTarget(Omnuv.connectionTarget(row), choose === true) }
+    // When the attempt in progress began, so a second press can tell a
+    // connection still working from one left behind.
+    property double busySince: 0
+    // Set when a press was told an attempt is in progress; the next press
+    // means "start over", as the message says.
+    property bool busyNoticed: false
+    // Host-adds abandoned while still in flight. Their completions still
+    // arrive, in order, and must not finish a newer attempt: each is consumed
+    // here instead (the slot `cancelConnection` keeps exists for this).
+    property int abandonedAdds: 0
+    readonly property int staleAfterMs: 20000
+    function busyTarget() { return activeTarget || pendingTarget }
+    // **Play never does nothing silently** (30 September 2026: a press while
+    // an earlier attempt's host-add had never answered returned here without a
+    // word or a log line, and every later press did the same). An attempt
+    // whose machine is gone, or that has been busy past `staleAfterMs`, is
+    // cleared and this press starts afresh; a younger one says what it is
+    // waiting for.
     function connectTarget(target, choose) {
-        if (activeTarget || pendingTarget || delivering) return
-        if (!validTarget(target, true)) return
+        if (activeTarget || pendingTarget || delivering) {
+            var busy = busyTarget()
+            var gone = !busy || Omnuv.targetRow(busy) < 0
+            var age = Date.now() - busySince
+            if (gone || age > staleAfterMs || busyNoticed) {
+                console.info("omnuv: play: clearing an earlier attempt (" + (gone ? "its machine is gone" : busyNoticed ? "asked to start over" : Math.round(age / 1000) + "s old") + ")")
+                cancelConnection()
+                if (pendingTarget) abandonedAdds++
+                pendingTarget = null
+                delivering = false
+            } else {
+                console.info("omnuv: play: an attempt for " + (busy ? busy.host : "?") + " is " + Math.round(age / 1000) + "s old; not starting another")
+                message.show(qsTr("Still connecting to %1. Wait a moment, or press Play again to start over.").arg(busy ? busy.host : ""))
+                busyNoticed = true
+                return
+            }
+        }
+        if (!validTarget(target, true)) {
+            console.info("omnuv: play: the machine is no longer listed")
+            message.show(qsTr("That machine is no longer listed. Refresh, then try again."))
+            return
+        }
+        console.info("omnuv: play: connecting to " + target.host + (choose ? " (choosing what to stream)" : ""))
+        busySince = Date.now()
+        busyNoticed = false
         activeTarget = target
         chooseApp = choose
         var row = Omnuv.targetRow(target)
