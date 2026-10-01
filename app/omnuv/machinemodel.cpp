@@ -334,6 +334,11 @@ QString MachineModel::userAt(int row) const
     return (row >= 0 && row < m_machines.count()) ? m_machines.at(row).defaultUser : QString();
 }
 
+QString MachineModel::idAt(int row) const
+{
+    return (row >= 0 && row < m_machines.count()) ? m_machines.at(row).id : QString();
+}
+
 QString MachineModel::hostAt(int row) const
 {
     return (row >= 0 && row < m_machines.count()) ? m_machines.at(row).host : QString();

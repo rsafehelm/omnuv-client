@@ -1028,6 +1028,20 @@ bool OmnuvSession::openTerminal(const QString& host, const QString& user)
         return false;
     }
     const QString target = user.isEmpty() ? host : (user + QLatin1Char('@') + host);
+    // **The machine's key is remembered by the machine, not by its name** (30
+    // September 2026: a gaming machine re-deployed under the same private name
+    // had a new host key, and ssh refused it as "REMOTE HOST IDENTIFICATION HAS
+    // CHANGED"). A name is reused by every re-deploy; the machine's id is not,
+    // so a new machine starts a fresh entry and a changed key on the *same*
+    // machine still warns, as it should. The id is a uuid, so it is safe on a
+    // command line.
+    QString machineId;
+    for (int row = 0; row < m_machines->rowCount(); row++) {
+        if (m_machines->hostAt(row) == host) { machineId = m_machines->idAt(row); break; }
+    }
+    static const QRegularExpression uuid(QStringLiteral("^[0-9a-fA-F-]{36}$"));
+    const QString alias = uuid.match(machineId).hasMatch()
+        ? QStringLiteral("-oHostKeyAlias=omnuv-%1").arg(machineId) : QString();
 
 #if defined(Q_OS_WIN)
     // Windows has had OpenSSH since 2018, and `start` gives it its own window.
@@ -1041,11 +1055,19 @@ bool OmnuvSession::openTerminal(const QString& host, const QString& user)
     QProcess terminal;
     terminal.setProgram(QStringLiteral("cmd.exe"));
     terminal.setNativeArguments(
-        QStringLiteral("/c start \"Omnuv - %1\" cmd /c \"ssh %1 || pause\"").arg(target));
+        QStringLiteral("/c start \"Omnuv - %1\" cmd /c \"ssh %2 %1 || pause\"").arg(target, alias));
     return terminal.startDetached();
 #elif defined(Q_OS_DARWIN)
     // Terminal.app registers itself for ssh:// URLs, so this is the one
     // platform where the system already knows the answer.
+    // Terminal.app opens ssh:// URLs, but a URL carries no ssh options, so
+    // the command goes to Terminal through AppleScript instead. Both halves
+    // passed sshTargetIsSafe or the uuid match, so neither holds a quote.
+    if (!alias.isEmpty()) {
+        return QProcess::startDetached(QStringLiteral("osascript"), {
+            QStringLiteral("-e"), QStringLiteral("tell application \"Terminal\" to do script \"ssh %1 %2\"").arg(alias, target),
+            QStringLiteral("-e"), QStringLiteral("tell application \"Terminal\" to activate") });
+    }
     return QDesktopServices::openUrl(QUrl(QStringLiteral("ssh://") + target));
 #else
     // Debian's alternatives symlink first, since it is whatever the person
@@ -1065,7 +1087,9 @@ bool OmnuvSession::openTerminal(const QString& host, const QString& user)
             continue;
         }
         QStringList args = candidate.second;
-        args << QStringLiteral("ssh") << target;
+        args << QStringLiteral("ssh");
+        if (!alias.isEmpty()) args << alias;
+        args << target;
         if (QProcess::startDetached(candidate.first, args)) {
             return true;
         }

@@ -176,6 +176,7 @@ public:
 
     Q_INVOKABLE QString nameAt(int row) const;
     Q_INVOKABLE QString hostAt(int row) const;
+    Q_INVOKABLE QString idAt(int row) const;
     Q_INVOKABLE QString userAt(int row) const;
     Q_INVOKABLE bool streamedAt(int row) const;
     Q_INVOKABLE QString streamAppAt(int row) const;
