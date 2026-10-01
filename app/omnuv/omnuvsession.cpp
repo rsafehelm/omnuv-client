@@ -1433,6 +1433,7 @@ void OmnuvSession::deliverPin(const QVariantMap& target, const QString& pin)
             }
         }
         if (m_claimDeployment.isEmpty()) {
+            qInfo() << "omnuv: pairing: no deployment carries this machine; pairing by hand";
             m_pairing->giveUp(tr("This machine has no automatic pairing login. Pair it by hand.")); return;
         }
         collectStreamLogin(target, pin, kLoginTries);
@@ -1451,6 +1452,12 @@ void OmnuvSession::collectStreamLogin(const QVariantMap& target, const QString& 
         const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const auto o = QJsonDocument::fromJson(reply->readAll()).object();
         const auto status = o["status"].toString();
+        // **Every answer in the log** (30 September 2026: a pairing fell back
+        // to "by hand" and nothing recorded why). The code and Core's status
+        // word only; the password is never written.
+        qInfo().noquote() << "omnuv: pairing: credential claim for deployment" << m_claimDeployment
+                          << "returned" << code << (status.isEmpty() ? QStringLiteral("(no status)") : status)
+                          << "attempt" << m_claimAttempt.left(8) << "tries left" << (triesLeft - 1);
         // A timeout may follow a committed claim. Retry its SAME attempt id.
         if ((code == 0 || code >= 500 || (code == 200 && status == "waiting")) && triesLeft > 1) {
             QTimer::singleShot(kLoginIntervalMs, m_pairScope, [this, target, pin, triesLeft]() {
