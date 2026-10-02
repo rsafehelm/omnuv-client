@@ -16,6 +16,7 @@
 // menu, for the rare machine with several. `CliStartStreamSegue` proves the
 // path: the CLI has started a named application without the grid all along.
 
+import QtCore
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -247,8 +248,56 @@ Item {
         }
     }
 
+    // **A changed resolution or frame rate restarts the desktop** (2 October
+    // 2026). Sunshine sizes the rig's display when it launches an app, and a
+    // Play while the app runs resumes it, so a new resolution never arrived:
+    // the operator changed theirs and the rig stayed at 1280x720 through four
+    // sessions. Each launch records the shape it asked for, per machine; a
+    // Play whose shape differs, or is unknown, quits a running Desktop first
+    // and launches afresh. Only Desktop: quitting it ends the stream and
+    // nothing on the machine, while quitting a game could lose its progress,
+    // so any other running app is resumed as before.
+    Settings {
+        id: launched
+        category: "omnuv/launched"
+        property string shapes: "{}"
+    }
+    function streamShape() {
+        return StreamingPreferences.width + "x" + StreamingPreferences.height + "@" + StreamingPreferences.fps
+    }
+    function launchedShapes() {
+        try { return JSON.parse(launched.shapes) || {} } catch (e) { return {} }
+    }
     function startStream(target, appIndex) {
         if (!validTarget(target)) return
+        var want = streamShape()
+        var had = launchedShapes()[target.host] || ""
+        var running = launchApps.getRunningAppId() !== 0 ? launchApps.getRunningAppName() : ""
+        if (running !== "Desktop" || had === want) {
+            beginStream(target, appIndex, want)
+            return
+        }
+        console.info("omnuv: play: the desktop runs at " + (had || "an unknown shape") + "; restarting it at " + want)
+        message.show(qsTr("Restarting the desktop at %1×%2, %3 fps…")
+                     .arg(StreamingPreferences.width).arg(StreamingPreferences.height).arg(StreamingPreferences.fps))
+        var done = function(error) {
+            ComputerManager.quitAppCompleted.disconnect(done)
+            if (error) {
+                console.warn("omnuv: play: the desktop did not quit: " + error)
+                activeTarget = null
+                message.show(qsTr("The desktop could not be restarted at the new resolution: %1").arg(error))
+                return
+            }
+            beginStream(target, appIndex, want)
+        }
+        ComputerManager.quitAppCompleted.connect(done)
+        launchApps.quitRunningApp()
+    }
+    function beginStream(target, appIndex, want) {
+        if (!validTarget(target)) return
+        var shapes = launchedShapes()
+        shapes[target.host] = want
+        launched.shapes = JSON.stringify(shapes)
         var row = Omnuv.targetRow(target)
         var component = Qt.createComponent("qrc:/omnuv/OmnuvSegue.qml")
         var segue = component.createObject(stackView, {
