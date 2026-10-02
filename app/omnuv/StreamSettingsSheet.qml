@@ -74,6 +74,31 @@ Dialog {
     // stack is.
     signal advancedRequested()
 
+    // **Advanced writes the same preferences, and this follows them** (2
+    // October 2026: 165 FPS set in Advanced, and this sheet still said 60).
+    // Each control read the preferences once, when it was made, and the
+    // sheet outlives a visit to Advanced. Deferred with callLater because the
+    // sheet's own resolution writes width and then height: a sync between the
+    // two would see a size nobody chose and append it.
+    Connections {
+        target: StreamingPreferences
+        function onDisplayModeChanged() {
+            Qt.callLater(resolution.syncFromPreferences)
+            Qt.callLater(frameRate.syncFromPreferences)
+        }
+        function onBitrateChanged() { Qt.callLater(sheet.syncBitrate) }
+        function onWindowModeChanged() { Qt.callLater(displayMode.syncFromPreferences) }
+        function onAudioConfigChanged() { Qt.callLater(audio.syncFromPreferences) }
+        function onFramePacingChanged() { Qt.callLater(sheet.syncSmoothMotion) }
+        function onEnableVsyncChanged() { Qt.callLater(sheet.syncSmoothMotion) }
+    }
+    // A slider or switch the person has moved has lost its binding, so these
+    // set the value rather than rebind it.
+    function syncBitrate() { bitrate.value = StreamingPreferences.bitrateKbps }
+    function syncSmoothMotion() {
+        smoothMotion.checked = StreamingPreferences.enableVsync && StreamingPreferences.framePacing
+    }
+
     title: qsTr("Stream settings")
     modal: true
     standardButtons: Dialog.Close
@@ -404,7 +429,7 @@ Dialog {
                                   mode: StreamingPreferences.WM_WINDOWED }
                 }
 
-                Component.onCompleted: {
+                function syncFromPreferences() {
                     for (var i = 0; i < model.count; i++) {
                         if (model.get(i).mode === StreamingPreferences.windowMode) {
                             currentIndex = i
@@ -412,6 +437,7 @@ Dialog {
                         }
                     }
                 }
+                Component.onCompleted: syncFromPreferences()
 
                 onActivated: StreamingPreferences.windowMode = model.get(currentIndex).mode
             }
@@ -448,6 +474,7 @@ Dialog {
 
             Switch {
                 Accessible.role: Accessible.CheckBox
+                id: smoothMotion
                 Accessible.name: qsTr("Smooth motion")
                 // Upstream's gate, kept: frame pacing does nothing without
                 // V-Sync (`SettingsView.qml:840-841`), so the switch is
@@ -488,7 +515,7 @@ Dialog {
                     ListElement { text: qsTr("7.1");     config: StreamingPreferences.AC_71_SURROUND }
                 }
 
-                Component.onCompleted: {
+                function syncFromPreferences() {
                     for (var i = 0; i < model.count; i++) {
                         if (model.get(i).config === StreamingPreferences.audioConfig) {
                             currentIndex = i
@@ -496,6 +523,7 @@ Dialog {
                         }
                     }
                 }
+                Component.onCompleted: syncFromPreferences()
 
                 onActivated: StreamingPreferences.audioConfig = model.get(currentIndex).config
             }
