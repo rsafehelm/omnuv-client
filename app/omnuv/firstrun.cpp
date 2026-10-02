@@ -12,9 +12,24 @@
 // choice only when there is none, before StreamingPreferences reads it, so
 // upstream's preferences code and its bitrate default (which follows the
 // resolution) stay as they are. A person's own choice is never touched.
+// **V-Sync off unless somebody chose it** (the operator, 2 October 2026).
+// With it on, a frame waits for the display's next refresh, and a stream rate
+// that does not divide the refresh drops frames unevenly: 165 fps on a 480 Hz
+// monitor rendered 82 and dropped 37%. Off, each frame is shown as it is
+// decoded, which tears a little and drops nothing; that was the operator's own
+// fix. Same rule as the resolution below: written only when there is no saved
+// choice, before upstream's preferences read it (SER_VSYNC is "vsync").
+static void omnuvApplyFirstRunVsync(QSettings& settings)
+{
+    if (settings.contains(QStringLiteral("vsync"))) return;
+    settings.setValue(QStringLiteral("vsync"), false);
+    qInfo().noquote() << "omnuv: first run: V-Sync off";
+}
+
 void omnuvApplyFirstRunResolution()
 {
     QSettings settings;
+    omnuvApplyFirstRunVsync(settings);
     if (settings.contains(QStringLiteral("width")) || settings.contains(QStringLiteral("height"))) return;
     QScreen* screen = QGuiApplication::primaryScreen();
     if (screen == nullptr) return;
