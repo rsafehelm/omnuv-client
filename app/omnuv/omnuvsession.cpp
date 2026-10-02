@@ -1778,7 +1778,7 @@ void OmnuvSession::deploy(const QString& recipe, const QString& name, const QStr
         if (code == 200 || code == 201) {
             emit deployFinished(true, group
                 ? tr("%1 machines, %2-1 to %2-%1, are held together and start at the same time. They appear here once their provider has them running.").arg(count).arg(trimmed)
-                : tr("%1 is on its way. It appears here once its provider has it running.").arg(trimmed));
+                : tr("Starting %1. It appears here once its provider has it running.").arg(trimmed));
         } else if (code == 0) {
             emit deployFinished(false, group
                 ? tr("Omnuv did not answer, so the %1 machines named %2 may or may not exist. Wait for the list to refresh before deploying again.").arg(count).arg(trimmed)
@@ -1839,7 +1839,7 @@ void OmnuvSession::removeAt(const QString& path, const QString& name, bool unpro
         const auto bytes = reply->readAll();
         // 404: already gone, which is what was asked for.
         if (code == 200 || code == 202 || code == 204 || code == 404) {
-            emit deleteFinished(true, tr("%1 is being taken away, with everything on it.").arg(name));
+            emit deleteFinished(true, tr("Deleting %1 and everything on it.").arg(name));
         } else if (code == 0) {
             emit deleteFinished(false, tr("Omnuv did not answer. Wait for the list to refresh to see whether %1 is going.").arg(name));
         } else {

@@ -398,6 +398,7 @@ Item {
     // the other Core's sign-in, if there is one, is simply read.
     Dialog {
         id: switchDeployment
+        footer: OmnuvButtonBox {}
         // **Opaque, and drawn here** (25 September 2026): with the window's
         // own background given to Mica, the style's dialog fill let the page
         // behind show through the content, on the rig and in every render
@@ -562,7 +563,7 @@ Item {
                 wrapMode: Text.WordWrap
             }
         }
-        footer: DialogButtonBox {
+        footer: OmnuvButtonBox {
             Button {
                 objectName: "deployConfirm"
                 text: Omnuv.ordering ? qsTr("Deploying…") : qsTr("Deploy")
@@ -611,7 +612,7 @@ Item {
                      : "")
             wrapMode: Text.WordWrap
         }
-        footer: DialogButtonBox {
+        footer: OmnuvButtonBox {
             Button {
                 objectName: "deleteConfirm"
                 text: qsTr("Delete")
@@ -628,6 +629,7 @@ Item {
 
     Dialog {
         id: networkMove
+        footer: OmnuvButtonBox {}
         background: Rectangle {
             color: networkMove.palette.base
             radius: Theme.radiusOverlay
@@ -645,6 +647,7 @@ Item {
     }
     Dialog {
         id: revokeEnrollment
+        footer: OmnuvButtonBox {}
         background: Rectangle {
             color: revokeEnrollment.palette.base
             radius: Theme.radiusOverlay
@@ -673,6 +676,7 @@ Item {
     // has lost nothing.
     Dialog {
         id: pairing
+        footer: OmnuvButtonBox {}
         background: Rectangle {
             color: pairing.palette.base
             radius: Theme.radiusOverlay
@@ -771,6 +775,7 @@ Item {
 
     Dialog {
         id: message
+        footer: OmnuvButtonBox {}
         background: Rectangle {
             color: message.palette.base
             radius: Theme.radiusOverlay
