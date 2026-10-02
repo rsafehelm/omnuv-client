@@ -16,7 +16,6 @@
 // menu, for the rare machine with several. `CliStartStreamSegue` proves the
 // path: the CLI has started a named application without the grid all along.
 
-import QtCore
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -254,24 +253,17 @@ Item {
     // the operator changed theirs and the rig stayed at 1280x720 through four
     // sessions. Each launch records the shape it asked for, per machine; a
     // Play whose shape differs, or is unknown, quits a running Desktop first
-    // and launches afresh. Only Desktop: quitting it ends the stream and
+    // and launches afresh (recorded in QSettings by Omnuv, not QtCore's
+    // Settings: Windows has no QtCore QML module). Only Desktop: quitting it ends the stream and
     // nothing on the machine, while quitting a game could lose its progress,
     // so any other running app is resumed as before.
-    Settings {
-        id: launched
-        category: "omnuv/launched"
-        property string shapes: "{}"
-    }
     function streamShape() {
         return StreamingPreferences.width + "x" + StreamingPreferences.height + "@" + StreamingPreferences.fps
-    }
-    function launchedShapes() {
-        try { return JSON.parse(launched.shapes) || {} } catch (e) { return {} }
     }
     function startStream(target, appIndex) {
         if (!validTarget(target)) return
         var want = streamShape()
-        var had = launchedShapes()[target.host] || ""
+        var had = Omnuv.launchedShape(target.host)
         var running = launchApps.getRunningAppId() !== 0 ? launchApps.getRunningAppName() : ""
         if (running !== "Desktop" || had === want) {
             beginStream(target, appIndex, want)
@@ -295,9 +287,7 @@ Item {
     }
     function beginStream(target, appIndex, want) {
         if (!validTarget(target)) return
-        var shapes = launchedShapes()
-        shapes[target.host] = want
-        launched.shapes = JSON.stringify(shapes)
+        Omnuv.setLaunchedShape(target.host, want)
         var row = Omnuv.targetRow(target)
         var component = Qt.createComponent("qrc:/omnuv/OmnuvSegue.qml")
         var segue = component.createObject(stackView, {

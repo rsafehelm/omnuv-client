@@ -278,6 +278,12 @@ public:
     // handshake completion separately, with the host identity.
     Q_INVOKABLE QVariantMap connectionTarget(int row) const;
     Q_INVOKABLE int targetRow(const QVariantMap& target) const;
+    // The WxH@fps a Play last launched a machine's app with (2 October 2026),
+    // so a changed shape restarts a running Desktop rather than resuming it.
+    // QSettings here rather than QtCore's Settings in QML: the Windows bundle
+    // carries no QtCore QML module, and the import blanked the whole view.
+    Q_INVOKABLE QString launchedShape(const QString& host) const;
+    Q_INVOKABLE void setLaunchedShape(const QString& host, const QString& shape);
     Q_INVOKABLE void deliverPin(const QVariantMap& target, const QString& pin);
     // Ends a pairing attempt. `delivered` only when the whole pairing worked,
     // which the view learns last: then Core spends the login. Every other

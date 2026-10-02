@@ -1398,6 +1398,16 @@ QVariantMap OmnuvSession::connectionTarget(int row) const
             {"project", m_projectId}, {"context", QString::number(m_context)}};
 }
 
+QString OmnuvSession::launchedShape(const QString& host) const
+{
+    return QSettings().value(QStringLiteral("omnuv/launched/") + host).toString();
+}
+
+void OmnuvSession::setLaunchedShape(const QString& host, const QString& shape)
+{
+    QSettings().setValue(QStringLiteral("omnuv/launched/") + host, shape);
+}
+
 int OmnuvSession::targetRow(const QVariantMap& target) const
 {
     if (!signedIn() || target.value("project").toString() != m_projectId
