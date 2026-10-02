@@ -90,6 +90,7 @@ QVariant MachineModel::data(const QModelIndex& index, int role) const
     case RegionRole:    return m.region;
     case StatusRole:    return m.status;
     case StreamAppRole: return m.streamApp;
+    case WebPortRole:   return m.webPort;
     case StreamedRole:  return m.streamed();
     case HostRole:      return m.host;
     case UserRole:      return m.defaultUser;
@@ -119,6 +120,7 @@ QHash<int, QByteArray> MachineModel::roleNames() const
         { RegionRole,    "region" },
         { StatusRole,    "status" },
         { StreamAppRole, "streamApp" },
+        { WebPortRole,   "webPort" },
         { StreamedRole,  "streamed" },
         { HostRole,      "host" },
         { UserRole,      "user" },
@@ -166,6 +168,7 @@ void MachineModel::replace(const QJsonArray& machines)
         m.region = o["region"].toString();
         m.status = o["status"].toString();
         m.streamApp = o["stream_app"].toString();
+        m.webPort = o["web_port"].toInt();
         m.defaultUser = o["default_user"].toString();
         m.host = o["private_name"].toString();
         m.privateIp = o["private_ip"].toString();
@@ -332,6 +335,11 @@ QString MachineModel::nameAt(int row) const
 QString MachineModel::userAt(int row) const
 {
     return (row >= 0 && row < m_machines.count()) ? m_machines.at(row).defaultUser : QString();
+}
+
+int MachineModel::webPortAt(int row) const
+{
+    return (row >= 0 && row < m_machines.count()) ? m_machines.at(row).webPort : 0;
 }
 
 QString MachineModel::hostAt(int row) const

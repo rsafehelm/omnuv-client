@@ -26,6 +26,9 @@ struct Machine
     // The application the machine streams, when it streams one. Empty for an
     // ordinary machine, which is how the two are told apart.
     QString streamApp;
+    // A web recipe's page port on the machine's private name (Core's
+    // `web_port`, 2 October 2026): Play opens a browser there instead.
+    int webPort = 0;
     QString defaultUser;
     QString summary;   // "8 vCPU · 16 GiB · RTX 3090"
 
@@ -125,6 +128,7 @@ public:
         RegionRole,
         StatusRole,
         StreamAppRole,
+        WebPortRole,
         StreamedRole,
         HostRole,
         UserRole,
@@ -179,6 +183,7 @@ public:
     Q_INVOKABLE QString userAt(int row) const;
     Q_INVOKABLE bool streamedAt(int row) const;
     Q_INVOKABLE QString streamAppAt(int row) const;
+    Q_INVOKABLE int webPortAt(int row) const;
 
     // How many machines are in each of the two states the tray icon cares
     // about, counted from `health()` so that nothing here is a second reading

@@ -315,6 +315,23 @@ Item {
         stackView.push(segue)
     }
 
+    // **A web recipe's page, in the browser** (the operator, 2 October 2026:
+    // for Ollama + Open WebUI, Play opens the web UI). On the machine's
+    // private name, so only over this device's network: without it the name
+    // does not resolve, and the page would fail somewhere a person cannot see
+    // why. Nothing is published on the internet for it.
+    function openWeb(row) {
+        var url = "http://" + Omnuv.machines.hostAt(row) + ":" + Omnuv.machines.webPortAt(row) + "/"
+        if (!Omnuv.tunnel.connected) {
+            console.info("omnuv: open: " + url + " needs this device on the network first")
+            message.show(qsTr("Join this device to your network first: %1 is only reachable there.").arg(url))
+            return
+        }
+        console.info("omnuv: open: " + url)
+        if (!Qt.openUrlExternally(url))
+            message.show(qsTr("No browser could be opened. Open %1 yourself.").arg(url))
+    }
+
     function openTerminalFor(row) {
         var host = Omnuv.machines.hostAt(row)
         var user = Omnuv.machines.userAt(row)
@@ -1431,7 +1448,7 @@ Item {
                         gap: machineList.gap
                         now: machineList.now
 
-                        onPrimaryActivated: root.connectTo(index)
+                        onPrimaryActivated: Omnuv.machines.webPortAt(index) > 0 ? root.openWeb(index) : root.connectTo(index)
                         onTerminalRequested: root.openTerminalFor(index)
                         onChooseAppRequested: {
                             root.connectTo(index, true)

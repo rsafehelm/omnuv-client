@@ -281,7 +281,7 @@ ItemDelegate {
 
             Glyph {
                 anchors.centerIn: parent
-                icon: model.streamed ? Theme.icon.game : Theme.icon.terminal
+                icon: model.streamed ? Theme.icon.game : model.webPort > 0 ? Theme.icon.globe : Theme.icon.terminal
                 size: 18
                 opacity: card.booted ? 1 : 0.6
             }
@@ -566,7 +566,9 @@ ItemDelegate {
                     // it does not. Never both as buttons: a card with two
                     // equal actions makes a person choose before they know
                     // what they want.
-                    text: model.streamed ? qsTr("Play") : qsTr("Terminal")
+                    // A web recipe opens its page in the browser (Ollama + Open
+                    // WebUI, 2 October 2026).
+                    text: model.streamed ? qsTr("Play") : model.webPort > 0 ? qsTr("Open") : qsTr("Terminal")
                     enabled: model.ready
                     highlighted: true
                     implicitWidth: Math.max(96, implicitContentWidth + leftPadding + rightPadding)
