@@ -92,6 +92,16 @@ Dialog {
         function onFramePacingChanged() { Qt.callLater(sheet.syncSmoothMotion) }
         function onEnableVsyncChanged() { Qt.callLater(sheet.syncSmoothMotion) }
     }
+    // This display's refresh rate, read when the frame-rate list is built,
+    // and whether a stream rate lands on it evenly.
+    property int displayRate: 0
+    function evenOn(rate) { return displayRate > 0 && rate > 0 && displayRate % rate === 0 }
+    // An uneven rate is held to an even beat rather than dropped; Smooth
+    // motion needs V-Sync, so without it nothing is changed.
+    function paceUnevenRate() {
+        if (displayRate > 0 && !evenOn(StreamingPreferences.fps) && StreamingPreferences.enableVsync)
+            StreamingPreferences.framePacing = true
+    }
     // A slider or switch the person has moved has lost its binding, so these
     // set the value rather than rebind it.
     function syncBitrate() { bitrate.value = StreamingPreferences.bitrateKbps }
@@ -288,6 +298,18 @@ Dialog {
                 Accessible.name: qsTr("Frame rate")
                 textRole: "text"
 
+                // **Rates that land evenly on this display first** (the
+                // operator, 2 October 2026: 165 fps on a 480 Hz monitor
+                // rendered 82 and dropped 37% for pacing, while 480 was
+                // smooth). With V-Sync a frame waits for a refresh, and a rate
+                // that does not divide the refresh misses its slots unevenly.
+                // So the list leads with the divisors of this display's rate,
+                // and an uneven one says so and turns Smooth motion on.
+                function label(rate) {
+                    return sheet.evenOn(rate) || sheet.displayRate <= 0
+                        ? qsTr("%1 FPS").arg(rate)
+                        : qsTr("%1 FPS \u00B7 uneven on this display").arg(rate)
+                }
                 function syncFromPreferences() {
                     for (var i = 0; i < model.count; i++) {
                         if (parseInt(model.get(i).fps) === StreamingPreferences.fps) {
@@ -295,15 +317,12 @@ Dialog {
                             return
                         }
                     }
-                    model.append({ "text": qsTr("%1 FPS").arg(StreamingPreferences.fps),
+                    model.append({ "text": label(StreamingPreferences.fps),
                                    "fps": "" + StreamingPreferences.fps })
                     currentIndex = model.count - 1
                 }
 
-                model: ListModel {
-                    ListElement { text: "30 FPS"; fps: "30" }
-                    ListElement { text: "60 FPS"; fps: "60" }
-                }
+                model: ListModel {}
 
                 Component.onCompleted: {
                     // This device's displays decide what is on offer above 60,
@@ -313,27 +332,54 @@ Dialog {
                     // (`SettingsView.qml:594-604`). A rate nothing here can
                     // present is a rate nobody should be able to pick.
                     SystemProperties.refreshDisplays()
+                    sheet.displayRate = SystemProperties.getRefreshRate(0)
+                    var rates = [30, 60]
                     for (var d = 0; ; d++) {
                         var rate = SystemProperties.getRefreshRate(d)
                         if (rate === 0) {
                             break
                         }
-                        var known = false
-                        for (var i = 0; i < model.count; i++) {
-                            known = known || parseInt(model.get(i).fps) === rate
+                        rates.push(rate)
+                    }
+                    // Every divisor of this display's rate from 60 up: on a
+                    // 480 Hz screen, 60 80 96 120 160 240 480.
+                    for (var k = 1; sheet.displayRate > 0 && sheet.displayRate / k >= 60; k++) {
+                        if (sheet.displayRate % k === 0) {
+                            rates.push(sheet.displayRate / k)
                         }
-                        if (!known) {
-                            model.append({ "text": qsTr("%1 FPS").arg(rate), "fps": "" + rate })
-                        }
+                    }
+                    var seen = {}
+                    rates = rates.filter(function(r) { return seen[r] ? false : (seen[r] = true) })
+                    rates.sort(function(a, b) {
+                        var ea = sheet.evenOn(a) ? 0 : 1, eb = sheet.evenOn(b) ? 0 : 1
+                        return ea !== eb ? ea - eb : a - b
+                    })
+                    for (var i = 0; i < rates.length; i++) {
+                        model.append({ "text": label(rates[i]), "fps": "" + rates[i] })
                     }
                     syncFromPreferences()
                 }
 
                 onActivated: {
                     StreamingPreferences.fps = parseInt(model.get(currentIndex).fps)
+                    sheet.paceUnevenRate()
                     sheet.retuneBitrate()
                 }
             }
+        }
+        Label {
+            Layout.fillWidth: true
+            // Only with V-Sync on, the one case where an uneven rate drops
+            // frames: with it off each frame is shown as it is decoded, which
+            // tears a little and drops nothing, and was the operator's own
+            // fix on a 480 Hz monitor.
+            visible: sheet.displayRate > 0 && StreamingPreferences.enableVsync
+                     && !sheet.evenOn(StreamingPreferences.fps)
+            text: qsTr("%1 fps does not divide this display's %2 Hz, so Smooth motion is on: frames are held to an even beat instead of dropped. Turning V-Sync off in Advanced also stops the drops, with a little tearing.")
+                      .arg(StreamingPreferences.fps).arg(sheet.displayRate)
+            wrapMode: Text.WordWrap
+            font.pixelSize: Theme.captionSize
+            opacity: 0.75
         }
 
         // ---- 3 · Bitrate --------------------------------------------------

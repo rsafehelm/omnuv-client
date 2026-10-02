@@ -287,6 +287,16 @@ Item {
     }
     function beginStream(target, appIndex, want) {
         if (!validTarget(target)) return
+        // A rate that does not divide this display's refresh, chosen anywhere
+        // (Advanced included), is paced rather than dropped (2 October 2026:
+        // 165 on 480 Hz dropped 37% of frames). Smooth motion needs V-Sync.
+        SystemProperties.refreshDisplays()
+        var hz = SystemProperties.getRefreshRate(0)
+        if (hz > 0 && hz % StreamingPreferences.fps !== 0 && StreamingPreferences.enableVsync
+                && !StreamingPreferences.framePacing) {
+            console.info("omnuv: play: " + StreamingPreferences.fps + " fps on a " + hz + " Hz display; turning Smooth motion on")
+            StreamingPreferences.framePacing = true
+        }
         Omnuv.setLaunchedShape(target.host, want)
         var row = Omnuv.targetRow(target)
         var component = Qt.createComponent("qrc:/omnuv/OmnuvSegue.qml")
