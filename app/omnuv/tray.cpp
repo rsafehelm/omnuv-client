@@ -746,8 +746,21 @@ QIcon OmnuvTray::glyph(omnuv::TrayIcon state, int frame) const
 
     // Monochrome, matching the taskbar, which is what every first-party icon
     // beside ours does. The accent appears on exactly one state.
+#ifdef Q_OS_MACOS
+    // **A template image on macOS, coloured by the menu bar itself** (the
+    // operator, 3 October 2026: a black square on a dark blue bar). The bar
+    // takes its tint from the wallpaper, not from the system's light or dark
+    // setting, so no colour chosen here is right everywhere; a mask is what
+    // every first-party menu bar item is, and AppKit paints it white or black
+    // as the bar needs. Only the alpha is used, so the accent badge reads by
+    // its shape, cut out of the mark, as it already does.
+    Q_UNUSED(dark)
+    const QColor ink(0x00, 0x00, 0x00);
+    const QColor accent = ink;
+#else
     const QColor ink = dark ? QColor(0xFF, 0xFF, 0xFF) : QColor(0x00, 0x00, 0x00);
     const QColor accent = QGuiApplication::palette().color(QPalette::Accent);
+#endif
 
     QIcon icon;
     // 100%, 125%, 150%, 200% and 300% of a 16px notification-area icon. Qt
@@ -833,6 +846,9 @@ QIcon OmnuvTray::glyph(omnuv::TrayIcon state, int frame) const
 
         icon.addPixmap(pm);
     }
+#ifdef Q_OS_MACOS
+    icon.setIsMask(true);
+#endif
     return icon;
 }
 

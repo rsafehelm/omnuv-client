@@ -62,6 +62,8 @@ type tunnelClient interface {
 	Stop(context.Context) error
 	Address() (string, string)
 	Identity() (string, error)
+	// The overlay's map, FQDN to address (dnscheck.go).
+	Peers() map[string]string
 }
 
 type embeddedClient struct {

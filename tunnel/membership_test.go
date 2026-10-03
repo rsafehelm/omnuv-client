@@ -41,6 +41,7 @@ func (f *fakeClient) Address() (string, string) {
 	return "100.64.0.1", "fixture"
 }
 func (f *fakeClient) Identity() (string, error) { return f.identity, nil }
+func (f *fakeClient) Peers() map[string]string  { return nil }
 
 func testTunnel(t *testing.T) *tunnel {
 	t.Helper()

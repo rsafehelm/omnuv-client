@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 	"path/filepath"
@@ -71,6 +72,8 @@ func main() {
 		log.SetOutput(os.Stderr)
 	}
 	t := &tunnel{state: stateStopped}
+	// Stale private names, found and flushed without the buyer (dnscheck.go).
+	go watchNames(context.Background(), systemDNSWorld(t))
 	if err := run(t); err != nil {
 		log.Printf("onv-tunnel: %v", err)
 		os.Exit(1)
