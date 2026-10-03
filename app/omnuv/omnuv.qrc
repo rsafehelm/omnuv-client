@@ -12,6 +12,7 @@
         <file>Glyph.qml</file>
         <file>MachineArt.qml</file>
         <file>MachineCard.qml</file>
+        <file>OmnuvButton.qml</file>
         <file>OmnuvButtonBox.qml</file>
         <file>MessagesPanel.qml</file>
         <file>OmnuvCliSegue.qml</file>

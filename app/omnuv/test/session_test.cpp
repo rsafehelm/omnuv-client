@@ -720,8 +720,8 @@ private slots:
         const auto text=QString::fromUtf8(source.readAll());
         const auto begin=text.indexOf("        ColumnLayout {\n            id: waiting");
         const auto tiles=text.indexOf("            // The code, a character to a tile",begin);
-        const auto buttons=text.indexOf("            Button {\n                objectName: \"openSignInPage\"",tiles);
-        const auto cancel=text.indexOf("            Button {\n                Layout.alignment: Qt.AlignHCenter\n                text: qsTr(\"Cancel\")",buttons);
+        const auto buttons=text.indexOf("            OmnuvButton {\n                objectName: \"openSignInPage\"",tiles);
+        const auto cancel=text.indexOf("            OmnuvButton {\n                Layout.alignment: Qt.AlignHCenter\n                text: qsTr(\"Cancel\")",buttons);
         QVERIFY(begin>=0 && tiles>begin && buttons>tiles && cancel>buttons);
         auto screen=(text.mid(begin,tiles-begin)+text.mid(buttons,cancel-buttons)+"        }\n")
             .replace("target: Omnuv","target: sample").replace("Omnuv.","sample.");

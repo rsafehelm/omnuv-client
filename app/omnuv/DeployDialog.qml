@@ -210,7 +210,7 @@ Dialog {
                 opacity: 0.7
                 elide: Label.ElideRight
             }
-            Button {
+            OmnuvButton {
                 visible: flow.step === 2
                 flat: true
                 text: qsTr("Change")
@@ -247,7 +247,7 @@ Dialog {
                 color: Theme.fillCaution
                 wrapMode: Text.WordWrap
             }
-            Button {
+            OmnuvButton {
                 Layout.leftMargin: 24
                 visible: Omnuv.deployablesProblem !== ""
                 text: qsTr("Try again")
@@ -626,12 +626,12 @@ Dialog {
                 elide: Label.ElideRight
             }
             Item { Layout.fillWidth: true; visible: flow.step === 1 }
-            Button {
+            OmnuvButton {
                 text: flow.step === 1 ? qsTr("Cancel") : qsTr("Back")
                 enabled: !flow.sending
                 onClicked: flow.step === 1 ? flow.close() : flow.back()
             }
-            Button {
+            OmnuvButton {
                 objectName: "deployConfirm"
                 highlighted: true
                 text: flow.step === 1 ? qsTr("Next") : flow.sending ? qsTr("Deploying…") : qsTr("Deploy")

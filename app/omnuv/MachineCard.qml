@@ -458,7 +458,7 @@ ItemDelegate {
                             font.pixelSize: 13
                             elide: Label.ElideMiddle
                         }
-                        Button {
+                        OmnuvButton {
                             flat: true
                             text: qsTr("Copy address")
                             Accessible.name: qsTr("Copy the address of %1").arg(model.name)
@@ -511,7 +511,7 @@ ItemDelegate {
                         elide: Label.ElideMiddle
                     }
                 }
-                Button {
+                OmnuvButton {
                     flat: true
                     text: qsTr("Copy command")
                     Accessible.name: qsTr("Copy the ssh command for %1").arg(model.name)
@@ -642,7 +642,7 @@ ItemDelegate {
                     }
                 }
 
-                Button {
+                OmnuvButton {
                     objectName: "secondaryAction"
                     visible: card.secondaryText !== ""
                     text: card.secondaryText
@@ -650,7 +650,7 @@ ItemDelegate {
                     onClicked: card.secondary()
                 }
 
-                Button {
+                OmnuvButton {
                     objectName: "primaryAction"
                     text: card.primaryText
                     highlighted: !card.primaryBlocked
@@ -690,6 +690,16 @@ ItemDelegate {
                         objectName: "moreMenu"
                         y: moreButton.height
                         focus: true
+                        // Drawn here, as the buttons are: Material's menu is a
+                        // shadowed layer the software renderer does not draw,
+                        // and the menu's items floated over the page with
+                        // nothing under them (3 October 2026).
+                        background: Rectangle {
+                            implicitWidth: 200
+                            color: Theme.highContrast ? moreMenu.palette.base : Theme.fillCard
+                            radius: Theme.radiusOverlay
+                            border.color: Theme.strokeCardHover
+                        }
                         onClosed: if (!card.choosing) moreButton.forceActiveFocus()
 
                         Instantiator {

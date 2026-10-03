@@ -625,13 +625,13 @@ Item {
             }
         }
         footer: OmnuvButtonBox {
-            Button {
+            OmnuvButton {
                 id: cancelDelete
                 objectName: "deleteCancel"
                 text: qsTr("Cancel")
                 DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
             }
-            Button {
+            OmnuvButton {
                 objectName: "deleteConfirm"
                 text: qsTr("Delete %1").arg(deleteMachine.targetName)
                 Accessible.name: text
@@ -767,13 +767,13 @@ Item {
                 font.family: Theme.monoFamily
             }
 
-            Button {
+            OmnuvButton {
                 Layout.alignment: Qt.AlignHCenter
                 text: qsTr("Open the machine's setup page")
                 onClicked: Qt.openUrlExternally("https://" + pairing.host + ":47990")
             }
 
-            Button {
+            OmnuvButton {
                 id: disclosure
                 property bool shown: false
                 Layout.alignment: Qt.AlignHCenter
@@ -898,7 +898,7 @@ Item {
             onAccepted: signInButton.clicked()
         }
 
-        Button {
+        OmnuvButton {
             id: signInButton
             objectName: "signInButton"
             Layout.alignment: Qt.AlignHCenter
@@ -917,7 +917,7 @@ Item {
 
         // The browser exchange stays, for whoever would rather not type a
         // password into an application: the page opens with the code in it.
-        Button {
+        OmnuvButton {
             objectName: "signInWithBrowser"
             Layout.alignment: Qt.AlignHCenter
             visible: Omnuv.userCode === "" && !Omnuv.busy
@@ -927,7 +927,7 @@ Item {
             onClicked: Omnuv.signIn()
         }
 
-        Button {
+        OmnuvButton {
             objectName: "anotherDeployment"
             Layout.alignment: Qt.AlignHCenter
             visible: Omnuv.userCode === "" && !Omnuv.busy
@@ -1017,7 +1017,7 @@ Item {
                 }
             }
 
-            Button {
+            OmnuvButton {
                 objectName: "openSignInPage"
                 Layout.alignment: Qt.AlignHCenter
                 highlighted: true
@@ -1026,7 +1026,7 @@ Item {
                 onClicked: waiting.openPage()
             }
 
-            Button {
+            OmnuvButton {
                 Layout.alignment: Qt.AlignHCenter
                 text: qsTr("Cancel")
                 onClicked: Omnuv.cancelSignIn()
@@ -1093,7 +1093,7 @@ Item {
                 font.pixelSize: Theme.bodySize
             }
 
-            Button {
+            OmnuvButton {
                 id: noticeAction
                 visible: text !== ""
                 enabled: notice.actionEnabled
@@ -1154,7 +1154,7 @@ Item {
             font.pixelSize: Theme.bodySize
             opacity: 0.78
         }
-        Button {
+        OmnuvButton {
             id: emptyAction
             visible: text !== ""
             Layout.alignment: Qt.AlignHCenter
@@ -1352,7 +1352,7 @@ Item {
                         elide: Label.ElideRight
                     }
                 }
-                Button {
+                OmnuvButton {
                     objectName: "deployButton"
                     Layout.alignment: Qt.AlignVCenter
                     highlighted: true
@@ -1387,8 +1387,8 @@ Item {
                         text: root.oneTimePassword
                         font.family: Theme.monoFamily
                     }
-                    Button { text: qsTr("Copy"); onClicked: Omnuv.copyText(root.oneTimePassword) }
-                    Button { text: qsTr("Done"); onClicked: { root.oneTimePassword = ""; root.oneTimeFor = "" } }
+                    OmnuvButton { text: qsTr("Copy"); onClicked: Omnuv.copyText(root.oneTimePassword) }
+                    OmnuvButton { text: qsTr("Done"); onClicked: { root.oneTimePassword = ""; root.oneTimeFor = "" } }
                 }
             }
 
@@ -1405,7 +1405,7 @@ Item {
                              { label: qsTr("Installing"), word: "Installing" },
                              { label: qsTr("Needs attention"), word: "Needs attention" },
                              { label: qsTr("Stopped"), word: "Stopped" } ]
-                    Button {
+                    OmnuvButton {
                         required property var modelData
                         readonly property int n: modelData.word === "" ? Omnuv.machines.count : root.countOf(modelData.word)
                         visible: modelData.word === "" || n > 0
