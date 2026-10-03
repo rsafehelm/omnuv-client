@@ -174,14 +174,27 @@ Dialog {
 
     header: ColumnLayout {
         spacing: 2
-        Label {
+        RowLayout {
             Layout.fillWidth: true
             Layout.leftMargin: 24
-            Layout.topMargin: 20
-            text: qsTr("Deploy")
-            font.family: Theme.displayFamily
-            font.pixelSize: 18
-            font.weight: Theme.strongWeight
+            Layout.rightMargin: 12
+            Layout.topMargin: 12
+            Label {
+                Layout.fillWidth: true
+                Layout.topMargin: 8
+                text: qsTr("Deploy")
+                font.family: Theme.displayFamily
+                font.pixelSize: 18
+                font.weight: Theme.strongWeight
+            }
+            // The design's [×], as the web's: Esc was the only way out.
+            ToolButton {
+                objectName: "deployClose"
+                text: "\u2715"
+                enabled: !flow.sending
+                Accessible.name: qsTr("Close")
+                onClicked: flow.close()
+            }
         }
         RowLayout {
             Layout.fillWidth: true

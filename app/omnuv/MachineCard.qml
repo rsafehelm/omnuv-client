@@ -502,7 +502,10 @@ ItemDelegate {
                         anchors.leftMargin: 10
                         anchors.rightMargin: 10
                         verticalAlignment: Text.AlignVCenter
-                        text: "ssh " + model.user + "@" + model.shortHost
+                        // The name by id, as the web's (the parity sheet: the
+                        // desktop showed `<name>-<project8>.internal`, a name a
+                        // newer machine can take); shortened in the middle.
+                        text: "ssh " + model.user + "@" + model.host
                         font.family: Theme.monoFamily
                         font.pixelSize: 12
                         elide: Label.ElideMiddle
@@ -512,7 +515,7 @@ ItemDelegate {
                     flat: true
                     text: qsTr("Copy command")
                     Accessible.name: qsTr("Copy the ssh command for %1").arg(model.name)
-                    onClicked: { Omnuv.copyText("ssh " + model.user + "@" + model.shortHost); copied.show() }
+                    onClicked: { Omnuv.copyText("ssh " + model.user + "@" + model.host); copied.show() }
                 }
             }
             Label {

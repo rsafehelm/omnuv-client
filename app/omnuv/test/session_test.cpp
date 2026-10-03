@@ -1148,6 +1148,8 @@ private slots:
         QCOMPARE(name->property("text").toString(),QString("ubuntu-1"));
         // The web's estimate, word for word: Core's price for the size.
         auto estimate=object->findChild<QObject*>("deployEstimate"); QVERIFY(estimate);
+        // The design's [×]: Esc is not the only way out (the parity sheet).
+        auto closer=object->findChild<QObject*>("deployClose"); QVERIFY(closer);
         QCOMPARE(estimate->property("text").toString(),QString("Estimate €0.0300/h · nothing is charged in closed testing."));
         QVERIFY(name->setProperty("text",QStringLiteral("-notes")));
         auto confirm=object->findChild<QObject*>("deployConfirm"); QVERIFY(confirm);

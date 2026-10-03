@@ -599,7 +599,10 @@ Item {
             spacing: Theme.spacing
             Label {
                 Layout.fillWidth: true
-                text: qsTr("This removes the instance and everything on it. It cannot be undone.")
+                // Section 5's sentence: an app instance says the app goes too.
+                text: deleteMachine.targetApp !== ""
+                      ? qsTr("This removes the instance and the app on it. It cannot be undone.")
+                      : qsTr("This removes the instance and everything on it. It cannot be undone.")
                 wrapMode: Text.WordWrap
             }
             Repeater {
