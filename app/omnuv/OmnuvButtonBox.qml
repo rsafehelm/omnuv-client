@@ -10,6 +10,11 @@ import QtQuick
 import QtQuick.Controls
 
 DialogButtonBox {
+    // **One order on every platform** (the parity sheet, 3 October 2026): the
+    // style's own layout put Delete before Cancel on Windows and after it on
+    // Linux. Mac's order, Cancel then the action, is the web's: the primary
+    // is the rightmost button, so the eye and the pointer find it in one place.
+    buttonLayout: DialogButtonBox.MacLayout
     background: Rectangle {
         // The web's sunken surface: the style's own base was white on a dark
         // dialog, under white button text (3 October 2026).

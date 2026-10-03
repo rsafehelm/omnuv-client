@@ -1077,8 +1077,19 @@ private slots:
         QVERIFY(QMetaObject::invokeMethod(popup,"open")); QTRY_VERIFY(popup->property("visible").toBool());
         QVERIFY(!box->property("visible").toBool()); QVERIFY(!box->property("checked").toBool());
         QTRY_VERIFY(confirm->property("enabled").toBool());
-        QVERIFY(QMetaObject::invokeMethod(popup,"accept"));
+        // Cancel first and the action last, on every platform (the parity
+        // sheet: Windows' own layout put Delete first). Linux's native order
+        // is already Cancel first, so the position alone could not fail here:
+        // the layout itself is pinned, the one order on every platform.
+        auto cancel=qobject_cast<QQuickItem*>(object->findChild<QObject*>("deleteCancel")); QVERIFY(cancel);
+        auto action=qobject_cast<QQuickItem*>(confirm); QVERIFY(action);
+        QVERIFY(cancel->mapToScene(QPointF(0,0)).x() < action->mapToScene(QPointF(0,0)).x());
+        auto footer=popup->property("footer").value<QObject*>(); QVERIFY(footer);
+        QCOMPARE(footer->property("buttonLayout").toInt(),1); // DialogButtonBox.MacLayout
+        QVERIFY(QMetaObject::invokeMethod(confirm,"click"));
         QTRY_VERIFY(server.find("/v1/instances/i-2?project=a")>=0);
+        QTest::qWait(300);
+        QCOMPARE(server.count("/v1/instances/i-2?project=a"),1);
         QCOMPARE(server.count("/v1/instances/i-2?project=a&unprotect=true"),0);
         QCOMPARE(server.count("/v1/deployments?project=a"),0);
     }

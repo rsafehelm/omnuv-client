@@ -624,6 +624,7 @@ Item {
         footer: OmnuvButtonBox {
             Button {
                 id: cancelDelete
+                objectName: "deleteCancel"
                 text: qsTr("Cancel")
                 DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
             }
@@ -632,8 +633,11 @@ Item {
                 text: qsTr("Delete %1").arg(deleteMachine.targetName)
                 Accessible.name: text
                 enabled: !deleteMachine.targetProtected || protectionBox.checked
-                DialogButtonBox.buttonRole: DialogButtonBox.DestructiveRole
-                onClicked: deleteMachine.accept()
+                // The action, last, in the warn colour the web's danger
+                // button uses: a Destructive role is put first by Mac's layout.
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+                palette.buttonText: Theme.highContrast ? palette.buttonText : Theme.fillCaution
+                // No onClicked: the accept role accepts the dialog, once.
             }
         }
         onAccepted: Omnuv.deleteMachine(row, targetName, targetProtected && protectionBox.checked, targetId)
