@@ -1043,6 +1043,24 @@ if ESTATE_JS="$tmp"/estate.js node app/omnuv/test/estate_test.js >/dev/null; the
 fi
 echo "the estate's words hold, and the test fails when they do not"
 )
+
+# **The shipped fonts are the pinned ones** (3 October 2026). Each file's
+# sha256 is in app/omnuv/fonts/README.md, beside where it came from; a file
+# replaced without the README moving fails here, and so does one the
+# resources stopped listing, which would make Theme fall back silently.
+step "The shipped fonts are the ones app/omnuv/fonts/README.md pins"
+(
+set -euo pipefail
+for f in InstrumentSans-Variable.ttf JetBrainsMono-Regular.ttf JetBrainsMono-Medium.ttf; do
+  got=$(sha256sum "app/omnuv/fonts/$f" | cut -d' ' -f1)
+  grep -q "\`$f\`.*$got" app/omnuv/fonts/README.md || { echo "$f is $got, which README.md does not pin"; exit 1; }
+  grep -q "<file>fonts/$f</file>" app/omnuv/omnuv.qrc || { echo "$f is not in omnuv.qrc"; exit 1; }
+done
+for l in OFL-InstrumentSans.txt OFL-JetBrainsMono.txt; do
+  grep -q "<file>fonts/$l</file>" app/omnuv/omnuv.qrc || { echo "the licence $l is not shipped"; exit 1; }
+done
+echo "three fonts, as pinned, with their licences"
+)
 fi
 
 if want handlers; then

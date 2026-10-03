@@ -65,7 +65,10 @@ QtObject {
     // Two rules from the same page that this file cannot enforce and every
     // view must follow: sentence case everywhere, and **no bold and no
     // italic** — the ramp has neither, and emphasis is Semibold.
-    readonly property var textFamilies: ["Segoe UI Variable", "Segoe UI"]
+    // Instrument Sans first, the web console's face, shipped in the client
+    // (fonts/, 3 October 2026) so it is installed everywhere; the system's
+    // after it for a build whose font failed to load.
+    readonly property var textFamilies: ["Instrument Sans", "Segoe UI Variable", "Segoe UI"]
 
     // **QML's `font` has `family` and no `families`.** The value type exposes
     // one name (`QQuickFontValueType`: family, styleName, bold, weight, italic,
@@ -95,13 +98,16 @@ QtObject {
     // ramp uses Display from Subtitle (20px) up, where its tighter spacing and
     // finer joins are what make a Windows 11 title look like one. Where it is
     // not installed the text family is the answer, which is what it was.
-    readonly property string displayFamily: firstInstalled(["Segoe UI Variable Display"].concat(textFamilies))
+    // The web's headings are Bricolage Grotesque, falling back to Instrument
+    // Sans; the client ships the fallback, so its headings are what the web's
+    // are without its display face.
+    readonly property string displayFamily: firstInstalled(textFamilies)
 
     // A machine's private name is something a person copies into a terminal,
     // so it is drawn in the face a terminal uses. Cascadia ships with Windows
     // 11; Consolas with everything before it. `monospace` is not a family on
     // Windows and resolved to Courier New, which is nobody's idea of native.
-    readonly property string monoFamily: firstInstalled(["Cascadia Mono", "Cascadia Code", "Consolas", "monospace"])
+    readonly property string monoFamily: firstInstalled(["JetBrains Mono", "Cascadia Mono", "Cascadia Code", "Consolas", "Menlo", "monospace"])
 
     // Caption 12/16 Regular. Microsoft's stated floor for legibility is 12px
     // Regular, so nothing in this application goes below it.

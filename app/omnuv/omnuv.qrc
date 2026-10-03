@@ -13,6 +13,8 @@
         <file>MachineArt.qml</file>
         <file>MachineCard.qml</file>
         <file>OmnuvButton.qml</file>
+        <file>OmnuvSurface.qml</file>
+        <file>OmnuvDialogTitle.qml</file>
         <file>OmnuvButtonBox.qml</file>
         <file>MessagesPanel.qml</file>
         <file>OmnuvCliSegue.qml</file>
@@ -23,6 +25,11 @@
         <file>StreamSettingsSheet.qml</file>
         <file>Theme.qml</file>
         <file>WorkloadMark.qml</file>
+        <file>fonts/InstrumentSans-Variable.ttf</file>
+        <file>fonts/JetBrainsMono-Regular.ttf</file>
+        <file>fonts/JetBrainsMono-Medium.ttf</file>
+        <file>fonts/OFL-InstrumentSans.txt</file>
+        <file>fonts/OFL-JetBrainsMono.txt</file>
         <file>logos/nvidia.svg</file>
         <file>logos/tux.svg</file>
         <file>card-shadow.png</file>
