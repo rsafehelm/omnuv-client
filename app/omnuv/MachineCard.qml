@@ -132,6 +132,14 @@ ItemDelegate {
         var s = Math.max(0, Math.round((now - t) / 1000))
         return s < 60 ? qsTr("%1 s").arg(s) : qsTr("%1 min").arg(Math.floor(s / 60))
     }
+    // "1m 17s" or "40s": how long a launch has been going, the web's spelling.
+    function elapsed(at) {
+        var t = at && at.getTime ? at.getTime() : NaN
+        if (isNaN(t) || now <= 0) return ""
+        var s = Math.max(0, Math.round((now - t) / 1000))
+        return s < 60 ? qsTr("%1s").arg(s) : qsTr("%1m %2s").arg(Math.floor(s / 60)).arg(s % 60)
+    }
+
     // D-7: past twice a measured install, and never on a guess.
     readonly property bool takingLonger: {
         if (!installing || model.typicalSecs <= 0) return false
@@ -547,14 +555,28 @@ ItemDelegate {
                             if (steps[i].state === order[o]) return steps[i]
                     return steps.length > 0 ? steps[steps.length - 1] : null
                 }
+                // **One line, the operator's option B** (3 October 2026): the
+                // step that matters, its place in the launch, whether it was
+                // observed, and how long the launch has run, as the install
+                // line says "Step 2 of 3 · Starting the application".
+                readonly property int at: current ? steps.indexOf(current) + 1 : 0
+                readonly property string took: card.elapsed(model.since)
                 Label {
                     Layout.fillWidth: true
-                    text: ladderView.current ? (ladderView.current.state === "failed" ? qsTr("Stopped at %1").arg(ladderView.current.label)
-                                                : ladderView.current.label + (ladderView.current.state === "unknown" ? qsTr(" \u00B7 not observed") : ""))
-                          : ""
-                    font.pixelSize: 13
-                    opacity: 0.8
+                    text: !ladderView.current ? ""
+                          : (ladderView.current.state === "failed" ? qsTr("Stopped at %1").arg(ladderView.current.label)
+                                                                    : ladderView.current.label)
+                            + " \u00B7 " + qsTr("%1 of %2").arg(ladderView.at).arg(ladderView.steps.length)
+                            + (ladderView.current.state === "unknown" ? " \u00B7 " + qsTr("not observed") : "")
+                            + (ladderView.took !== "" ? " \u00B7 " + ladderView.took : "")
+                    font.family: Theme.textFamily
+                    font.pixelSize: 14
+                    font.weight: Theme.strongWeight
                     elide: Label.ElideRight
+                    Accessible.name: !ladderView.current ? ""
+                        : [ladderView.current.label, qsTr("step %1 of %2").arg(ladderView.at).arg(ladderView.steps.length),
+                           ladderView.current.state === "unknown" ? qsTr("not observed") : "", ladderView.took]
+                          .filter(function (p) { return p !== "" }).join(", ")
                 }
                 RowLayout {
                     Layout.fillWidth: true
