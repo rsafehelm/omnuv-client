@@ -677,6 +677,35 @@ if theme_dark("fillCaution") == theme_dark("fillCritical"):
 PY
 )
 
+# **Material's accent is Theme's** (the parity sheet, 3 October 2026).
+#
+# On macOS and Linux the style is Material, which reads its accent from
+# the environment as it loads and ignores the window's palette, so
+# `appearance.cpp` hands it Theme's accent, dark and light. That is a copy,
+# and a copy is only safe while something compares it.
+step "Material's accent is Theme's"
+(
+set -euo pipefail
+python3 - <<'PY'
+import re, sys, pathlib
+
+theme = pathlib.Path("app/omnuv/Theme.qml").read_text()
+impl = pathlib.Path("app/omnuv/appearance.cpp").read_text()
+m = re.search(r'readonly property color accent:(?:(?!\n\s*readonly property)[\s\S])*?"#([0-9A-Fa-f]{6})"\s*:\s*"#([0-9A-Fa-f]{6})"', theme)
+if not m:
+    sys.exit("Theme.qml no longer defines accent as a dark/light pair")
+c = re.search(r'QT_QUICK_CONTROLS_MATERIAL_ACCENT",\s*dark \? "#([0-9A-Fa-f]{6})" : "#([0-9A-Fa-f]{6})"', impl)
+if not c:
+    sys.exit("appearance.cpp no longer hands Material an accent")
+want, got = (m.group(1).upper(), m.group(2).upper()), (c.group(1).upper(), c.group(2).upper())
+if want != got:
+    sys.exit("Theme.accent is #%s/#%s and Material is handed #%s/#%s; change both in one diff" % (want + got))
+if want[0] == want[1]:
+    sys.exit("the dark and light accents read the same; the extraction is reading the wrong thing")
+print("accent dark #%s light #%s" % want)
+PY
+)
+
 # **"I could not tell" never renders as a zero.**
 #
 # Two of the five readings are genuinely unknowable and both are unknown

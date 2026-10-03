@@ -351,6 +351,19 @@ void OmnuvAppearance::applyStyle()
     // or a Linux desktop FluentWinUI3 would be the foreign look, which is the
     // thing this change exists to stop doing on Windows.
     {
+        // **Material's accent is its own, not the palette's** (the parity
+        // sheet, 3 October 2026): the window's `palette.accent` binding moved
+        // nothing here, and macOS drew every primary button in Material's
+        // default purple, #9C27B0, where the web and Windows draw Theme's
+        // violet. Material reads its accent from the environment as it loads,
+        // so Theme's two values are handed over here, before it does. Not over
+        // one the person set, and not under high contrast, whose colours are
+        // the system's.
+        if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_MATERIAL_ACCENT") &&
+            qEnvironmentVariableIsEmpty("OMNUV_CONTRAST")) {
+            const bool dark = forcedTheme() >= 0 ? forcedTheme() == 1 : queryDark();
+            qputenv("QT_QUICK_CONTROLS_MATERIAL_ACCENT", dark ? "#7C72F0" : "#5B50E8");
+        }
         QQuickStyle::setStyle(QStringLiteral("Material"));
     }
 #endif
