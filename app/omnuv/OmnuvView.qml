@@ -574,10 +574,13 @@ Item {
     Dialog {
         id: deleteMachine
         background: Rectangle {
-            color: deleteMachine.palette.base
+            color: Theme.highContrast ? deleteMachine.palette.base : Theme.fillCard
             radius: 16
             border.color: Theme.strokeCard
         }
+        Overlay.modal: Rectangle { color: "#8C000000" }
+        Binding { target: deleteMachine.palette; property: "accent"; value: Theme.accent; when: !Theme.highContrast }
+        Binding { target: deleteMachine.palette; property: "highlight"; value: Theme.accent; when: !Theme.highContrast }
         objectName: "deleteMachineDialog"
         anchors.centerIn: parent
         width: Math.min(root.width - 32, 520)

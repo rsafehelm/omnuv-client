@@ -27,12 +27,20 @@ Dialog {
     height: Math.min(parent ? parent.height - 32 : 760, 760)
     padding: 0
     title: qsTr("Deploy")
-    // Opaque: the window's background may be Mica.
+    focus: true
+    // **Opaque, on a dimmed page** (3 October 2026: the style's base was
+    // translucent and the page's cards read through the tiles). The web's
+    // surface, and the modal dim the web's dialog sits on.
     background: Rectangle {
-        color: flow.palette.base
+        color: Theme.highContrast ? flow.palette.base : Theme.fillCard
         radius: 16
         border.color: Theme.strokeCard
     }
+    Overlay.modal: Rectangle { color: "#8C000000" }
+    // A popup does not inherit the page's palette: the accent again here, so
+    // Deploy and the radios are the web's colour, not the system's.
+    Binding { target: flow.palette; property: "accent"; value: Theme.accent; when: !Theme.highContrast }
+    Binding { target: flow.palette; property: "highlight"; value: Theme.accent; when: !Theme.highContrast }
 
     property int step: 1
     property var chosen: null
@@ -91,6 +99,7 @@ Dialog {
         step = 1
         refusedField = ""
         refusedText = ""
+        Qt.callLater(focusTile)
     }
     function deploy() {
         if (chosen === null || blockedBecause !== "" || sending) return
@@ -112,6 +121,24 @@ Dialog {
     onAboutToShow: {
         if (chosen === null) step = 1
         Omnuv.loadDeployables()
+    }
+    // Focus starts on the chosen tile, else the first that can be had.
+    onOpened: Qt.callLater(focusTile)
+    onItemsChanged: if (opened && step === 1) Qt.callLater(focusTile)
+
+    // The tiles, by id, as they register; arrows move among the available
+    // ones in the catalogue's order (apps, then plain instances).
+    property var tiles: ({})
+    readonly property var order: apps.concat(plain).filter(function (d) { return d.available }).map(function (d) { return d.id })
+    function focusTile(id) {
+        if (step !== 1) return
+        var at = id || (chosen !== null && order.indexOf(chosen.id) >= 0 ? chosen.id : order[0])
+        if (at && tiles[at]) tiles[at].forceActiveFocus(Qt.TabFocusReason)
+    }
+    function moveTile(from, step) {
+        var i = order.indexOf(from)
+        if (order.length === 0) return
+        focusTile(order[(i < 0 ? 0 : (i + step + order.length) % order.length)])
     }
 
     Connections {
@@ -251,9 +278,14 @@ Dialog {
                                 opacity: modelData.available ? 1 : 0.55
                                 onClicked: flow.pick(modelData)
                                 onDoubleClicked: flow.choose(modelData)
+                                Component.onCompleted: flow.tiles[modelData.id] = tile
                                 Keys.onSpacePressed: flow.pick(modelData)
                                 Keys.onReturnPressed: flow.choose(modelData)
                                 Keys.onEnterPressed: flow.choose(modelData)
+                                Keys.onRightPressed: flow.moveTile(modelData.id, 1)
+                                Keys.onDownPressed: flow.moveTile(modelData.id, 1)
+                                Keys.onLeftPressed: flow.moveTile(modelData.id, -1)
+                                Keys.onUpPressed: flow.moveTile(modelData.id, -1)
 
                                 background: Rectangle {
                                     radius: 12

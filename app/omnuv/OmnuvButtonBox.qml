@@ -11,7 +11,9 @@ import QtQuick.Controls
 
 DialogButtonBox {
     background: Rectangle {
-        color: Qt.tint(palette.base, Theme.highContrast ? "transparent" : "#0B000000")
+        // The web's sunken surface: the style's own base was white on a dark
+        // dialog, under white button text (3 October 2026).
+        color: Theme.highContrast ? palette.base : Theme.fillSubtle
         bottomLeftRadius: Theme.radiusOverlay
         bottomRightRadius: Theme.radiusOverlay
     }

@@ -21,6 +21,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQml.Models
 
 import Omnuv 1.0
 
@@ -194,6 +195,52 @@ ItemDelegate {
         if (stopped) card.powerRequested("start")
         else if (attention) consoleKnown ? card.consoleRequested() : card.terminalRequested()
         else card.primaryActivated()
+    }
+
+    // ---- More (⋯), section 2's order: what to use, what it is doing,
+    // then Delete… last. Only what this card offers.
+    readonly property var moreItems: {
+        var out = []
+        function add(name, text, enabled, extra) {
+            var it = { name: name, text: text, enabled: enabled, danger: false, separator: false }
+            for (var k in extra || {}) it[k] = extra[k]
+            out.push(it)
+        }
+        if (stream && !stopped) {
+            add("terminal", qsTr("Terminal"), model.ready)
+            add("streamSettings", qsTr("Stream settings"), true)
+        }
+        if (consoleKnown && !attention) add("console", qsTr("Console \u2197"), true)
+        if (attention && consoleKnown) add("terminal", qsTr("Terminal"), model.host !== "")
+        if (usable || attention) {
+            add("reboot", qsTr("Restart"), true)
+            add("stop", qsTr("Stop"), true)
+        }
+        add("deleteMachine", qsTr("Delete\u2026"), !Omnuv.ordering, { danger: true, separator: out.length > 0 })
+        return out
+    }
+    property bool choosing: false
+    function openMore(last) {
+        moreMenu.open()
+        moveMore(last ? moreItems.length - 1 : 0)
+    }
+    function moveMore(i) {
+        // The nearest usable item from `i`, towards the middle.
+        var step = i === 0 ? 1 : -1
+        for (var j = i; j >= 0 && j < moreItems.length; j += step) {
+            if (moreItems[j].enabled) { moreMenu.currentIndex = j; return }
+        }
+    }
+    function chooseMore(name) {
+        choosing = true
+        moreMenu.close()
+        choosing = false
+        if (name === "terminal") card.terminalRequested()
+        else if (name === "streamSettings") card.settingsRequested()
+        else if (name === "console") card.consoleRequested()
+        else if (name === "reboot") card.powerRequested("reboot")
+        else if (name === "stop") card.powerRequested("stop")
+        else if (name === "deleteMachine") card.deleteRequested()
     }
 
     onClicked: if (model.ready && !stopped && !attention) card.primaryActivated()
@@ -624,59 +671,51 @@ ItemDelegate {
                     Accessible.name: qsTr("More actions for %1").arg(model.name)
                     ToolTip.visible: hovered
                     ToolTip.text: Accessible.name
-                    onClicked: moreMenu.open()
+                    onClicked: card.openMore()
+                    Keys.onDownPressed: card.openMore()
+                    Keys.onUpPressed: card.openMore(true)
 
-                    // Section 2's order: what to use, what it is doing, then
-                    // Delete… last.
+                    // **The WAI-ARIA menu button** (section 2, "Keyboard and
+                    // focus order"): opened by a click or a key, focus is in
+                    // the menu on its first item (↑ opens on its last); ↓/↑
+                    // move, Home/End jump, Enter/Space choose, Esc closes and
+                    // gives focus back to More. Built from `moreItems`, so
+                    // only the items this card offers exist and the arrows
+                    // never land on a hidden one.
                     Menu {
                         id: moreMenu
+                        objectName: "moreMenu"
                         y: moreButton.height
+                        focus: true
+                        onClosed: if (!card.choosing) moreButton.forceActiveFocus()
 
-                        MenuItem {
-                            text: qsTr("Terminal")
-                            visible: card.stream && !card.stopped
-                            height: visible ? implicitHeight : 0
-                            enabled: model.ready
-                            onTriggered: card.terminalRequested()
-                        }
-                        MenuItem {
-                            text: qsTr("Stream settings")
-                            visible: card.stream && !card.stopped
-                            height: visible ? implicitHeight : 0
-                            onTriggered: card.settingsRequested()
-                        }
-                        MenuItem {
-                            objectName: "consoleItem"
-                            text: qsTr("Console \u2197")
-                            visible: card.consoleKnown && !(card.attention && card.consoleKnown)
-                            height: visible ? implicitHeight : 0
-                            onTriggered: card.consoleRequested()
-                        }
-                        MenuItem {
-                            text: qsTr("Terminal")
-                            visible: card.attention && card.consoleKnown
-                            height: visible ? implicitHeight : 0
-                            enabled: model.host !== ""
-                            onTriggered: card.terminalRequested()
-                        }
-                        MenuItem {
-                            text: qsTr("Restart")
-                            visible: card.usable || card.attention
-                            height: visible ? implicitHeight : 0
-                            onTriggered: card.powerRequested("reboot")
-                        }
-                        MenuItem {
-                            text: qsTr("Stop")
-                            visible: card.usable || card.attention
-                            height: visible ? implicitHeight : 0
-                            onTriggered: card.powerRequested("stop")
-                        }
-                        MenuSeparator {}
-                        MenuItem {
-                            objectName: "deleteMachine"
-                            text: qsTr("Delete…")
-                            enabled: !Omnuv.ordering
-                            onTriggered: card.deleteRequested()
+                        Instantiator {
+                            model: card.moreItems
+                            delegate: MenuItem {
+                                required property var modelData
+                                required property int index
+                                objectName: modelData.name
+                                text: modelData.text
+                                enabled: modelData.enabled
+                                // Delete… in the warn tone, under a rule.
+                                palette.windowText: modelData.danger ? Theme.fillCaution : moreMenu.palette.windowText
+                                topInset: modelData.separator ? 9 : 0
+                                topPadding: modelData.separator ? 15 : padding
+                                Rectangle {
+                                    visible: modelData.separator
+                                    x: 0; y: 4; width: parent.width; height: 1
+                                    color: Theme.strokeCard
+                                }
+                                Keys.onReturnPressed: triggered()
+                                Keys.onEnterPressed: triggered()
+                                Keys.onPressed: function (event) {
+                                    if (event.key === Qt.Key_Home) { card.moveMore(0); event.accepted = true }
+                                    else if (event.key === Qt.Key_End) { card.moveMore(card.moreItems.length - 1); event.accepted = true }
+                                }
+                                onTriggered: card.chooseMore(modelData.name)
+                            }
+                            onObjectAdded: function (index, object) { moreMenu.insertItem(index, object) }
+                            onObjectRemoved: function (index, object) { moreMenu.removeItem(object) }
                         }
                     }
                 }
