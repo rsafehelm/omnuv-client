@@ -880,6 +880,26 @@ private slots:
         QTRY_COMPARE(done.size(),2); QVERIFY(done[1][0].toBool());
         Q_UNUSED(second);
     }
+    // The card's workload mark (3 October 2026), from what the view already
+    // carries: the Ollama image a chat, a web port a page, a stream a game,
+    // then Windows, a GPU, Linux; and a GPU flagged whatever the mark.
+    void theCardNamesItsWorkload() {
+        MachineModel m;
+        m.replace(QJsonArray{
+            QJsonObject{{"id","1"},{"name","a"},{"image","ubuntu-26.04-ollama"},{"web_port",8080},{"gpu",QJsonObject{{"model","RTX 3090"},{"count",1}}}},
+            QJsonObject{{"id","2"},{"name","b"},{"image","ubuntu-26.04"},{"web_port",3000}},
+            QJsonObject{{"id","3"},{"name","c"},{"image","ubuntu-26.04-gaming"},{"stream_app","Desktop"},{"gpu",QJsonObject{{"model","RTX 3090"}}}},
+            QJsonObject{{"id","4"},{"name","d"},{"image","windows-server-2025"},{"os_family","windows"}},
+            QJsonObject{{"id","5"},{"name","e"},{"image","ubuntu-26.04-nvidia"},{"os_family","linux"},{"gpu",QJsonObject{{"model","RTX 3090"}}}},
+            QJsonObject{{"id","6"},{"name","f"},{"image","ubuntu-26.04"},{"os_family","linux"}}});
+        const int w=m.roleNames().key("workload",-1), g=m.roleNames().key("hasGpu",-1);
+        QVERIFY(w>=0 && g>=0);
+        const QStringList want{"chat","web","game","windows","gpu","linux"};
+        for (int i=0;i<want.size();++i) QCOMPARE(m.data(m.index(i),w).toString(),want[i]);
+        QCOMPARE(m.data(m.index(0),g),QVariant(true));
+        QCOMPARE(m.data(m.index(1),g),QVariant(false));
+        QCOMPARE(m.data(m.index(2),g),QVariant(true));
+    }
     // Core's `protected` (0195, D26) reaches the card as `protected`. An older
     // Core sends nothing, which is not protected.
     void theCardReadsProtectionFromTheView() {

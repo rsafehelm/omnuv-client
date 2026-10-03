@@ -91,6 +91,8 @@ QVariant MachineModel::data(const QModelIndex& index, int role) const
     case StatusRole:    return m.status;
     case StreamAppRole: return m.streamApp;
     case WebPortRole:   return m.webPort;
+    case WorkloadRole:  return m.workload;
+    case HasGpuRole:    return m.hasGpu;
     case StreamedRole:  return m.streamed();
     case HostRole:      return m.host;
     case UserRole:      return m.defaultUser;
@@ -121,6 +123,8 @@ QHash<int, QByteArray> MachineModel::roleNames() const
         { StatusRole,    "status" },
         { StreamAppRole, "streamApp" },
         { WebPortRole,   "webPort" },
+        { WorkloadRole,  "workload" },
+        { HasGpuRole,    "hasGpu" },
         { StreamedRole,  "streamed" },
         { HostRole,      "host" },
         { UserRole,      "user" },
@@ -148,6 +152,30 @@ QHash<int, QByteArray> MachineModel::roleNames() const
 // and meant a machine going from Starting to Running could never *change* on
 // screen — the card that was starting was gone before the one that is running
 // arrived. Rows are matched by Core's id, never by name.
+// Most specific first: what a person does with the machine outranks what it
+// runs on. The Ollama image is a chat; any other web recipe a page; a stream
+// a game; then the OS, and a card under a Linux machine shows the card.
+QString MachineModel::workloadOf(const QString& image, const QString& osFamily,
+                                 bool streamed, int webPort, bool hasGpu)
+{
+    if (image.contains(QLatin1String("ollama"))) {
+        return QStringLiteral("chat");
+    }
+    if (webPort > 0) {
+        return QStringLiteral("web");
+    }
+    if (streamed) {
+        return QStringLiteral("game");
+    }
+    if (osFamily == QLatin1String("windows")) {
+        return QStringLiteral("windows");
+    }
+    if (hasGpu) {
+        return QStringLiteral("gpu");
+    }
+    return QStringLiteral("linux");
+}
+
 void MachineModel::replace(const QJsonArray& machines)
 {
     // Remember what each machine was, so a *transition* can be told from a
@@ -196,6 +224,9 @@ void MachineModel::replace(const QJsonArray& machines)
         parts << QStringLiteral("%1 vCPU").arg(o["vcpus"].toInt());
         parts << QStringLiteral("%1 GiB").arg(o["memory_mib"].toInt() / 1024);
         const QJsonObject gpu = o["gpu"].toObject();
+        m.hasGpu = !gpu.isEmpty();
+        m.workload = workloadOf(o["image"].toString(), o["os_family"].toString(),
+                                !m.streamApp.isEmpty(), m.webPort, m.hasGpu);
         if (!gpu.isEmpty()) {
             const int count = gpu["count"].toInt(1);
             parts << (count > 1 ? QStringLiteral("%1 × %2").arg(count).arg(gpu["model"].toString())

@@ -20,6 +20,9 @@
         <file>Pill.qml</file>
         <file>StreamSettingsSheet.qml</file>
         <file>Theme.qml</file>
+        <file>WorkloadMark.qml</file>
+        <file>logos/nvidia.svg</file>
+        <file>logos/tux.svg</file>
         <file>card-shadow.png</file>
         <file>estate.js</file>
         <file>omnuv.svg</file>

@@ -29,6 +29,12 @@ struct Machine
     // A web recipe's page port on the machine's private name (Core's
     // `web_port`, 2 October 2026): Play opens a browser there instead.
     int webPort = 0;
+    // **What the machine is for, as the card draws it** (the operator, 3
+    // October 2026: "a stylized logo representing the workload"). One of
+    // chat, web, game, windows, gpu, linux; derived in `workloadOf()` from
+    // what Core already sends, so no new field crosses the API.
+    QString workload;
+    bool hasGpu = false;
     QString defaultUser;
     QString summary;   // "8 vCPU · 16 GiB · RTX 3090"
 
@@ -123,12 +129,19 @@ class MachineModel : public QAbstractListModel
     Q_PROPERTY(bool loaded READ loaded NOTIFY countChanged)
 
 public:
+    // The card's workload mark, from the image, the OS, and what the machine
+    // serves. Static, so a test can hold every case to a word.
+    static QString workloadOf(const QString& image, const QString& osFamily,
+                              bool streamed, int webPort, bool hasGpu);
+
     enum Role {
         NameRole = Qt::UserRole + 1,
         RegionRole,
         StatusRole,
         StreamAppRole,
         WebPortRole,
+        WorkloadRole,
+        HasGpuRole,
         StreamedRole,
         HostRole,
         UserRole,

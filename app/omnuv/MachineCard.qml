@@ -264,26 +264,18 @@ ItemDelegate {
             }
         }
 
-        // What it is for, on the picture: a stream or a shell. Only where the
-        // icon font is — the button below says the same thing in a word.
-        Rectangle {
-            visible: Theme.iconsInstalled
+        // What it is for, on the picture, as a mark (WorkloadMark.qml): a
+        // chat, a page, a game, Windows, a GPU, or Linux, and the card's eye
+        // when there is a GPU under it.
+        WorkloadMark {
             x: Theme.padding
             y: art.y + (art.height - height) / 2
-            width: 36
-            height: 36
-            radius: Theme.radiusOverlay
-            color: Theme.onDarkSurface ? "#73000000" : "#EBFFFFFF"
+            workload: model.workload
+            hasGpu: model.hasGpu
+            asleep: !card.booted
             scale: card.hovered ? 1.06 : 1
             Behavior on scale {
                 NumberAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic }
-            }
-
-            Glyph {
-                anchors.centerIn: parent
-                icon: model.streamed ? Theme.icon.game : model.webPort > 0 ? Theme.icon.globe : Theme.icon.terminal
-                size: 18
-                opacity: card.booted ? 1 : 0.6
             }
         }
 
@@ -612,9 +604,11 @@ ItemDelegate {
                         // the stream. An SSH session is still how a person fixes a
                         // rig that will not stream, which is exactly when they need
                         // it most.
+                        // And for a web recipe, whose button opens its page
+                        // (the operator, 3 October 2026).
                         MenuItem {
                             text: qsTr("Terminal")
-                            visible: model.streamed
+                            visible: model.streamed || model.webPort > 0
                             height: visible ? implicitHeight : 0
                             enabled: model.ready
                             onTriggered: card.terminalRequested()
