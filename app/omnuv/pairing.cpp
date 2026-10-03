@@ -198,7 +198,8 @@ void OmnuvPairing::deliver(const QString& host,
                            const QString& clientName,
                            const QString& fromAddress,
                            const QString& user,
-                           const QString& password)
+                           const QString& password,
+                           const QString& expectedAddress)
 {
     cancel();
     m_scope = new QObject(this);
@@ -214,9 +215,21 @@ void OmnuvPairing::deliver(const QString& host,
     // address is what is dialled: there is then no second resolution for
     // anything to get between.
     const QPointer<QObject> scope = m_scope;
-    QHostInfo::lookupHost(host, m_scope, [this, scope, host, pin, clientName, fromAddress, user, password](const QHostInfo& info) {
+    //
+    // **And only to this machine's own address** (3 October 2026): a name in
+    // the overlay's range can still be another machine's — a deleted one's
+    // answer cached on the device, or a peer since given that address. Core
+    // names the address it gave this machine; the name must resolve to it,
+    // or the login is not sent.
+    QHostInfo::lookupHost(host, m_scope, [this, scope, host, pin, clientName, fromAddress, user, password, expectedAddress](const QHostInfo& info) {
         if (!scope || scope != m_scope) return;
         const QString address = overlayAddress(info.addresses());
+        if (!address.isEmpty() && !expectedAddress.isEmpty() && address != expectedAddress) {
+            giveUp(QObject::tr("This machine's name still points at another machine on your network, so its login was not sent. "
+                               "Wait a minute and try again."),
+                   QObject::tr("%1 resolved to %2; this machine is %3").arg(host, address, expectedAddress));
+            return;
+        }
         if (address.isEmpty()) {
             giveUp(QObject::tr("This machine's name did not resolve to your private network, so its login was not sent. "
                                "Join this device to the network and try again."),

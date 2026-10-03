@@ -264,7 +264,7 @@ Item {
     function startStream(target, appIndex) {
         if (!validTarget(target)) return
         var want = streamShape()
-        var had = Omnuv.launchedShape(target.host)
+        var had = Omnuv.launchedShape(target.id)
         var running = launchApps.getRunningAppId() !== 0 ? launchApps.getRunningAppName() : ""
         if (running !== "Desktop" || had === want) {
             beginStream(target, appIndex, want)
@@ -298,7 +298,7 @@ Item {
             console.info("omnuv: play: " + StreamingPreferences.fps + " fps on a " + hz + " Hz display; turning Smooth motion on")
             StreamingPreferences.framePacing = true
         }
-        Omnuv.setLaunchedShape(target.host, want)
+        Omnuv.setLaunchedShape(target.id, want)
         var row = Omnuv.targetRow(target)
         var component = Qt.createComponent("qrc:/omnuv/OmnuvSegue.qml")
         var segue = component.createObject(stackView, {
@@ -629,6 +629,7 @@ Item {
         title: qsTr("Delete %1?").arg(targetName)
         property int row: -1
         property string targetName: ""
+        property string targetId: ""
         // Core's `protected` (0195), as the card had it when this opened. Said
         // in the console's words, and only this confirmation asks Core to
         // clear it.
@@ -652,7 +653,7 @@ Item {
                 DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
             }
         }
-        onAccepted: Omnuv.deleteMachine(row, targetName, targetProtected)
+        onAccepted: Omnuv.deleteMachine(row, targetName, targetProtected, targetId)
     }
 
     Dialog {
@@ -1457,6 +1458,7 @@ Item {
                         onSettingsRequested: streamSettings.open()
                         onDeleteRequested: {
                             deleteMachine.row = index
+                            deleteMachine.targetId = Omnuv.machines.idAt(index)
                             deleteMachine.targetName = name
                             deleteMachine.targetProtected = deletionProtected
                             deleteMachine.open()

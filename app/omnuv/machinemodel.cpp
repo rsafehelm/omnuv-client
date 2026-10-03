@@ -342,6 +342,11 @@ QVariantMap MachineModel::statusCounts() const
     return counts;
 }
 
+QString MachineModel::privateIpAt(int row) const
+{
+    return (row >= 0 && row < m_machines.count()) ? m_machines.at(row).privateIp : QString();
+}
+
 QString MachineModel::idAt(int row) const
 {
     return (row >= 0 && row < m_machines.count()) ? m_machines.at(row).id : QString();

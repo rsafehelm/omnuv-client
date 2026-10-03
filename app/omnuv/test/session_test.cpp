@@ -989,6 +989,31 @@ private slots:
         for (const auto& call:server.calls) QVERIFY(call.method!="DELETE");
         QVERIFY(!s.ordering());
     }
+    // The confirmation is for the machine it was opened on, by its id (3
+    // October 2026). A machine made again under the old name and listed where
+    // the confirmed one was passes a name check; the id finds the confirmed
+    // one wherever it moved, and nothing is asked of the other.
+    void aConfirmationFindsItsMachineByIdNotByRow() {
+        HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
+        s.m_machines->replace(QJsonArray{
+            QJsonObject{{"id","i-new"},{"name","gaming"},{"status","Running"}},
+            QJsonObject{{"id","i-old"},{"name","gaming"},{"status","Running"}}});
+        QSignalSpy done(&s,&OmnuvSession::deleteFinished);
+        QVERIFY(QMetaObject::invokeMethod(&s,"deleteMachine",Q_ARG(int,0),Q_ARG(QString,QStringLiteral("gaming")),
+                                          Q_ARG(bool,false),Q_ARG(QString,QStringLiteral("i-old"))));
+        QTRY_VERIFY(server.find("/v1/deployments?project=a")>=0);
+        server.answer(server.find("/v1/deployments?project=a"),200,"[]");
+        QTRY_VERIFY(server.find("/v1/instances/i-old?project=a")>=0);
+        QCOMPARE(server.count("/v1/instances/i-new?project=a"),0);
+        server.answer(server.find("/v1/instances/i-old?project=a"),202,"{}");
+        QTRY_COMPARE(done.size(),1);
+        // And one no longer listed at all is refused, not guessed at.
+        s.m_machines->replace(QJsonArray{QJsonObject{{"id","i-new"},{"name","gaming"},{"status","Running"}}});
+        QVERIFY(QMetaObject::invokeMethod(&s,"deleteMachine",Q_ARG(int,0),Q_ARG(QString,QStringLiteral("gaming")),
+                                          Q_ARG(bool,false),Q_ARG(QString,QStringLiteral("i-old"))));
+        QTRY_COMPARE(done.size(),2); QVERIFY(!done[1][0].toBool());
+        QCOMPARE(server.count("/v1/instances/i-new?project=a"),0);
+    }
     // The confirmation itself, rendered on its own: it names the protection
     // in the console's words for a protected machine and for no other, and
     // only a confirmation that named it asks Core to clear it.

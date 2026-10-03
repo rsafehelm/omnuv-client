@@ -231,7 +231,10 @@ public:
     // protection (Core's `protected`, 0195): only then, and only while the
     // machine is protected, does an instance's delete ask Core to clear it. A
     // deployment's removal clears it in Core and carries nothing.
-    Q_INVOKABLE void deleteMachine(int row, const QString& name, bool unprotect);
+    // `machineId`, when given, is the machine the dialog was opened for: the
+    // row is only where it was then (3 October 2026).
+    Q_INVOKABLE void deleteMachine(int row, const QString& name, bool unprotect,
+                                   const QString& machineId = QString());
     QVariantList offers() const { return m_offers; }
     bool ordering() const { return m_ordering; }
 
@@ -297,8 +300,8 @@ public:
     // so a changed shape restarts a running Desktop rather than resuming it.
     // QSettings here rather than QtCore's Settings in QML: the Windows bundle
     // carries no QtCore QML module, and the import blanked the whole view.
-    Q_INVOKABLE QString launchedShape(const QString& host) const;
-    Q_INVOKABLE void setLaunchedShape(const QString& host, const QString& shape);
+    Q_INVOKABLE QString launchedShape(const QString& machineId) const;
+    Q_INVOKABLE void setLaunchedShape(const QString& machineId, const QString& shape);
     Q_INVOKABLE void deliverPin(const QVariantMap& target, const QString& pin);
     // Ends a pairing attempt. `delivered` only when the whole pairing worked,
     // which the view learns last: then Core spends the login. Every other

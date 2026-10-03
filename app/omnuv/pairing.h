@@ -56,7 +56,8 @@ public:
                  const QString& clientName,
                  const QString& fromAddress,
                  const QString& user,
-                 const QString& password);
+                 const QString& password,
+                 const QString& expectedAddress = QString());
 
     // Give up before the machine was ever asked — for the cases OmnuvSession
     // decides, so that every ending of a pairing attempt arrives on one

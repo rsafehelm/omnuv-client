@@ -1399,14 +1399,17 @@ QVariantMap OmnuvSession::connectionTarget(int row) const
             {"project", m_projectId}, {"context", QString::number(m_context)}};
 }
 
-QString OmnuvSession::launchedShape(const QString& host) const
+// Keyed by Core's machine id, not its name (3 October 2026): a machine made
+// again under an old name inherited the deleted one's shape, and Play then
+// resumed a desktop it should have restarted at the new resolution.
+QString OmnuvSession::launchedShape(const QString& machineId) const
 {
-    return QSettings().value(QStringLiteral("omnuv/launched/") + host).toString();
+    return QSettings().value(QStringLiteral("omnuv/launchedFor/") + machineId).toString();
 }
 
-void OmnuvSession::setLaunchedShape(const QString& host, const QString& shape)
+void OmnuvSession::setLaunchedShape(const QString& machineId, const QString& shape)
 {
-    QSettings().setValue(QStringLiteral("omnuv/launched/") + host, shape);
+    QSettings().setValue(QStringLiteral("omnuv/launchedFor/") + machineId, shape);
 }
 
 int OmnuvSession::targetRow(const QVariantMap& target) const
@@ -1506,7 +1509,8 @@ void OmnuvSession::collectStreamLogin(const QVariantMap& target, const QString& 
             return;
         }
         m_pairing->deliver(target.value("host").toString(), pin, QSysInfo::machineHostName(),
-                          m_tunnel->address(), o["user"].toString(), o["password"].toString());
+                          m_tunnel->address(), o["user"].toString(), o["password"].toString(),
+                          m_machines->privateIpAt(targetRow(target)));
     });
 }
 
@@ -1560,32 +1564,45 @@ int OmnuvSession::streamHostFor(QObject* computerManager, const QVariantMap& tar
 {
     auto manager = qobject_cast<ComputerManager*>(computerManager);
     const QString host = target.value(QStringLiteral("host")).toString();
-    const int row = hostRowFor(computerManager, host);
-    if (manager == nullptr || row < 0) {
-        return row;
+    if (manager == nullptr || host.isEmpty()) {
+        return -1;
     }
-    NvComputer* computer = manager->getComputers().at(row);
-    QString uuid;
-    bool online = false;
-    {
-        QReadLocker lock(&computer->lock);
-        uuid = computer->uuid;
-        online = computer->state == NvComputer::CS_ONLINE;
-    }
+    // **Every entry at this address, not the first** (the client audit of 3
+    // October 2026): two generations of a machine can each have left one, and
+    // keeping the first that passed would let the next lookup by address find
+    // the other. Each is kept only for this machine; the rest are taken away.
+    const QString wanted = host.toLower();
     const QString id = target.value(QStringLiteral("id")).toString();
     QSettings settings;
-    const QString madeFor = settings.value(streamHostKey(uuid)).toString();
-    if (keepStreamHost(madeFor, id, online)) {
-        settings.setValue(streamHostKey(uuid), id);
-        return row;
+    int kept = -1;
+    const QVector<NvComputer*> computers = manager->getComputers();
+    for (int row = 0; row < computers.count(); row++) {
+        NvComputer* computer = computers.at(row);
+        if (computer == nullptr) continue;
+        QString uuid;
+        QString address;
+        bool online = false;
+        {
+            QReadLocker lock(&computer->lock);
+            uuid = computer->uuid;
+            address = computer->manualAddress.address().toLower();
+            online = computer->state == NvComputer::CS_ONLINE;
+        }
+        if (address != wanted || m_staleHosts.contains(uuid)) continue;
+        const QString madeFor = settings.value(streamHostKey(uuid)).toString();
+        if (kept < 0 && keepStreamHost(madeFor, id, online)) {
+            settings.setValue(streamHostKey(uuid), id);
+            kept = row;
+            continue;
+        }
+        qInfo().noquote() << "omnuv: play: the saved streaming host at" << host << "was made for"
+                          << (madeFor.isEmpty() ? QStringLiteral("an earlier machine") : madeFor)
+                          << "and is not this one's; taking it away";
+        m_staleHosts.insert(uuid);
+        settings.remove(streamHostKey(uuid));
+        manager->deleteHost(computer);
     }
-    qInfo().noquote() << "omnuv: play: the saved streaming host at" << host << "was made for"
-                      << (madeFor.isEmpty() ? QStringLiteral("an earlier machine") : madeFor)
-                      << "and is not this one's; taking it away";
-    m_staleHosts.insert(uuid);
-    settings.remove(streamHostKey(uuid));
-    manager->deleteHost(computer);
-    return -1;
+    return kept;
 }
 
 void OmnuvSession::rememberStreamHost(QObject* computerManager, const QVariantMap& target)
@@ -1852,9 +1869,24 @@ void OmnuvSession::deploy(const QString& recipe, const QString& name, const QStr
     });
 }
 
-void OmnuvSession::deleteMachine(int row, const QString& confirmed, bool unprotect)
+void OmnuvSession::deleteMachine(int row, const QString& confirmed, bool unprotect,
+                                 const QString& machineId)
 {
     if (!signedIn() || m_ordering) return;
+    // **The machine the person confirmed, found by its id** (the client audit
+    // of 3 October 2026): a row is a position, and a list reordered while the
+    // dialog was open can put a same-named machine — one made again under the
+    // old name — where the confirmed one was.
+    if (!machineId.isEmpty() && m_machines->idAt(row) != machineId) {
+        row = -1;
+        for (int r = 0; r < m_machines->rowCount(); r++) {
+            if (m_machines->idAt(r) == machineId) { row = r; break; }
+        }
+        if (row < 0) {
+            emit deleteFinished(false, tr("%1 is no longer listed, so nothing was deleted.").arg(confirmed));
+            return;
+        }
+    }
     const auto id = m_machines->idAt(row);
     const auto name = m_machines->data(m_machines->index(row), MachineModel::NameRole).toString();
     if (id.isEmpty()) return;

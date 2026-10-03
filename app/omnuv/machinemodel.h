@@ -180,7 +180,9 @@ public:
     // against the deployment it came from, because the buyer API's instance
     // view carries no deployment id and its deployment view carries the
     // instance one.
-    QString idAt(int row) const;
+    Q_INVOKABLE QString idAt(int row) const;
+    // Core's overlay address for the machine at this row, or "".
+    QString privateIpAt(int row) const;
 
     // The grouping for one row. C++-only, like `idAt`: QML has
     // `MachineCard.qml`'s own switch on the same words and does not need a
