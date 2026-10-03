@@ -636,7 +636,18 @@ Item {
                 // The action, last, in the warn colour the web's danger
                 // button uses: a Destructive role is put first by Mac's layout.
                 DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
-                palette.buttonText: Theme.highContrast ? palette.buttonText : Theme.fillCaution
+                // Its own label, because Material (macOS, Linux) ignores
+                // `palette.buttonText` as it ignores the palette's accent: the
+                // parity sheet's macOS shot drew this action in plain ink.
+                contentItem: Label {
+                    text: parent.text
+                    font: parent.font
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                    elide: Text.ElideRight
+                    color: Theme.highContrast ? palette.buttonText : Theme.fillCaution
+                    opacity: parent.enabled ? 1 : 0.45
+                }
                 // No onClicked: the accept role accepts the dialog, once.
             }
         }
