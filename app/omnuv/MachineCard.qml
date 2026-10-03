@@ -45,6 +45,10 @@ ItemDelegate {
     signal settingsRequested()
     signal deleteRequested()
     signal powerRequested(string action)
+    // Console ↗: the web console's page for this instance, its console open.
+    signal consoleRequested()
+    // Only when Core named its console (`console_url`): an older Core does not.
+    readonly property bool consoleKnown: Omnuv.consoleUrl !== ""
 
     readonly property bool deletionProtected: model.protected === true
 
@@ -115,8 +119,8 @@ ItemDelegate {
         case "Installing":
         case "Starting":
         case "Restarting":
-        case "Stopping": return Theme.fillCaution
-        default:         return Theme.fillCritical   // "Needs attention"
+        case "Stopping": return Theme.fillProgress
+        default:         return Theme.fillCaution    // "Needs attention", the web's warn
         }
     }
 
@@ -157,8 +161,9 @@ ItemDelegate {
         ? model.shortHost + (web && model.webPort > 0 ? ":" + model.webPort : "") : ""
 
     // ---- Primary and secondary, section 2's table ------------------------
+    // Needs attention leads with what to do: the console, where it is known.
     readonly property string primaryText: stopped ? qsTr("Start")
-        : attention ? qsTr("Terminal")
+        : attention ? (consoleKnown ? qsTr("Console \u2197") : qsTr("Terminal"))
         : stream ? qsTr("Play")
         : web ? qsTr("Open ↗")
         : qsTr("Terminal")
@@ -166,7 +171,7 @@ ItemDelegate {
     // A machine that needs attention is still reached by Terminal when it has
     // an address: that is how a person looks at what went wrong.
     readonly property bool primaryBlocked: stopped ? Omnuv.ordering
-        : attention ? model.host === ""
+        : attention ? (!consoleKnown && model.host === "")
         : !model.ready
     readonly property string hint: {
         if (stopped || attention) return ""
@@ -187,7 +192,7 @@ ItemDelegate {
     function primary() {
         if (primaryBlocked) return
         if (stopped) card.powerRequested("start")
-        else if (attention) card.terminalRequested()
+        else if (attention) consoleKnown ? card.consoleRequested() : card.terminalRequested()
         else card.primaryActivated()
     }
 
@@ -473,7 +478,7 @@ ItemDelegate {
                 elide: Label.ElideRight
                 font.family: Theme.textFamily
                 font.pixelSize: 13
-                color: card.attention ? Theme.fillCritical : palette.windowText
+                color: card.attention ? Theme.fillCaution : palette.windowText
                 opacity: card.attention ? 1 : 0.7
             }
 
@@ -639,6 +644,20 @@ ItemDelegate {
                             visible: card.stream && !card.stopped
                             height: visible ? implicitHeight : 0
                             onTriggered: card.settingsRequested()
+                        }
+                        MenuItem {
+                            objectName: "consoleItem"
+                            text: qsTr("Console \u2197")
+                            visible: card.consoleKnown && !(card.attention && card.consoleKnown)
+                            height: visible ? implicitHeight : 0
+                            onTriggered: card.consoleRequested()
+                        }
+                        MenuItem {
+                            text: qsTr("Terminal")
+                            visible: card.attention && card.consoleKnown
+                            height: visible ? implicitHeight : 0
+                            enabled: model.host !== ""
+                            onTriggered: card.terminalRequested()
                         }
                         MenuItem {
                             text: qsTr("Restart")

@@ -281,10 +281,10 @@ step "Only the command-line actions write to stdout"
 set -euo pipefail
 other=$(grep -rlE '\b(fprintf|fputs|fwrite)[[:space:]]*\([^;]*stdout|\bstd::cout\b|\bputs[[:space:]]*\(' \
           app/omnuv --include='*.cpp' --include='*.h' \
-        | grep -vE '^app/omnuv/(signin|enrolcli|paircli)\.cpp$' || true)
+        | grep -vE '^app/omnuv/(signin|enrolcli|paircli|linkcli)\.cpp$' || true)
 
 if [ -n "$other" ]; then
-  echo "These files in app/omnuv/ write to stdout, which belongs to signin, enrol and pair:"
+  echo "These files in app/omnuv/ write to stdout, which belongs to signin, enrol, pair and open:"
   echo "$other" | sed 's/^/  /'
   exit 1
 fi
@@ -295,7 +295,8 @@ fi
 grep -qE '\bfprintf\(stdout' app/omnuv/signin.cpp
 grep -qE '\bfputs\([^;]*stdout' app/omnuv/enrolcli.cpp
 grep -qE '\bfputs\([^;]*stdout' app/omnuv/paircli.cpp
-echo "stdout has three writers, each a command-line action with a stdout contract: signin, enrol, pair"
+grep -qE '\bfputs\([^;]*stdout' app/omnuv/linkcli.cpp
+echo "stdout has four writers, each a command-line action with a stdout contract: signin, enrol, pair, open"
 )
 
 # Two rules `app/omnuv/Theme.qml` exists to hold, checked rather than
@@ -919,8 +920,10 @@ for line in body.group(1).splitlines():
         pending = []
 
 # The one correspondence, written once.
-same = {"Good": "fillSuccess", "Moving": "fillCaution",
-        "Resting": "fillNeutral", "Bad": "fillCritical"}
+# The web's tones since the Instances redesign (3 October 2026; the plan's
+# section 4): an action under way is the accent (progress), Needs attention warn.
+same = {"Good": "fillSuccess", "Moving": "fillProgress",
+        "Resting": "fillNeutral", "Bad": "fillCaution"}
 
 translated = {w: same.get(h, "?") for w, h in model_group.items()}
 if translated != card_group:

@@ -59,6 +59,11 @@ class OmnuvSession : public QObject
     Q_PROPERTY(QVariantList saleGpus READ saleGpus NOTIFY deployablesChanged)
     // Why the catalogue could not be read, in words, or "".
     Q_PROPERTY(QString deployablesProblem READ deployablesProblem NOTIFY deployablesChanged)
+    // The buyer console's address, Core's `console_url` in `/v1/me`, or ""
+    // from an older Core: Console ↗ is offered only when it is known, because
+    // turning the API's address into the console's is the client inventing a
+    // name.
+    Q_PROPERTY(QString consoleUrl READ consoleUrl NOTIFY projectsChanged)
     Q_PROPERTY(QString productionCoreUrl READ productionCoreUrl CONSTANT)
     Q_PROPERTY(bool signedIn READ signedIn NOTIFY signedInChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
@@ -273,6 +278,14 @@ public:
     Q_INVOKABLE void power(const QString& machineId, const QString& action);
     // The clipboard, for Copy address and Copy command.
     Q_INVOKABLE void copyText(const QString& text);
+    QString consoleUrl() const { return signedIn() ? m_consoleUrl : QString(); }
+    // Console ↗ for the instance with Core's id `machineId`: the console's
+    // own instance page, its console panel open, by id; "" when no console is
+    // known.
+    Q_INVOKABLE QString consoleLinkFor(const QString& machineId) const;
+    // Whether this device is on the selected project's private network now:
+    // the tunnel connected, under a membership held for this project.
+    Q_INVOKABLE bool onProjectNetwork() const;
     bool ordering() const { return m_ordering; }
 
     // Open a terminal on an ordinary machine. Returns false when no terminal
@@ -426,6 +439,7 @@ private:
     QString m_claimDeployment;
     void acceptToken(const QString& token);
     QVariantList m_offers;
+    QString m_consoleUrl;
     QVariantList m_deployables;
     QVariantList m_saleGpus;
     QString m_deployablesProblem;

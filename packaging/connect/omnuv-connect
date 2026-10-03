@@ -121,8 +121,15 @@ install_gaming() {
 # page could choose to harm with: never a network key (H3, 22 September 2026).
 #
 #   omnuv://join
-#   omnuv://stream?host=<name>.internal&app=<application>
+#   omnuv://stream?instance=<uuid>        (the console since the Instances redesign)
+#   omnuv://open?instance=<uuid>          a web app's page, if this device is on
+#                                         its network; the app's Join otherwise
+#   omnuv://stream?host=<name>.internal&app=<application>   (older links)
 #   omnuv://ssh?host=<name>.internal&user=<user>
+#
+# **By id, never by name** (COMMON_RULES, "Assets are referred to by id"): the
+# app asks Core where the instance answers now, so a link to a deleted
+# instance never reaches a new one made under its name.
 
 urldecode() {
     # %20 and friends, and + for a space, without depending on python. Octal,
@@ -234,6 +241,10 @@ valid_user() {
     esac
     [ "${#1}" -le 32 ]
 }
+valid_instance() {
+    printf '%s' "$1" | grep -Eqx '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' \
+        && [ "$(printf '%s' "$1" | wc -l)" -eq 0 ]
+}
 valid_app() {
     case "$1" in
         -*|*'"'*|*[[:cntrl:]]*) return 1 ;;
@@ -277,12 +288,30 @@ handle() {
             die "this device has no Omnuv app to join with its sign-in. In the console, use \"Get command\" and run the command it shows."
             ;;
         stream)
+            instance="$(param instance "$query")"
+            if [ -n "$instance" ]; then
+                valid_instance "$instance" || die "that link names an instance this will not open: $instance"
+                bundled || die "streaming by instance needs the Omnuv app: install it from the console"
+                exec "$BUNDLED" stream-instance "$instance"
+            fi
             host="$(param host "$query")"
             [ -n "$host" ] || die "that link names no machine"
             valid_host "$host" || die "that link names a machine this will not open: $host"
             app="$(param app "$query")"
             valid_app "$app" || die "that link names an application this will not open: $app"
             launch_stream "$host" "$app"
+            ;;
+        open)
+            instance="$(param instance "$query")"
+            [ -n "$instance" ] || die "that link names no instance"
+            valid_instance "$instance" || die "that link names an instance this will not open: $instance"
+            bundled || die "opening an instance needs the Omnuv app: install it from the console"
+            # The app checks this device is on the instance's network, then
+            # opens the page in the browser. Off it (3), the app's window
+            # opens instead, and offers Join.
+            rc=0; "$BUNDLED" open-instance "$instance" || rc=$?
+            [ "$rc" -eq 3 ] && exec "$BUNDLED"
+            exit "$rc"
             ;;
         ssh)
             host="$(param host "$query")"

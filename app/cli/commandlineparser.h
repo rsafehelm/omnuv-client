@@ -27,6 +27,10 @@ public:
         // changing what an existing command does to somebody's script is the
         // one thing a published CLI may not do.
         PairMachineRequested,
+        // Omnuv: an instance, by its id, from an omnuv:// link (the
+        // Instances redesign, D-5); see app/omnuv/linkcli.cpp.
+        OpenInstanceRequested,
+        StreamInstanceRequested,
     };
 
     GlobalCommandLineParser();

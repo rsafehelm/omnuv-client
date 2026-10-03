@@ -95,6 +95,13 @@ function Assert-LinkUser($User) {
         Die "that link names a user this will not open: $User"
     }
 }
+# An instance is named by its id, a uuid and nothing else (the Instances
+# redesign: the app asks Core where it answers now).
+function Assert-LinkInstance($Id) {
+    if ($Id -cnotmatch '\A[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\z') {
+        Die "that link names an instance this will not open: $Id"
+    }
+}
 function Assert-LinkApp($App) {
     if ($App -and ($App.Length -gt 128 -or $App -cmatch '\A-|["\x00-\x1f\x7f]')) {
         Die "that link names an application this will not open: $App"
@@ -180,10 +187,26 @@ function Invoke-Link($Url) {
             if ($LASTEXITCODE -ne 0) { Die 'the device did not join. Open Omnuv and sign in, then use Join this device.' }
         }
         'stream' {
+            if ($q['instance']) {
+                Assert-LinkInstance $q['instance']
+                Start-Process -FilePath (Client-Path) -ArgumentList @('stream-instance', $q['instance'])
+                return
+            }
             if (-not $q['host']) { Die 'that link names no machine' }
             Assert-LinkHost $q['host']
             Assert-LinkApp $q['app']
             Start-Stream $q['host'] $q['app']
+        }
+        'open' {
+            # The app checks this device is on the instance's network, then
+            # opens the page in the browser. Off it (exit 3) the app's window
+            # opens instead, and offers Join; any other refusal is passed on.
+            if (-not $q['instance']) { Die 'that link names no instance' }
+            Assert-LinkInstance $q['instance']
+            $exe = Client-Path
+            $run = Start-Process -FilePath $exe -ArgumentList @('open-instance', $q['instance']) -Wait -PassThru
+            if ($run.ExitCode -eq 3) { Start-Process -FilePath $exe; return }
+            if ($run.ExitCode -ne 0) { Die 'the instance was not opened; Omnuv said why in its window' }
         }
         'ssh' {
             if (-not $q['host']) { Die 'that link names no machine' }

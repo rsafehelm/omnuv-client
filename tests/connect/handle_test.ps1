@@ -15,9 +15,14 @@ Copy-Item (Join-Path $PSScriptRoot '../../packaging/connect/omnuv-connect.ps1') 
 Set-Content -Path (Join-Path $work 'OmnuvClient.exe') -Value 'stand-in'
 $script = Join-Path $work 'omnuv-connect.ps1'
 $global:called = $null
+# `open-instance` is waited for and answers with $global:fakeOpen as its exit
+# status (3: off the network). Calls are appended, so a second is seen.
+$global:fakeOpen = 0
 function global:Start-Process {
-    param([string]$FilePath, [string[]]$ArgumentList)
-    $global:called = ((Split-Path $FilePath -Leaf), (($ArgumentList | ForEach-Object { "[$_]" }) -join ' ')) -join ' '
+    param([string]$FilePath, [string[]]$ArgumentList, [switch]$Wait, [switch]$PassThru)
+    $one = (@((Split-Path $FilePath -Leaf)) + @($ArgumentList | Where-Object { $_ } | ForEach-Object { "[$_]" })) -join ' '
+    $global:called = if ($global:called) { "$($global:called) $one" } else { $one }
+    if ($PassThru) { return [pscustomobject]@{ ExitCode = $global:fakeOpen } }
 }
 
 $fails = 0
@@ -38,7 +43,21 @@ function Refuses($url, $word) {
     else { "ok    $url refused" }
 }
 
-# What the console sends.
+# What the console sends since the Instances redesign: an instance by its id.
+$id = '6c1e0a4b-1f2e-4d3c-9b8a-7f6e5d4c3b2a'
+Opens   "omnuv://stream?instance=$id"   "OmnuvClient.exe [stream-instance] [$id]"
+Opens   "omnuv://open?instance=$id"     "OmnuvClient.exe [open-instance] [$id]"
+# **Open, refused off the network**: the app answers 3, and the handler opens
+# the app's window, which offers Join; no page is opened.
+$global:fakeOpen = 3
+Opens   "omnuv://open?instance=$id"     "OmnuvClient.exe [open-instance] [$id] OmnuvClient.exe"
+$global:fakeOpen = 1
+$err = Run "omnuv://open?instance=$id"
+if ($err -match 'not opened' -and $global:called -eq "OmnuvClient.exe [open-instance] [$id]") { 'ok    open refused by the app' }
+else { "FAIL  open refused by the app: $($global:called) $err"; $fails++ }
+$global:fakeOpen = 0
+
+# What older links send, by name, still accepted.
 Opens   'omnuv://stream?host=gpu-1-ab12cd34.internal&app=Desktop'  'OmnuvClient.exe [stream] [gpu-1-ab12cd34.internal] [Desktop]'
 Opens   'omnuv://stream?host=rig.internal'                          'OmnuvClient.exe [stream] [rig.internal]'
 Opens   'omnuv://stream?host=rig.internal&app=Steam%20Big%20Picture' 'OmnuvClient.exe [stream] [rig.internal] [Steam Big Picture]'
@@ -53,6 +72,9 @@ Refuses 'omnuv://stream?host=rig.internal&app=-x'       'will not open'
 Refuses 'omnuv://stream?host=rig.internal&app=a%22b'    'will not open'
 Refuses 'omnuv://stream'                                'no machine'
 Refuses 'omnuv://join?key=ABCDEF'                       'no longer carry'
+Refuses 'omnuv://open?instance=../../etc'              'will not open'
+Refuses 'omnuv://stream?instance=-oProxy'               'will not open'
+Refuses 'omnuv://open'                                  'no instance'
 Refuses 'omnuv://wipe?host=x'                           'unknown link'
 Refuses 'https://example.com/'                          'not an omnuv link'
 

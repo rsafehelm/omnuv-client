@@ -47,6 +47,7 @@
 #include "cli/commandlineparser.h"
 #include "omnuv/firstrun.h"
 #include "omnuv/signin.h"
+#include "omnuv/linkcli.h"
 #include "omnuv/enrolcli.h"
 #include "omnuv/paircli.h"
 #include "omnuv/appearance.h"
@@ -1056,6 +1057,7 @@ int main(int argc, char *argv[])
     case GlobalCommandLineParser::NormalStartRequested:
         initialView = "qrc:/gui/PcView.qml";
         break;
+    case GlobalCommandLineParser::StreamInstanceRequested:
     case GlobalCommandLineParser::StreamRequested:
         {
             // Omnuv: the `stream` verb opens our segue, not upstream's.
@@ -1074,10 +1076,20 @@ int main(int argc, char *argv[])
             // implementations.
             initialView = "qrc:/omnuv/OmnuvCliSegue.qml";
             StreamingPreferences* preferences = StreamingPreferences::get();
-            StreamCommandLineParser streamParser;
-            streamParser.parse(app.arguments(), preferences);
-            QString host    = streamParser.getHost();
-            QString appName = streamParser.getAppName();
+            QString host, appName;
+            if (commandLineParserResult == GlobalCommandLineParser::StreamInstanceRequested) {
+                // Omnuv: an instance by its id; Core says where it answers.
+                QString why;
+                if (!OmnuvLinkCli::resolveStream(app.arguments(), &host, &appName, &why)) {
+                    fprintf(stderr, "%s\n", qPrintable(why));
+                    return 1;
+                }
+            } else {
+                StreamCommandLineParser streamParser;
+                streamParser.parse(app.arguments(), preferences);
+                host    = streamParser.getHost();
+                appName = streamParser.getAppName();
+            }
             auto launcher   = new CliStartStream::Launcher(host, appName, preferences, &app);
             engine.rootContext()->setContextProperty("launcher", launcher);
             engine.rootContext()->setContextProperty("streamHost", host);
@@ -1133,6 +1145,13 @@ int main(int argc, char *argv[])
             // Upstream's `pair` sets `initialView` because its view is how a
             // person is shown the number; there is nobody to show.
             OmnuvPairCli::start(app.arguments(), &app);
+            hasGUI = false;
+            break;
+        }
+    case GlobalCommandLineParser::OpenInstanceRequested:
+        {
+            // Omnuv: no window; the page opens in the system browser.
+            OmnuvLinkCli::startOpen(app.arguments(), &app);
             hasGUI = false;
             break;
         }

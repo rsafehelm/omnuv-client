@@ -1,5 +1,6 @@
 #include <functional>
 #include "../omnuvsession.h"
+#include "../linkcli.h"
 #include "../settingsmove.h"
 #include "../pairing.h"
 #include "../signin.h"
@@ -1173,6 +1174,53 @@ private slots:
         QVERIFY(QMetaObject::invokeMethod(popup,"open")); QTRY_VERIFY(popup->property("visible").toBool());
         QVERIFY(QMetaObject::invokeMethod(popup,"choose",Q_ARG(QVariant,s.deployables()[2])));
         QVERIFY(popup->property("key").toString().toLatin1()!=key);
+    }
+
+    // Console ↗ (the Instances redesign): the console's own page for one
+    // instance, by its id, from Core's `console_url`; nothing from an older
+    // Core, and nothing from an address that is not https.
+    void consoleLinkIsTheConsolesOwnPageById() {
+        HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
+        QCOMPARE(s.consoleLinkFor("i-1"),QString());
+        s.m_consoleUrl="https://console.omnuv.example";
+        QCOMPARE(s.consoleLinkFor("6c1e0a4b-1f2e-4d3c-9b8a-7f6e5d4c3b2a"),
+                 QString("https://console.omnuv.example/compute/instances?focus=6c1e0a4b-1f2e-4d3c-9b8a-7f6e5d4c3b2a&panel=console"));
+        QCOMPARE(s.consoleLinkFor(""),QString());
+        // Read from /v1/me, the latest answer; and an http one off this
+        // machine is refused, whatever was known before.
+        auto last=[&]() { int at=-1; for (int i=0;i<server.calls.size();++i) if (server.calls[i].path=="/v1/me") at=i; return at; };
+        s.m_consoleUrl.clear();
+        s.m_identityPending=false; s.fetchIdentity();
+        QTRY_VERIFY(server.count("/v1/me")>=2);
+        auto me=QJsonDocument::fromJson(identity()).object(); me["console_url"]="https://console.omnuv.example/";
+        server.answer(last(),200,QJsonDocument(me).toJson());
+        QTRY_COMPARE(s.consoleUrl(),QString("https://console.omnuv.example"));
+        const int asked=server.count("/v1/me");
+        s.m_identityPending=false; s.fetchIdentity();
+        QTRY_VERIFY(server.count("/v1/me")>asked);
+        me["console_url"]="http://console.evil.example/";
+        server.answer(last(),200,QJsonDocument(me).toJson());
+        QTRY_COMPARE(s.consoleUrl(),QString());
+    }
+
+    // `omnuv://open?instance=`, decided: opened on the network; **refused
+    // off it** (3, which the handlers answer with the app's Join); refused
+    // signed out, unknown, or with no page; and only a uuid is an id.
+    void openRefusedOffTheNetwork() {
+        using namespace OmnuvLinkCli;
+        auto on=openVerdict(true,true,true,"chat","c0a8.p.cloud.omnuv.example",8080,"research");
+        QCOMPARE(on.code,int(Opened)); QCOMPARE(on.url,QUrl("http://c0a8.p.cloud.omnuv.example:8080/"));
+        auto off=openVerdict(true,true,false,"chat","c0a8.p.cloud.omnuv.example",8080,"research");
+        QCOMPARE(off.code,int(OffNetwork)); QVERIFY(off.url.isEmpty());
+        QVERIFY2(off.line.contains("not on research's private network"),qPrintable(off.line));
+        QCOMPARE(openVerdict(false,true,true,"chat","h",8080,"r").code,int(Refused));
+        QCOMPARE(openVerdict(true,false,true,"chat","h",8080,"r").code,int(Refused));
+        QCOMPARE(openVerdict(true,true,true,"notes","h",0,"r").code,int(Refused));
+        QVERIFY(openVerdict(true,true,true,"notes","h",0,"r").url.isEmpty());
+        QVERIFY(validInstanceId("6c1e0a4b-1f2e-4d3c-9b8a-7f6e5d4c3b2a"));
+        QVERIFY(!validInstanceId("../../etc"));
+        QVERIFY(!validInstanceId("6c1e0a4b-1f2e-4d3c-9b8a-7f6e5d4c3b2a\nx"));
+        QVERIFY(!validInstanceId("chat"));
     }
 
     // Core's name rule, in Core's words, before Core is asked; a batch is

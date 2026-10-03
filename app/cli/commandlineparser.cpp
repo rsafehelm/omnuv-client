@@ -162,6 +162,8 @@ GlobalCommandLineParser::ParseResult GlobalCommandLineParser::parse(const QStrin
         "  stream          Start streaming an app\n"
         "  pair            Pair a new host\n"
         "  signin          Sign this device in to Omnuv\n"
+        "  open-instance   Open an Omnuv instance's page, by its id\n"
+        "  stream-instance Stream from an Omnuv instance, by its id\n"
         "\n"
         "See 'moonlight <action> --help' for help of specific action."
     );
@@ -204,6 +206,10 @@ GlobalCommandLineParser::ParseResult GlobalCommandLineParser::parse(const QStrin
             } else if (action == "pair-machine") {
                 // Omnuv. Upstream's `pair` still means what it always meant.
                 return PairMachineRequested;
+            } else if (action == "open-instance") {
+                return OpenInstanceRequested;
+            } else if (action == "stream-instance") {
+                return StreamInstanceRequested;
             }
         }
 

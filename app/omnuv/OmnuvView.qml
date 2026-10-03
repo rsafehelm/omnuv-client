@@ -58,6 +58,30 @@ Item {
     // The one-time console password a deploy answered with, and whose.
     property string oneTimePassword: ""
     property string oneTimeFor: ""
+    // **Recently removed** (section 4): "Removing <name> (<app>)" while Core
+    // takes it away, then "<name> was removed" once the list no longer has
+    // it. By id, for the session; the newest first, five at most.
+    property var removed: []
+    function noteRemoving(id, name, app) {
+        var next = [{ id: id, name: name, app: app, gone: false }]
+        for (var i = 0; i < removed.length && next.length < 5; ++i)
+            if (removed[i].id !== id) next.push(removed[i])
+        removed = next
+    }
+    function settleRemoved() {
+        var listed = {}
+        for (var r = 0; r < Omnuv.machines.count; ++r) listed[Omnuv.machines.idAt(r)] = true
+        var next = [], changed = false
+        for (var i = 0; i < removed.length; ++i) {
+            var e = removed[i]
+            if (!e.gone && Omnuv.machines.loaded && !listed[e.id]) {
+                e = { id: e.id, name: e.name, app: e.app, gone: true }
+                changed = true
+            }
+            next.push(e)
+        }
+        if (changed) removed = next
+    }
 
     // A chip counts the words it stands for: Running with Ready, Installing
     // with Deploying, as the card tones them.
@@ -92,7 +116,7 @@ Item {
     }
     Connections {
         target: Omnuv.machines
-        function onCountChanged() { root.refilter() }
+        function onCountChanged() { root.refilter(); root.settleRemoved() }
     }
     Connections {
         target: Omnuv
@@ -388,9 +412,11 @@ Item {
     // why. Nothing is published on the internet for it.
     function openWeb(row) {
         var url = "http://" + Omnuv.machines.hostAt(row) + ":" + Omnuv.machines.webPortAt(row) + "/"
-        if (!Omnuv.tunnel.connected) {
+        // The same check `omnuv://open` makes: on this project's network, not
+        // merely on some network.
+        if (!Omnuv.onProjectNetwork()) {
             console.info("omnuv: open: " + url + " needs this device on the network first")
-            message.show(qsTr("Join this device to your network first: %1 is only reachable there.").arg(url))
+            message.show(qsTr("This device is not on %1's private network. Use Join this device above, then Open again.").arg(Omnuv.projectName))
             return
         }
         console.info("omnuv: open: " + url)
@@ -467,7 +493,10 @@ Item {
         }
         function onHostPairingFinished(address, error) { root.pairingFinished(address, error) }
         function onDeployFinished(ok, text) { if (!ok) message.show(text) }
-        function onDeleteFinished(ok, text) { message.show(text) }
+        function onDeleteFinished(ok, text) {
+            if (ok) root.noteRemoving(deleteMachine.targetId, deleteMachine.targetName, deleteMachine.targetApp)
+            else message.show(text)
+        }
         function onPairingFailed(why, detail) {
             if (!root.validTarget(pairing.target)) return
             pairing.why = why
@@ -559,6 +588,7 @@ Item {
         property string targetId: ""
         // Core's `protected` (0195), as the card had it when this opened.
         property bool targetProtected: false
+        property string targetApp: ""
         property var losses: []
         onAboutToShow: protectionBox.checked = false
         onOpened: cancelDelete.forceActiveFocus()
@@ -1151,8 +1181,26 @@ Item {
         when: root.Window.window !== null && Omnuv.appearance.backdrop
     }
 
-    // Light behind the top of the window, signed in or not.
+    // **The web's accent on the style's own controls** (section 4, Tokens):
+    // a filled button, a checked chip, a focus ring are drawn by the style
+    // from the palette's accent, which was the system's blue. Not under high
+    // contrast, where the palette's own pair is the only promise kept, and
+    // where Theme.accent itself reads the palette.
+    Binding { target: root.palette; property: "accent"; value: Theme.accent; when: !Theme.highContrast }
+    Binding { target: root.palette; property: "highlight"; value: Theme.accent; when: !Theme.highContrast }
+
+    // **The web's canvas** (the Instances redesign, section 4, Tokens), under
+    // everything; under high contrast it is the palette's window.
+    Rectangle {
+        anchors.fill: parent
+        color: Theme.canvas
+        visible: Omnuv.signedIn
+    }
+
+    // Light behind the top of the window, signed out only: signed in, the
+    // page is the web's, on its canvas.
     Aurora {
+        visible: !Omnuv.signedIn && !Theme.highContrast
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
@@ -1393,6 +1441,34 @@ Item {
                 }
             }
 
+            // Recently removed, below the grid: what was asked to go, and
+            // then that it went.
+            ColumnLayout {
+                objectName: "recentlyRemoved"
+                Layout.fillWidth: true
+                visible: root.removed.length > 0
+                spacing: 2
+                Label {
+                    text: qsTr("Recently removed")
+                    font.pixelSize: 12
+                    font.weight: Theme.strongWeight
+                    color: Theme.muted
+                }
+                Repeater {
+                    model: root.removed
+                    Label {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        text: modelData.gone ? qsTr("%1 was removed").arg(modelData.name)
+                              : modelData.app !== "" ? qsTr("Removing %1 (%2)").arg(modelData.name).arg(modelData.app)
+                              : qsTr("Removing %1").arg(modelData.name)
+                        font.pixelSize: 13
+                        color: Theme.muted
+                        elide: Label.ElideRight
+                    }
+                }
+            }
+
             // The machines, filtered by Core's word. The row a card acts on
             // is its place in the machine list, which the filter does not change.
             DelegateModel {
@@ -1414,12 +1490,18 @@ Item {
                     onChooseAppRequested: root.connectTo(row, true)
                     onSettingsRequested: streamSettings.open()
                     onPowerRequested: function (action) { Omnuv.power(Omnuv.machines.idAt(row), action) }
+                    onConsoleRequested: {
+                        var link = Omnuv.consoleLinkFor(Omnuv.machines.idAt(row))
+                        if (link !== "" && !Qt.openUrlExternally(link))
+                            message.show(qsTr("No browser could be opened. Open %1 yourself.").arg(link))
+                    }
                     onDeleteRequested: {
                         deleteMachine.row = row
                         deleteMachine.targetId = Omnuv.machines.idAt(row)
                         deleteMachine.targetName = model.name
                         deleteMachine.targetProtected = deletionProtected
                         deleteMachine.losses = root.lossesOf(model)
+                        deleteMachine.targetApp = model.hasApp ? model.appName : ""
                         deleteMachine.open()
                     }
                 }

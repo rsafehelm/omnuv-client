@@ -99,10 +99,11 @@ namespace {
 //
 // Light and dark are the *taskbar's*, not the window's: see
 // `OmnuvAppearance::darkSystemTheme`.
-QColor fillSuccess(bool dark)  { return dark ? QColor("#6CCB5F") : QColor("#0F7B0F"); }
-QColor fillCaution(bool dark)  { return dark ? QColor("#FCE100") : QColor("#9D5D00"); }
-QColor fillCritical(bool dark) { return dark ? QColor("#FF99A4") : QColor("#C42B1C"); }
-QColor fillNeutral(bool dark)  { return dark ? QColor("#8BFFFFFF") : QColor("#72000000"); }
+QColor fillSuccess(bool dark)  { return dark ? QColor("#34D399") : QColor("#0D9F6E"); }
+QColor fillProgress(bool dark) { return dark ? QColor("#7C72F0") : QColor("#5B50E8"); }
+QColor fillCaution(bool dark)  { return dark ? QColor("#FBBF24") : QColor("#B45309"); }
+QColor fillCritical(bool dark) { return dark ? QColor("#F87171") : QColor("#DC2626"); }
+QColor fillNeutral(bool dark)  { return dark ? QColor("#A1A1AA") : QColor("#71717A"); }
 
 // One dot for a menu row. **Filled or hollow is the load-bearing half of it**,
 // not the colour: Microsoft sets all four system fill colours to the same red
@@ -584,10 +585,12 @@ void OmnuvTray::rebuildMachines()
         // attempt to say why — the card in the window carries `last_error`,
         // the ladder and the elapsed time, and this row carries what fits on
         // one line.
-        QColor colour = fillCritical(dark);
+        // The web's tones (the Instances redesign): progress is the accent,
+        // and Needs attention the warn tone.
+        QColor colour = fillCaution(dark);
         switch (machines->healthAt(i)) {
         case Machine::Health::Good:    colour = fillSuccess(dark); break;
-        case Machine::Health::Moving:  colour = fillCaution(dark); break;
+        case Machine::Health::Moving:  colour = fillProgress(dark); break;
         case Machine::Health::Resting: colour = fillNeutral(dark); break;
         case Machine::Health::Bad:     break;
         }

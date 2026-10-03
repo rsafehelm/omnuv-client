@@ -275,6 +275,7 @@ SOURCES += \
     omnuv/omnuvsession.cpp \
     omnuv/pairing.cpp \
     omnuv/paircli.cpp \
+    omnuv/linkcli.cpp \
     omnuv/probe.cpp \
     omnuv/enrolcli.cpp \
     omnuv/signin.cpp \
@@ -294,6 +295,7 @@ HEADERS += \
     omnuv/omnuvsession.h \
     omnuv/pairing.h \
     omnuv/paircli.h \
+    omnuv/linkcli.h \
     omnuv/probe.h \
     omnuv/signin.h \
     omnuv/streamquality.h \

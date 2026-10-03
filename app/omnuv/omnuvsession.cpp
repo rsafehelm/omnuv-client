@@ -293,6 +293,17 @@ void OmnuvSession::fetchIdentity()
         m_accountEmail = o[QStringLiteral("email")].toString();
         m_accountId = o[QStringLiteral("user_id")].toString();
         considerCanonicalCore(o.value(QStringLiteral("core")).toString());
+        // The console's address, as Core names it; only an https one (or a
+        // local one, for development) is ever opened.
+        {
+            const QUrl console(o.value(QStringLiteral("console_url")).toString().trimmed());
+            const bool local = console.host() == QLatin1String("127.0.0.1") || console.host() == QLatin1String("localhost");
+            m_consoleUrl = console.isValid() && !console.host().isEmpty()
+                    && (console.scheme() == QLatin1String("https") || (local && console.scheme() == QLatin1String("http")))
+                ? console.toString(QUrl::StripTrailingSlash) : QString();
+            // StripTrailingSlash leaves a root path's slash; a link is built on it.
+            while (m_consoleUrl.endsWith(QLatin1Char('/'))) m_consoleUrl.chop(1);
+        }
         m_identityKnown = true;
         m_estate->setIdentity(o[QStringLiteral("organization_name")].toString(),
                               o[QStringLiteral("organization_role")].toString());
@@ -2070,6 +2081,22 @@ void OmnuvSession::power(const QString& machineId, const QString& action)
         }
         refresh(true);
     });
+}
+
+QString OmnuvSession::consoleLinkFor(const QString& machineId) const
+{
+    if (consoleUrl().isEmpty() || machineId.isEmpty()) return QString();
+    QUrl page(consoleUrl() + QStringLiteral("/compute/instances"));
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("focus"), machineId);
+    query.addQueryItem(QStringLiteral("panel"), QStringLiteral("console"));
+    page.setQuery(query);
+    return page.toString(QUrl::FullyEncoded);
+}
+
+bool OmnuvSession::onProjectNetwork() const
+{
+    return m_tunnel->connected() && m_tunnel->membershipMatches(networkScope());
 }
 
 void OmnuvSession::copyText(const QString& text)

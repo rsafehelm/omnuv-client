@@ -32,8 +32,8 @@ using namespace OmnuvStreamQuality;
 // black outline that `OverlayManager::RenderTextOutlinedWrapped` draws
 // underneath every glyph. Against black, the dark-theme variant is the legible
 // one whatever the desktop is set to.
-const SDL_Color kCaution  = {0xFC, 0xE1, 0x00, 0xFF};   // Theme fillCaution  #FCE100
-const SDL_Color kCritical = {0xFF, 0x99, 0xA4, 0xFF};   // Theme fillCritical #FF99A4
+const SDL_Color kCaution = {0xFB, 0xBF, 0x24, 0xFF};   // Theme fillCaution  #FBBF24
+const SDL_Color kCritical = {0xF8, 0x71, 0x71, 0xFF};   // Theme fillCritical #F87171
 
 // How long a mark holds before it may clear, when the person has asked for
 // reduced motion. `windows_v2.md` D3 fades the mark in and out over 167 ms;

@@ -41,12 +41,15 @@ QtObject {
     //
     // A window that is snapped or maximised is square, and Windows does that
     // itself for the top-level frame: nothing here has to know.
-    readonly property int radiusOverlay: 8
+    // The web's radii since the Instances redesign (3 October 2026; the plan's
+    // section 4, Tokens): 16 a card, 12 a panel or a dialog, 10 a button.
+    readonly property int radiusOverlay: 12
+    readonly property int radiusButton: 10
     readonly property int radiusControl: 4
     // A card that carries a picture — Store, Xbox, the Settings home page —
     // is drawn at the overlay radius rather than the control one. A machine
     // card is that kind of card, so it borrows the number and says why.
-    readonly property int radiusCard: radiusOverlay
+    readonly property int radiusCard: 16
 
     // ---- Type -----------------------------------------------------------
     //
@@ -207,9 +210,12 @@ QtObject {
         return probe !== null && probe[name] !== undefined ? probe[name] : fallback
     }
 
+    // **The web's accent, not the system's** (the Instances redesign, section
+    // 4: "Theme.qml takes these values in place of the system palette"): the
+    // window and the console are one product and wear one colour. High
+    // contrast keeps the palette's, which is the only promise it makes.
     readonly property color accent: highContrast ? fromPalette("highlight", systemPalette.highlight)
-                                  : systemPalette.accent !== undefined ? systemPalette.accent
-                                  : systemPalette.highlight
+                                  : onDarkSurface ? "#7C72F0" : "#5B50E8"
 
     // ---- Spacing --------------------------------------------------------
     //
@@ -286,10 +292,20 @@ QtObject {
     // pictures, the window's glow, the shadows) is not drawn at all.
     readonly property bool highContrast: Omnuv.appearance.highContrast
 
+    // **The web's tokens** (`src/console-shared/src/theme.css`, the plan's
+    // section 4): canvas, surface, line, ink and muted, light and dark,
+    // chosen by the surface the controls are drawn on (see `surface`), so the
+    // text the style draws and the card under it never disagree.
+    readonly property color canvas: highContrast ? fromPalette("window", systemPalette.window)
+                                  : onDarkSurface ? "#0A0A0D" : "#FAFAF9"
+    readonly property color ink: highContrast ? fromPalette("windowText", systemPalette.windowText)
+                               : onDarkSurface ? "#F4F4F5" : "#18181B"
+    readonly property color muted: highContrast ? fromPalette("windowText", systemPalette.windowText)
+                                 : onDarkSurface ? "#A1A1AA" : "#71717A"
     readonly property color fillCard: highContrast ? fromPalette("base", systemPalette.base)
-                                    : onDarkSurface ? "#0DFFFFFF" : "#B3FFFFFF"
+                                    : onDarkSurface ? "#131317" : "#FFFFFF"
     readonly property color strokeCard: highContrast ? fromPalette("windowText", systemPalette.windowText)
-                                      : onDarkSurface ? "#19000000" : "#0F000000"
+                                      : onDarkSurface ? "#26262C" : "#E6E6E9"
     // Pointer over a card: ControlFillColorSecondary, the fill WinUI gives a
     // SettingsCard under the pointer, with ControlStrokeColorSecondary. Under
     // high contrast that is the palette's own selected pair.
@@ -299,25 +315,25 @@ QtObject {
     // `highlightedText` in the same instant, and a card whose text did not
     // follow is exactly the unreadable pair this is meant to avoid.
     readonly property color fillCardHover: highContrast ? fillCard
-                                         : onDarkSurface ? "#15FFFFFF" : "#80F9F9F9"
+                                         : onDarkSurface ? "#18181D" : "#FCFCFD"
     readonly property color strokeCardHover: highContrast ? fromPalette("highlight", systemPalette.highlight)
-                                           : onDarkSurface ? "#18FFFFFF" : "#29000000"
+                                           : onDarkSurface ? "#35353D" : "#D4D4D8"
     // And pressed: ControlFillColorTertiary, which is *quieter* than either.
     // A press that looked like rest is what this file had until somebody read
     // it — pressing a card took its fill back to `fillCard`, so the one moment
     // a person is told their press landed said nothing at all.
     readonly property color fillCardPressed: highContrast ? fromPalette("window", systemPalette.window)
-                                           : onDarkSurface ? "#08FFFFFF" : "#4DF9F9F9"
+                                           : onDarkSurface ? "#1A1A20" : "#F4F4F6"
     // LayerFillColorDefault: the quiet surface content sits on above Mica —
     // the rail and the messages bar. One step below a card, on purpose.
     readonly property color fillLayer: highContrast ? fromPalette("window", systemPalette.window)
-                                     : onDarkSurface ? "#4C3A3A3A" : "#80FFFFFF"
+                                     : onDarkSurface ? "#131317" : "#FFFFFF"
     // DividerStrokeColorDefault, for a rule between things on one surface.
     readonly property color strokeDivider: highContrast ? fromPalette("windowText", systemPalette.windowText)
-                                         : onDarkSurface ? "#15FFFFFF" : "#0F000000"
-    // SubtleFillColorSecondary: a chip, a skeleton, a track.
+                                         : onDarkSurface ? "#26262C" : "#E6E6E9"
+    // The web's `sunken`: a panel, a tile, a track.
     readonly property color fillSubtle: highContrast ? fromPalette("window", systemPalette.window)
-                                      : onDarkSurface ? "#0FFFFFFF" : "#09000000"
+                                      : onDarkSurface ? "#1A1A20" : "#F4F4F6"
 
     // ---- The lit tile -----------------------------------------------------
     //
@@ -349,14 +365,23 @@ QtObject {
     // SystemFillColor to the same value): colour stops carrying meaning
     // there, and the word beside it is the only thing left. Every consumer of
     // these draws that word, which is why the collapse costs nothing.
+    //
+    // **The web's four tones since the Instances redesign** (section 4: good,
+    // progress, warn, neutral): Running is good, an action under way is the
+    // accent (progress), Needs attention is warn, Stopped is neutral.
+    // `fillCritical` is red, and only the in-stream mark draws it (a stream
+    // that has stopped, against one that is struggling); every status the
+    // window shows uses the four tones above.
     readonly property color fillSuccess: highContrast ? fromPalette("windowText", systemPalette.windowText)
-                                       : onDarkSurface ? "#6CCB5F" : "#0F7B0F"
+                                       : onDarkSurface ? "#34D399" : "#0D9F6E"
+    readonly property color fillProgress: highContrast ? fromPalette("windowText", systemPalette.windowText)
+                                        : onDarkSurface ? "#7C72F0" : "#5B50E8"
     readonly property color fillCaution: highContrast ? fromPalette("windowText", systemPalette.windowText)
-                                       : onDarkSurface ? "#FCE100" : "#9D5D00"
+                                       : onDarkSurface ? "#FBBF24" : "#B45309"
     readonly property color fillCritical: highContrast ? fromPalette("windowText", systemPalette.windowText)
-                                        : onDarkSurface ? "#FF99A4" : "#C42B1C"
+                                        : onDarkSurface ? "#F87171" : "#DC2626"
     readonly property color fillNeutral: highContrast ? fromPalette("windowText", systemPalette.windowText)
-                                       : onDarkSurface ? "#8BFFFFFF" : "#72000000"
+                                       : onDarkSurface ? "#A1A1AA" : "#71717A"
 
     // ---- Icons ----------------------------------------------------------
     //
