@@ -58,6 +58,21 @@ Dialog {
     readonly property var apps: items.filter(function (d) { return d.group === "apps" })
     readonly property var plain: items.filter(function (d) { return d.group !== "apps" })
     readonly property string nameProblem: Omnuv.nameProblem(nameField.text, countBox.value)
+    function estimate() {
+        if (chosen === null || sizeId === "custom") return ""
+        var size = (chosen.sizes || []).filter(function (z) { return z.id === sizeId })[0]
+        if (!size || size.price_per_hour === undefined) return ""
+        var card = "0"
+        if (gpuModel !== "") {
+            var own = (chosen.gpus || []).filter(function (g) { return g.model === gpuModel })[0]
+            var sale = Omnuv.saleGpus.filter(function (g) { return g.model === gpuModel })[0]
+            card = own ? own.price_per_hour : (sale ? sale.price : undefined)
+            if (card === undefined) return ""
+        }
+        var units = function (x) { return Math.round(Number(x) * 10000) }
+        var total = (units(size.price_per_hour) + units(card)) * countBox.value
+        return "€" + (total / 10000).toFixed(4) + "/h"
+    }
     readonly property bool gpuMissing: chosen !== null && chosen.gpu === "required" && gpuModel === ""
     readonly property string blockedBecause: nameField.text.trim() === "" ? qsTr("Give it a name.")
         : nameProblem !== "" ? nameProblem
@@ -324,7 +339,8 @@ Dialog {
                                         Layout.fillWidth: true
                                         text: [tile.modelData.gpu === "required" ? qsTr("GPU") : tile.modelData.gpu === "optional" ? qsTr("GPU optional") : "",
                                                tile.modelData.typical_secs ? qsTr("~%1 min to install").arg(Math.max(1, Math.round(tile.modelData.typical_secs / 60))) : "",
-                                               tile.modelData.mark === "game" ? qsTr("Plays with the Omnuv app") : ""]
+                                               tile.modelData.mark === "game" ? qsTr("Plays with the Omnuv app") : "",
+                                               tile.modelData.price_from_per_hour ? qsTr("from €%1/h").arg(Number(tile.modelData.price_from_per_hour).toFixed(2)) : ""]
                                               .filter(function (p) { return p !== "" }).join(" · ")
                                         visible: text !== ""
                                         font.pixelSize: 12
@@ -541,10 +557,17 @@ Dialog {
                 Layout.fillWidth: true
                 Layout.leftMargin: 24
                 Layout.rightMargin: 24
+                objectName: "deployEstimate"
+                // The web's estimate, word for word (DeployDialog.svelte): Core's
+                // price for the size plus the card's, times how many, summed in
+                // ten-thousandths so 0.1 + 0.2 stays 0.3; none for a custom size,
+                // which Core prices only when it makes one.
                 text: {
-                    var g = Omnuv.saleGpus.filter(function (x) { return x.model === flow.gpuModel })
-                    return (g.length > 0 ? qsTr("%1 from €%2/h, an estimate. ").arg(g[0].model).arg(g[0].price) : "")
-                           + qsTr("Nothing is charged in closed testing.")
+                    var e = flow.estimate()
+                    if (e !== "") return qsTr("Estimate %1%2 · nothing is charged in closed testing.")
+                                          .arg(e).arg(countBox.value > 1 ? qsTr(" for %1").arg(countBox.value) : "")
+                    if (flow.sizeId === "custom") return qsTr("An estimate is shown for the preset sizes · nothing is charged in closed testing.")
+                    return qsTr("Nothing is charged in closed testing.")
                 }
                 opacity: 0.7
                 wrapMode: Text.WordWrap

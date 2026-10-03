@@ -1117,7 +1117,7 @@ private slots:
             {"kind":"recipe","group":"apps","id":"ollama-openwebui","name":"Ollama + Open WebUI","mark":"chat","summary":"Chat.","gpu":"optional",
              "sizes":[{"id":"recipe","name":"Recipe size","vcpus":4,"memory_gib":8,"disk_gib":60}],"typical_secs":190,"available":true},
             {"kind":"image","group":"plain","id":"ubuntu-26.04","name":"Ubuntu 26.04 LTS","mark":"linux","summary":"Ubuntu.","gpu":"optional",
-             "sizes":[{"id":"small","name":"Small","vcpus":2,"memory_gib":4,"disk_gib":40}],"available":true},
+             "sizes":[{"id":"small","name":"Small","vcpus":2,"memory_gib":4,"disk_gib":40,"price_per_hour":"0.03"}],"available":true},
             {"kind":"recipe","group":"apps","id":"steam-gaming","name":"Steam","mark":"game","summary":"Games.","gpu":"required",
              "sizes":[{"id":"recipe","name":"Recipe size","vcpus":8,"memory_gib":16,"disk_gib":200}],"available":false,"unavailable_because":"No GPU is free right now."}])");
         server.answer(server.find("/v1/capacity"),200,R"([{"region":"eu-west","gpus":[{"model":"RTX 3090","available":1,"price_per_hour":"0.40"}]}])");
@@ -1146,6 +1146,9 @@ private slots:
         QTRY_COMPARE(popup->property("step").toInt(),2);
         auto name=object->findChild<QObject*>("deployName"); QVERIFY(name);
         QCOMPARE(name->property("text").toString(),QString("ubuntu-1"));
+        // The web's estimate, word for word: Core's price for the size.
+        auto estimate=object->findChild<QObject*>("deployEstimate"); QVERIFY(estimate);
+        QCOMPARE(estimate->property("text").toString(),QString("Estimate €0.0300/h · nothing is charged in closed testing."));
         QVERIFY(name->setProperty("text",QStringLiteral("-notes")));
         auto confirm=object->findChild<QObject*>("deployConfirm"); QVERIFY(confirm);
         QTRY_VERIFY(!confirm->property("enabled").toBool());
