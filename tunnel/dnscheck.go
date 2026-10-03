@@ -129,10 +129,18 @@ func sortedKeys(m map[string][]string) []string {
 
 // Runs for the life of the daemon. Does nothing while the tunnel is not up:
 // with no overlay there is no map to hold a name against.
+//
+// It says how many names it holds whenever that number changes, so a log
+// shows the check running even when every name is right.
 func watchNames(ctx context.Context, w dnsWorld) {
 	ticker := time.NewTicker(dnsCheckEvery)
 	defer ticker.Stop()
+	held := -1
 	for {
+		if n := len(w.peers()); n != held {
+			log.Printf("dns: holding %d private name(s) against the overlay, every %s", n, dnsCheckEvery)
+			held = n
+		}
 		checkNames(ctx, w)
 		select {
 		case <-ctx.Done():
