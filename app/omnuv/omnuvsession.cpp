@@ -22,6 +22,7 @@
 #include <QDesktopServices>
 #include <QProcess>
 #include <QGuiApplication>
+#include <QReadWriteLock>
 #include <QSettings>
 #include <QRegularExpression>
 #include <QStandardPaths>
@@ -1537,11 +1538,72 @@ int OmnuvSession::hostRowFor(QObject* computerManager, const QString& address) c
     const QVector<NvComputer*> computers = manager->getComputers();
     for (int row = 0; row < computers.count(); row++) {
         NvComputer* computer = computers.at(row);
-        if (computer != nullptr && computer->manualAddress.address().toLower() == wanted) {
+        if (computer != nullptr && computer->manualAddress.address().toLower() == wanted
+            && !m_staleHosts.contains(computer->uuid)) {
             return row;
         }
     }
     return -1;
+}
+
+static QString streamHostKey(const QString& uuid)
+{
+    return QStringLiteral("omnuv/streamHostMachine/") + uuid;
+}
+
+bool OmnuvSession::keepStreamHost(const QString& madeFor, const QString& machine, bool online)
+{
+    return !machine.isEmpty() && (madeFor == machine || (madeFor.isEmpty() && online));
+}
+
+int OmnuvSession::streamHostFor(QObject* computerManager, const QVariantMap& target)
+{
+    auto manager = qobject_cast<ComputerManager*>(computerManager);
+    const QString host = target.value(QStringLiteral("host")).toString();
+    const int row = hostRowFor(computerManager, host);
+    if (manager == nullptr || row < 0) {
+        return row;
+    }
+    NvComputer* computer = manager->getComputers().at(row);
+    QString uuid;
+    bool online = false;
+    {
+        QReadLocker lock(&computer->lock);
+        uuid = computer->uuid;
+        online = computer->state == NvComputer::CS_ONLINE;
+    }
+    const QString id = target.value(QStringLiteral("id")).toString();
+    QSettings settings;
+    const QString madeFor = settings.value(streamHostKey(uuid)).toString();
+    if (keepStreamHost(madeFor, id, online)) {
+        settings.setValue(streamHostKey(uuid), id);
+        return row;
+    }
+    qInfo().noquote() << "omnuv: play: the saved streaming host at" << host << "was made for"
+                      << (madeFor.isEmpty() ? QStringLiteral("an earlier machine") : madeFor)
+                      << "and is not this one's; taking it away";
+    m_staleHosts.insert(uuid);
+    settings.remove(streamHostKey(uuid));
+    manager->deleteHost(computer);
+    return -1;
+}
+
+void OmnuvSession::rememberStreamHost(QObject* computerManager, const QVariantMap& target)
+{
+    auto manager = qobject_cast<ComputerManager*>(computerManager);
+    const int row = hostRowFor(computerManager, target.value(QStringLiteral("host")).toString());
+    if (manager == nullptr || row < 0) {
+        return;
+    }
+    NvComputer* computer = manager->getComputers().at(row);
+    QString uuid;
+    {
+        QReadLocker lock(&computer->lock);
+        uuid = computer->uuid;
+    }
+    if (!uuid.isEmpty()) {
+        QSettings().setValue(streamHostKey(uuid), target.value(QStringLiteral("id")).toString());
+    }
 }
 
 bool OmnuvSession::shouldStartHidden()

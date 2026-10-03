@@ -120,6 +120,7 @@ Item {
                     : qsTr("No streaming host answered at %1. Check your Client VPN and the machine's console.").arg(target.host))
                 return
             }
+            Omnuv.rememberStreamHost(ComputerManager, target)
             root.openHost(target)
         }
     }
@@ -387,7 +388,7 @@ Item {
         chooseApp = choose
         var row = Omnuv.targetRow(target)
         if (!Omnuv.machines.streamedAt(row)) { openTerminalFor(row); activeTarget = null; return }
-        if (hostIndexFor(target.host) >= 0) { openHost(target); return }
+        if (Omnuv.streamHostFor(ComputerManager, target) >= 0) { openHost(target); return }
         pendingTarget = target
         ComputerManager.addNewHostManually(target.host)
     }

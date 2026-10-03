@@ -880,6 +880,19 @@ private slots:
         QTRY_COMPARE(done.size(),2); QVERIFY(done[1][0].toBool());
         Q_UNUSED(second);
     }
+    // A saved streaming host is kept only for the machine it was made for
+    // (3 October 2026: a rig re-made under its old name never came online,
+    // because Play reused the deleted rig's entry). One from before this was
+    // recorded is kept while it answers, and taken away when it does not.
+    void aSavedStreamHostIsKeptOnlyForItsOwnMachine() {
+        QVERIFY(OmnuvSession::keepStreamHost("m-1","m-1",false));
+        QVERIFY(OmnuvSession::keepStreamHost("m-1","m-1",true));
+        QVERIFY(!OmnuvSession::keepStreamHost("m-old","m-new",true));
+        QVERIFY(!OmnuvSession::keepStreamHost("m-old","m-new",false));
+        QVERIFY(OmnuvSession::keepStreamHost("","m-1",true));
+        QVERIFY(!OmnuvSession::keepStreamHost("","m-1",false));
+        QVERIFY(!OmnuvSession::keepStreamHost("","",true));
+    }
     // The card's workload mark (3 October 2026), from what the view already
     // carries: the Ollama image a chat, a web port a page, a stream a game,
     // then Windows, a GPU, Linux; and a GPU flagged whatever the mark.

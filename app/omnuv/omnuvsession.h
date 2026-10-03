@@ -262,6 +262,21 @@ public:
     // structural change, so the two orders cannot drift.
     Q_INVOKABLE int hostRowFor(QObject* computerManager, const QString& address) const;
 
+    // **The saved streaming host for this machine, and only this machine**
+    // (the operator, 3 October 2026: a gaming rig re-made under its deleted
+    // predecessor's name "is not answering yet" for ever). The entry Play
+    // found by name was the old rig's: its identity and pinned certificate,
+    // polled at a name that now answers with another host, so it never came
+    // online. Each entry is remembered against the Core machine it was made
+    // for; one made for another machine is taken away and Play adds afresh.
+    // An entry from before this was remembered is kept if it is online now.
+    Q_INVOKABLE int streamHostFor(QObject* computerManager, const QVariantMap& target);
+    // The decision alone, for the test: keep the entry found by name, given
+    // which machine it was made for ("" when nothing was recorded), this
+    // machine's id, and whether the entry is online now.
+    static bool keepStreamHost(const QString& madeFor, const QString& machine, bool online);
+    Q_INVOKABLE void rememberStreamHost(QObject* computerManager, const QVariantMap& target);
+
     // **Pairing, without anybody typing four digits into anything.**
     //
     // Call this straight after ComputerModel::pairComputer() for the same
@@ -328,6 +343,9 @@ private:
     friend class OmnuvSessionTest;
     void invalidateContext();
     quint64 m_context = 0;
+    // Entries being deleted (deleteHost finishes on a worker thread), which
+    // hostRowFor must not find again in the meantime.
+    QSet<QString> m_staleHosts;
     quint64 m_identityRequest = 0;
     quint64 m_machineRequest = 0;
     quint64 m_authAttempt = 0;
