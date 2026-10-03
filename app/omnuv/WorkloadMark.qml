@@ -72,12 +72,58 @@ Item {
         }
     }
 
-    Glyph {
-        visible: Theme.iconsInstalled && (mark.workload === "game" || mark.workload === "web")
+    // The game pad and the globe are drawn, not taken from the icon font:
+    // that font is Windows' own, and on macOS and Linux the tile was empty.
+    Canvas {
+        id: drawn
+        visible: mark.workload === "game" || mark.workload === "web"
         anchors.centerIn: tile
-        icon: mark.workload === "game" ? Theme.icon.game : Theme.icon.globe
-        size: 22
-        color: Theme.accent
+        width: 32
+        height: 26
+        readonly property color ink: Theme.accent
+        readonly property string what: mark.workload
+        onInkChanged: requestPaint()
+        onWhatChanged: requestPaint()
+        onPaint: {
+            var ctx = getContext("2d")
+            ctx.reset()
+            var w = width, h = height
+            if (what === "game") {
+                // A body with two grips, a cross on the left, two buttons
+                // on the right: the shape every platform uses for "play".
+                var g = ctx.createLinearGradient(0, 0, w, h)
+                g.addColorStop(0, ink)
+                g.addColorStop(1, Qt.darker(ink, 1.35))
+                ctx.fillStyle = g
+                ctx.beginPath()
+                ctx.moveTo(8, 4)
+                ctx.lineTo(w - 8, 4)
+                ctx.bezierCurveTo(w - 1, 4, w + 1, h - 1, w - 4, h - 1)
+                ctx.bezierCurveTo(w - 8, h - 1, w - 9, h - 7, w - 12, h - 7)
+                ctx.lineTo(12, h - 7)
+                ctx.bezierCurveTo(9, h - 7, 8, h - 1, 4, h - 1)
+                ctx.bezierCurveTo(-1, h - 1, 1, 4, 8, 4)
+                ctx.closePath()
+                ctx.fill()
+                ctx.fillStyle = "white"
+                ctx.fillRect(7, 10, 8, 2.6)
+                ctx.fillRect(9.7, 7.3, 2.6, 8)
+                ctx.beginPath(); ctx.arc(w - 10, 9.5, 1.9, 0, Math.PI * 2); ctx.fill()
+                ctx.beginPath(); ctx.arc(w - 6.5, 13, 1.9, 0, Math.PI * 2); ctx.fill()
+            } else {
+                // A globe: the outline, the equator, two meridians.
+                var r = Math.min(w, h) / 2 - 1.5
+                var cx = w / 2, cy = h / 2
+                ctx.strokeStyle = ink
+                ctx.lineWidth = 2
+                ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke()
+                ctx.beginPath(); ctx.moveTo(cx - r, cy); ctx.lineTo(cx + r, cy); ctx.stroke()
+                ctx.save(); ctx.translate(cx, cy); ctx.scale(0.45, 1)
+                ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.restore(); ctx.stroke()
+                ctx.beginPath(); ctx.moveTo(cx - r * 0.85, cy - r * 0.5); ctx.lineTo(cx + r * 0.85, cy - r * 0.5); ctx.stroke()
+                ctx.beginPath(); ctx.moveTo(cx - r * 0.85, cy + r * 0.5); ctx.lineTo(cx + r * 0.85, cy + r * 0.5); ctx.stroke()
+            }
+        }
     }
 
     // The speech bubble: a rounded body and a tail, in the accent's
