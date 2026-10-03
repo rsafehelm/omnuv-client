@@ -68,7 +68,11 @@ RowLayout {
         objectName: "accountMenu"
         text: bar.estate.organizationName !== "" ? bar.estate.organizationName : qsTr("Account")
         font.pixelSize: Theme.bodySize
-        Accessible.name: qsTr("Account, %1").arg(text)
+        // A name that does not change with the organization, so the rig's
+        // journey can find it before it knows which one is signed in; the
+        // organization is still read out, as the description.
+        Accessible.name: qsTr("Account")
+        Accessible.description: text
         onClicked: accountMenu.open()
 
         Menu {

@@ -599,7 +599,10 @@ Dialog {
                 objectName: "deployConfirm"
                 highlighted: true
                 text: flow.step === 1 ? qsTr("Next") : flow.sending ? qsTr("Deploying…") : qsTr("Deploy")
-                Accessible.name: flow.step === 1 ? qsTr("Next") : qsTr("Deploy")
+                // "Deploy chat-1", not "Deploy": the page's own Deploy is
+                // still in the tree behind the dialog, and a screen reader or
+                // the rig's journey must be able to tell the two apart.
+                Accessible.name: flow.step === 1 ? qsTr("Next") : qsTr("Deploy %1").arg(nameField.text.trim())
                 Accessible.description: flow.step === 2 ? flow.blockedBecause : ""
                 enabled: flow.step === 1 ? (flow.chosen !== null && flow.chosen.available)
                                          : flow.blockedBecause === "" && !flow.sending
