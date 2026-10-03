@@ -535,6 +535,7 @@ Item {
         width: Math.min(root.width - 80, 560)
         modal: true
         title: qsTr("Switch to another Omnuv deployment")
+        header: OmnuvDialogTitle { text: switchDeployment.title }
         standardButtons: Dialog.Ok | Dialog.Cancel
         // Production shows as the empty field it means, so nobody meets its
         // address unless they chose another.
@@ -586,6 +587,7 @@ Item {
         width: Math.min(root.width - 32, 520)
         modal: true
         title: qsTr("Delete %1?").arg(targetName)
+        header: OmnuvDialogTitle { text: deleteMachine.title }
         property int row: -1
         property string targetName: ""
         property string targetId: ""
@@ -670,6 +672,7 @@ Item {
         width: Math.min(root.width - 80, 560)
         modal: true
         title: qsTr("Move this device to another network")
+        header: OmnuvDialogTitle { text: networkMove.title }
         standardButtons: Dialog.Yes | Dialog.Cancel
         contentItem: Label { text: Omnuv.networkMovePrompt; wrapMode: Text.WordWrap }
         onAccepted: Omnuv.confirmNetworkMove()
@@ -687,6 +690,7 @@ Item {
         width: Math.min(root.width - 80, 520)
         modal: true
         title: qsTr("Revoke the saved enrollment")
+        header: OmnuvDialogTitle { text: revokeEnrollment.title }
         standardButtons: Dialog.Yes | Dialog.Cancel
         contentItem: Label {
             text: qsTr("Revoke this saved attempt and disconnect it if it joined? Any other network membership on this device is kept. You can join again after cleanup is confirmed.")
@@ -729,6 +733,7 @@ Item {
         modal: true
         standardButtons: Dialog.Close
         title: qsTr("Finish pairing with %1").arg(machine)
+        header: OmnuvDialogTitle { text: pairing.title }
 
         onClosed: disclosure.shown = false
         onRejected: root.cancelConnection()

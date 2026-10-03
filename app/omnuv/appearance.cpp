@@ -1,6 +1,8 @@
 #include "appearance.h"
 
 #include <QCoreApplication>
+#include <QFontDatabase>
+#include <QPalette>
 #include <QGuiApplication>
 #include <QOperatingSystemVersion>
 #include <QAccessibilityHints>
@@ -302,8 +304,91 @@ bool OmnuvAppearance::wantsAlpha()
 #endif
 }
 
+namespace {
+// Material's setup, wherever Material is the style: chosen by platform or
+// forced with OMNUV_STYLE, as the Linux loop forces it. Both read the
+// environment as Material loads, so this runs before `setStyle`.
+// **Before 3 October 2026 a forced Material skipped it**, so the loop never
+// ran the accent or the dark theme a Linux buyer's client runs.
+void prepareMaterial()
+{
+    // **Material's accent is its own, not the palette's** (the parity
+    // sheet, 3 October 2026): the window's `palette.accent` binding moved
+    // nothing here, and macOS drew every primary button in Material's
+    // default purple, #9C27B0, where the web and Windows draw Theme's
+    // violet. Material reads its accent from the environment as it loads,
+    // so Theme's two values are handed over here, before it does. Not over
+    // one the person set, and not under high contrast, whose colours are
+    // the system's.
+    if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_MATERIAL_ACCENT") &&
+        qEnvironmentVariableIsEmpty("OMNUV_CONTRAST")) {
+        const bool dark = forcedTheme() >= 0 ? forcedTheme() == 1 : queryDark();
+        qputenv("QT_QUICK_CONTROLS_MATERIAL_ACCENT", dark ? "#7C72F0" : "#5B50E8");
+    }
+
+    // **Dark asked for, Material drawn light** (3 October 2026). Material
+    // reads its theme from the environment as it loads, as it reads the
+    // accent above, and `gui/main.qml` then follows Material's own palette
+    // (`palette.window`), as Theme's surfaces do. Where Qt has no platform
+    // theme to apply a colour scheme (a Linux desktop without one, the
+    // Linux loop's container) nothing told Material it was dark, and
+    // `OMNUV_THEME=dark` drew every surface light. Not over a theme the
+    // person set, and not under high contrast.
+    const bool wantDark = forcedTheme() >= 0 ? forcedTheme() == 1 : queryDark();
+    if (wantDark && qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_MATERIAL_THEME") &&
+        qEnvironmentVariableIsEmpty("OMNUV_CONTRAST")) {
+        qputenv("QT_QUICK_CONTROLS_MATERIAL_THEME", "Dark");
+        qInfo("Omnuv appearance: Material told it is dark");
+
+        // And the palette, which `gui/main.qml` reads to choose Material's
+        // theme (`palette.window`'s lightness) and Theme reads to choose its
+        // surfaces: where no platform theme applies the colour scheme, it
+        // stayed light and won. Given Theme's dark values only when it is
+        // light, so a platform whose palette is already dark keeps its own.
+        QPalette pal = QGuiApplication::palette();
+        if (pal.color(QPalette::Window).lightness() >= 128) {
+            const auto set = [&pal](QPalette::ColorRole role, const char* hex) {
+                pal.setColor(role, QColor(QLatin1String(hex)));
+            };
+            set(QPalette::Window, "#0A0A0D");
+            set(QPalette::WindowText, "#F4F4F5");
+            set(QPalette::Base, "#131317");
+            set(QPalette::AlternateBase, "#1A1A20");
+            set(QPalette::Text, "#F4F4F5");
+            set(QPalette::PlaceholderText, "#A1A1AA");
+            set(QPalette::Button, "#1A1A20");
+            set(QPalette::ButtonText, "#F4F4F5");
+            set(QPalette::ToolTipBase, "#26262C");
+            set(QPalette::ToolTipText, "#F4F4F5");
+            set(QPalette::Light, "#35353D");
+            set(QPalette::Midlight, "#26262C");
+            set(QPalette::Mid, "#35353D");
+            set(QPalette::Dark, "#0A0A0D");
+            set(QPalette::Highlight, "#7C72F0");
+            set(QPalette::HighlightedText, "#FFFFFF");
+            set(QPalette::Accent, "#7C72F0");
+            QGuiApplication::setPalette(pal);
+            qInfo("Omnuv appearance: a dark palette set, the platform's was light");
+        }
+    }
+}
+
+} // namespace
+
 void OmnuvAppearance::applyStyle()
 {
+    // **The web console's two faces, shipped** (the parity sheet, 3 October
+    // 2026): Instrument Sans for the interface and JetBrains Mono for what a
+    // person copies, from their own OFL releases, pinned in fonts/README.md.
+    // Registered before any QML loads, so `Theme.textFamily` and
+    // `Theme.monoFamily` find them installed on every platform; a file that
+    // fails to load says so and the system faces stand in, as before.
+    for (const char* f : {"InstrumentSans-Variable.ttf", "JetBrainsMono-Regular.ttf", "JetBrainsMono-Medium.ttf"}) {
+        if (QFontDatabase::addApplicationFont(QStringLiteral(":/omnuv/fonts/") + QLatin1String(f)) < 0) {
+            qWarning("Omnuv appearance: the font %s did not load", f);
+        }
+    }
+
     if (wantsAlpha()) {
         QQuickWindow::setDefaultAlphaBuffer(true);
     }
@@ -325,6 +410,9 @@ void OmnuvAppearance::applyStyle()
 
     const QString forced = qEnvironmentVariable("OMNUV_STYLE");
     if (!forced.isEmpty()) {
+        if (forced.compare(QStringLiteral("Material"), Qt::CaseInsensitive) == 0) {
+            prepareMaterial();
+        }
         QQuickStyle::setStyle(forced);
     } else
 #ifdef Q_OS_WIN
@@ -351,19 +439,7 @@ void OmnuvAppearance::applyStyle()
     // or a Linux desktop FluentWinUI3 would be the foreign look, which is the
     // thing this change exists to stop doing on Windows.
     {
-        // **Material's accent is its own, not the palette's** (the parity
-        // sheet, 3 October 2026): the window's `palette.accent` binding moved
-        // nothing here, and macOS drew every primary button in Material's
-        // default purple, #9C27B0, where the web and Windows draw Theme's
-        // violet. Material reads its accent from the environment as it loads,
-        // so Theme's two values are handed over here, before it does. Not over
-        // one the person set, and not under high contrast, whose colours are
-        // the system's.
-        if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_MATERIAL_ACCENT") &&
-            qEnvironmentVariableIsEmpty("OMNUV_CONTRAST")) {
-            const bool dark = forcedTheme() >= 0 ? forcedTheme() == 1 : queryDark();
-            qputenv("QT_QUICK_CONTROLS_MATERIAL_ACCENT", dark ? "#7C72F0" : "#5B50E8");
-        }
+        prepareMaterial();
         QQuickStyle::setStyle(QStringLiteral("Material"));
     }
 #endif

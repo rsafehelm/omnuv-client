@@ -894,6 +894,8 @@ Item {
     // is nothing else this process was started to do.
     Dialog {
         id: quitConfirm
+        // Drawn here: Material's is a layer the software renderer does not draw.
+        background: OmnuvSurface { radius: 16 }
         property string running
 
         anchors.centerIn: parent
@@ -901,6 +903,7 @@ Item {
         modal: true
         standardButtons: Dialog.Yes | Dialog.No
         title: qsTr("%1 is already streaming").arg(segue.machineName)
+        header: OmnuvDialogTitle { text: quitConfirm.title }
 
         onAccepted: {
             segue.cliStep = 3

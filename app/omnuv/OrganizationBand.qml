@@ -54,6 +54,9 @@ RowLayout {
         Accessible.name: qsTr("Project")
         implicitContentWidthPolicy: ComboBox.WidestText
         onActivated: function (i) { Omnuv.selectProject(Omnuv.projectIds[i]) }
+        // Material's dropdown is a shadowed layer the software renderer does
+        // not draw; ours is the popup surface (OmnuvSurface.qml).
+        popup.background: OmnuvSurface {}
     }
     Label {
         visible: Omnuv.projectIds.length <= 1
@@ -78,6 +81,7 @@ RowLayout {
         Menu {
             id: accountMenu
             y: account.height
+            background: OmnuvSurface { implicitWidth: 200 }
 
             // Another Omnuv deployment, without signing out of this one:
             // each keeps its own sign-in, so coming back needs none.

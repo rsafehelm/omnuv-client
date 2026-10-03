@@ -110,6 +110,7 @@ Dialog {
     }
 
     title: qsTr("Stream settings")
+    header: OmnuvDialogTitle { text: sheet.title }
     modal: true
     standardButtons: Dialog.Close
     closePolicy: Popup.CloseOnEscape
@@ -232,6 +233,8 @@ Dialog {
             spacing: Theme.spacing
 
             ComboBox {
+
+                popup.background: OmnuvSurface {}
                 id: resolution
                 Accessible.role: Accessible.ComboBox
                 Accessible.name: qsTr("Resolution")
@@ -293,6 +296,8 @@ Dialog {
             }
 
             ComboBox {
+
+                popup.background: OmnuvSurface {}
                 id: frameRate
                 Accessible.role: Accessible.ComboBox
                 Accessible.name: qsTr("Frame rate")
@@ -453,6 +458,8 @@ Dialog {
             }
 
             ComboBox {
+
+                popup.background: OmnuvSurface {}
                 id: displayMode
                 Accessible.role: Accessible.ComboBox
                 Accessible.name: qsTr("Display")
@@ -546,6 +553,8 @@ Dialog {
             }
 
             ComboBox {
+
+                popup.background: OmnuvSurface {}
                 id: audio
                 Accessible.role: Accessible.ComboBox
                 Accessible.name: qsTr("Audio")
