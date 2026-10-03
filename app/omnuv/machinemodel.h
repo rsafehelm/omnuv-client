@@ -50,6 +50,12 @@ struct Machine
     // building an address nothing answers to. Empty until an address is
     // assigned, which is also when there is nothing to connect to.
     QString host;
+    // **What the card shows**, Core's `private_name` (`ollama-53746c3e.internal`):
+    // short enough to read. `host` above is what everything connects to, and is
+    // Core's `private_host` when it sends one: `<machine uuid>.<project uuid>.
+    // <domain>`, unique to this machine for ever (3 October 2026), so nothing
+    // on this device can reach a machine made before under the same name.
+    QString shortHost;
 
     // The address on the project network. Not used to connect — `host` is —
     // but it is the one field that says an address was ever *assigned*, which
@@ -144,6 +150,7 @@ public:
         HasGpuRole,
         StreamedRole,
         HostRole,
+        ShortHostRole,
         UserRole,
         SummaryRole,
         PrivateIpRole,

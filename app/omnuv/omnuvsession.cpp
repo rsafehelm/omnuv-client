@@ -96,7 +96,7 @@ bool validMachines(const QJsonDocument& doc)
             || !nonemptyString(machine, "status") || ids.contains(machine["id"].toString())) return false;
         ids.insert(machine["id"].toString());
         // These fields can be absent or null while a machine is being placed.
-        for (const auto key : {"private_name", "private_ip", "stream_app", "default_user", "last_error"}) {
+        for (const auto key : {"private_name", "private_host", "private_ip", "stream_app", "default_user", "last_error"}) {
             const auto field = machine.value(QLatin1String(key));
             if (!field.isUndefined() && !field.isNull() && !field.isString()) return false;
         }

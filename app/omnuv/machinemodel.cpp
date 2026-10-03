@@ -95,6 +95,7 @@ QVariant MachineModel::data(const QModelIndex& index, int role) const
     case HasGpuRole:    return m.hasGpu;
     case StreamedRole:  return m.streamed();
     case HostRole:      return m.host;
+    case ShortHostRole: return m.shortHost;
     case UserRole:      return m.defaultUser;
     case SummaryRole:   return m.summary;
     case PrivateIpRole: return m.privateIp;
@@ -127,6 +128,7 @@ QHash<int, QByteArray> MachineModel::roleNames() const
         { HasGpuRole,    "hasGpu" },
         { StreamedRole,  "streamed" },
         { HostRole,      "host" },
+        { ShortHostRole, "shortHost" },
         { UserRole,      "user" },
         { SummaryRole,   "summary" },
         { PrivateIpRole, "privateIp" },
@@ -198,7 +200,8 @@ void MachineModel::replace(const QJsonArray& machines)
         m.streamApp = o["stream_app"].toString();
         m.webPort = o["web_port"].toInt();
         m.defaultUser = o["default_user"].toString();
-        m.host = o["private_name"].toString();
+        m.shortHost = o["private_name"].toString();
+        m.host = o["private_host"].toString().isEmpty() ? m.shortHost : o["private_host"].toString();
         m.privateIp = o["private_ip"].toString();
         m.lastError = o["last_error"].toString();
         m.deletionProtected = o["protected"].toBool();

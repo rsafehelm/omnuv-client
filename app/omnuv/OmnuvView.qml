@@ -97,6 +97,12 @@ Item {
         }
     }
     function hostIndexFor(host) { return Omnuv.hostRowFor(ComputerManager, host) }
+    // A sentence names the machine, never its address: the address is
+    // `<machine uuid>.<project uuid>.<domain>` since 3 October 2026.
+    function machineName(target) {
+        var row = target ? Omnuv.targetRow(target) : -1
+        return row >= 0 ? Omnuv.machines.nameAt(row) : (target ? target.host : "")
+    }
     function appIndexFor(name) {
         for (var i = 0; i < appProbe.count; i++) {
             var item = appProbe.itemAt(i)
@@ -117,7 +123,7 @@ Item {
                 root.activeTarget = null
                 message.show(detectedPortBlocking
                     ? qsTr("This network is blocking the ports streaming needs. Try a different network.")
-                    : qsTr("No streaming host answered at %1. Check your Client VPN and the machine's console.").arg(target.host))
+                    : qsTr("No streaming host answered on %1. Check your Client VPN and the machine's console.").arg(root.machineName(target)))
                 return
             }
             Omnuv.rememberStreamHost(ComputerManager, target)
@@ -142,8 +148,8 @@ Item {
                 stop()
                 root.activeTarget = null
                 message.show(item && item.hostStatusUnknown
-                    ? qsTr("This device cannot tell whether %1 is up. Check your Client VPN.").arg(target.host)
-                    : qsTr("%1 is not answering yet. It may still be starting.").arg(target.host))
+                    ? qsTr("This device cannot tell whether %1 is up. Check your Client VPN.").arg(root.machineName(target))
+                    : qsTr("%1 is not answering yet. It may still be starting.").arg(root.machineName(target)))
             }
         }
         function watch(t) { target = t; tries = 0; start() }
@@ -243,7 +249,7 @@ Item {
             } else if (++tries > 30) {
                 stop()
                 root.activeTarget = null
-                message.show(qsTr("%1 answered, but has not said what it can stream yet.").arg(target.host))
+                message.show(qsTr("%1 answered, but has not said what it can stream yet.").arg(root.machineName(target)))
             }
         }
     }
@@ -371,7 +377,7 @@ Item {
                 delivering = false
             } else {
                 console.info("omnuv: play: an attempt for " + (busy ? busy.host : "?") + " is " + Math.round(age / 1000) + "s old; not starting another")
-                message.show(qsTr("Still connecting to %1. Wait a moment, or press Play again to start over.").arg(busy ? busy.host : ""))
+                message.show(qsTr("Still connecting to %1. Wait a moment, or press Play again to start over.").arg(busy ? root.machineName(busy) : ""))
                 busyNoticed = true
                 return
             }

@@ -340,7 +340,7 @@ ItemDelegate {
             Label {
                 Layout.fillWidth: true
                 visible: model.host !== "" && model.lastError === ""
-                text: model.host
+                text: model.shortHost !== "" ? model.shortHost : model.host
                 font.family: Theme.monoFamily
                 font.pixelSize: Theme.captionSize
                 opacity: 0.6

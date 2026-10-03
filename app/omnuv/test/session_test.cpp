@@ -893,6 +893,22 @@ private slots:
         QVERIFY(!OmnuvSession::keepStreamHost("","m-1",false));
         QVERIFY(!OmnuvSession::keepStreamHost("","",true));
     }
+    // Everything connects to Core's private_host when it sends one (0229:
+    // <machine uuid>.<project uuid>.<domain>), and to private_name when it
+    // does not; the card still shows the short name.
+    void aMachineIsReachedByItsNameById() {
+        MachineModel m;
+        m.replace(QJsonArray{
+            QJsonObject{{"id","i-1"},{"name","gaming"},{"status","Running"},
+                        {"private_name","gaming-53746c3e.internal"},
+                        {"private_host","54aec33e-ff17-40af-9d24-b7403258f8c5.53746c3e-7218-47de-a9a2-bef3b91a2cc0.cloud.omnuv.example"}},
+            QJsonObject{{"id","i-2"},{"name","older"},{"status","Running"},{"private_name","older-53746c3e.internal"}}});
+        const int host=m.roleNames().key("host",-1), shortHost=m.roleNames().key("shortHost",-1);
+        QVERIFY(host>=0 && shortHost>=0);
+        QCOMPARE(m.hostAt(0),QString("54aec33e-ff17-40af-9d24-b7403258f8c5.53746c3e-7218-47de-a9a2-bef3b91a2cc0.cloud.omnuv.example"));
+        QCOMPARE(m.data(m.index(0),shortHost).toString(),QString("gaming-53746c3e.internal"));
+        QCOMPARE(m.hostAt(1),QString("older-53746c3e.internal"));
+    }
     // The card's workload mark (3 October 2026), from what the view already
     // carries: the Ollama image a chat, a web port a page, a stream a game,
     // then Windows, a GPU, Linux; and a GPU flagged whatever the mark.
