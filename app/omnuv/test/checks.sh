@@ -933,7 +933,10 @@ if translated != card_group:
 
 # Prove the check can still see: the grouping has to be the real one, with
 # every word Core's state::friendly can produce and a default for the seventh.
-for word in ("Running", "Starting", "Restarting", "Stopping", "Stopped", "Deleting", "*"):
+# Since the Instances redesign (3 October 2026) Core's words include an app's:
+# Ready (Running, its page answering), Deploying and Installing.
+for word in ("Running", "Ready", "Deploying", "Installing", "Starting", "Restarting", "Stopping",
+             "Stopped", "Deleting", "*"):
     if word not in card_group:
         sys.exit("statusColour() no longer names %r; the parse is reading the wrong thing" % word)
 

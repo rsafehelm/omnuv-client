@@ -6,6 +6,8 @@
 #include "credentials.h"
 #include "pairing.h"
 #include <QUuid>
+#include <QMap>
+#include <algorithm>
 
 #include "backend/computermanager.h"
 #include "backend/nvcomputer.h"
@@ -20,6 +22,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QDesktopServices>
+#include <QClipboard>
 #include <QProcess>
 #include <QGuiApplication>
 #include <QReadWriteLock>
@@ -1456,6 +1459,15 @@ void OmnuvSession::deliverPin(const QVariantMap& target, const QString& pin)
     connect(m_machines, &MachineModel::countChanged, m_pairScope, [this, target]() {
         if (targetRow(target) < 0) { finishPairing(); emit connectionContextChanged(); }
     });
+    // **The deployment by the row's own `app.deployment_id`** (the Instances
+    // redesign, section 7): the list is not read again to find it. Only an
+    // older Core, whose instances carry no `app`, is asked for its deployments.
+    const auto known = m_machines->deploymentIdAt(targetRow(target));
+    if (!known.isEmpty()) {
+        m_claimDeployment = known;
+        collectStreamLogin(target, pin, kLoginTries);
+        return;
+    }
     auto reply = m_net.get(request(QStringLiteral("/v1/deployments") + projectQuery(), true));
     connect(m_pairScope, &QObject::destroyed, reply, [reply]() { reply->disconnect(); reply->abort(); reply->deleteLater(); });
     connect(reply, &QNetworkReply::finished, m_pairScope, [this, reply, target, pin]() {
@@ -1869,6 +1881,202 @@ void OmnuvSession::deploy(const QString& recipe, const QString& name, const QStr
     });
 }
 
+QString OmnuvSession::nameProblem(const QString& name, int count)
+{
+    // Core's rule and Core's sentences (`instances::valid_machine_name`), so
+    // the form says while it is typed what Core would say after.
+    const QString stem = name.trimmed();
+    QStringList names;
+    if (count <= 1) names << stem;
+    else for (int i = 1; i <= count; ++i) names << QStringLiteral("%1-%2").arg(stem).arg(i);
+    static const QRegularExpression allowed(QStringLiteral("^[A-Za-z0-9-]+$"));
+    for (const auto& n : names) {
+        QString why;
+        if (n.isEmpty() || n.size() > 48) why = QStringLiteral("name must be 1-48 characters");
+        else if (!allowed.match(n).hasMatch())
+            why = QStringLiteral("name may use letters, digits and hyphens only — it becomes a DNS name");
+        else if (n.startsWith('-') || n.endsWith('-')) why = QStringLiteral("name cannot start or end with a hyphen");
+        if (!why.isEmpty()) return count > 1 ? QStringLiteral("%1: %2").arg(n, why) : why;
+    }
+    return QString();
+}
+
+QString OmnuvSession::newIdempotencyKey()
+{
+    return QUuid::createUuid().toString(QUuid::WithoutBraces);
+}
+
+void OmnuvSession::loadDeployables()
+{
+    if (!signedIn()) return;
+    const auto context = m_context;
+    m_deployablesProblem.clear();
+    auto catalogue = m_net.get(request(QStringLiteral("/v1/catalog/deployables"), true));
+    auto capacity = m_net.get(request(QStringLiteral("/v1/capacity"), true));
+    auto left = std::make_shared<int>(2);
+    auto items = std::make_shared<QVariantList>();
+    auto gpus = std::make_shared<QVariantList>();
+    auto olderCore = std::make_shared<bool>(false);
+    auto problem = std::make_shared<QString>();
+    auto joined = [this, context, left, items, gpus, olderCore, problem]() {
+        if (--*left > 0 || context != m_context) return;
+        if (*olderCore) {
+            // A Core with no catalogue: its recipes stand in, as the dialog
+            // read them before (`loadOffers`), as apps with their one size.
+            connect(this, &OmnuvSession::offersChanged, this, [this, gpus]() {
+                QVariantList fallback;
+                for (const auto& v : m_offers) {
+                    const auto o = v.toMap();
+                    fallback.append(QVariantMap{
+                        {"kind", "recipe"}, {"group", "apps"}, {"id", o.value("id")}, {"name", o.value("name")},
+                        {"mark", "linux"}, {"summary", o.value("description")}, {"gpu", o.value("gpu")},
+                        {"sizes", QVariantList{QVariantMap{{"id", "recipe"}, {"name", tr("Its size")}, {"label", o.value("machine")}}}},
+                        {"available", true}, {"olderCore", true}});
+                }
+                m_deployables = fallback;
+                m_saleGpus = *gpus;
+                emit deployablesChanged();
+            }, Qt::SingleShotConnection);
+            loadOffers();
+            return;
+        }
+        m_deployables = *items;
+        m_saleGpus = *gpus;
+        m_deployablesProblem = *problem;
+        emit deployablesChanged();
+    };
+    connect(catalogue, &QNetworkReply::finished, this, [catalogue, items, olderCore, problem, joined]() {
+        catalogue->deleteLater();
+        const int code = catalogue->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const auto bytes = catalogue->readAll();
+        if (code == 404) *olderCore = true;
+        else if (catalogue->error() != QNetworkReply::NoError)
+            *problem = code == 0 ? tr("Could not reach Omnuv to read what can be deployed.") : refusalOf(catalogue, bytes);
+        else {
+            for (const auto& v : QJsonDocument::fromJson(bytes).array()) {
+                auto o = v.toObject().toVariantMap();
+                // A size reads "4 vCPU · 8 GiB · 60 GiB disk" wherever it is shown.
+                QVariantList sizes;
+                for (const auto& sv : o.value("sizes").toList()) {
+                    auto m = sv.toMap();
+                    m["label"] = tr("%1 vCPU · %2 GiB · %3 GiB disk").arg(m.value("vcpus").toInt())
+                        .arg(m.value("memory_gib").toInt()).arg(m.value("disk_gib").toInt());
+                    sizes.append(m);
+                }
+                o["sizes"] = sizes;
+                items->append(o);
+            }
+            // Apps first, then plain instances; Core's order inside each.
+            std::stable_sort(items->begin(), items->end(), [](const QVariant& a, const QVariant& b) {
+                return a.toMap().value("group").toString() == QLatin1String("apps")
+                    && b.toMap().value("group").toString() != QLatin1String("apps");
+            });
+        }
+        joined();
+    });
+    connect(capacity, &QNetworkReply::finished, this, [capacity, gpus, joined]() {
+        capacity->deleteLater();
+        if (capacity->error() == QNetworkReply::NoError) {
+            // Free counts summed over regions, one row per model, cheapest first.
+            QMap<QString, QVariantMap> by;
+            for (const auto& r : QJsonDocument::fromJson(capacity->readAll()).array()) {
+                for (const auto& g : r.toObject().value("gpus").toArray()) {
+                    const auto o = g.toObject();
+                    auto& row = by[o.value("model").toString()];
+                    row["model"] = o.value("model").toString();
+                    row["free"] = row.value("free").toInt() + o.value("available").toInt();
+                    if (!row.contains("price")) row["price"] = o.value("price_per_hour").toString();
+                }
+            }
+            for (auto row : by) gpus->append(row);
+            std::stable_sort(gpus->begin(), gpus->end(), [](const QVariant& a, const QVariant& b) {
+                return a.toMap().value("price").toString().toDouble() < b.toMap().value("price").toString().toDouble();
+            });
+        }
+        joined();
+    });
+}
+
+void OmnuvSession::deployItem(const QVariantMap& body, const QString& key)
+{
+    if (!signedIn() || m_ordering) return;
+    const auto item = body.value("item").toMap();
+    const auto name = body.value("name").toString().trimmed();
+    const int count = qMax(1, body.value("count").toInt());
+    const auto why = nameProblem(name, count);
+    if (!why.isEmpty()) { emit deployRefused(QStringLiteral("name"), QStringLiteral("name_invalid"), why); return; }
+    if (key.isEmpty()) return;
+    // A recipe from an older Core's list has no `/v1/deploy` to go to.
+    if (body.value("olderCore").toBool()) {
+        const auto gpu = body.value("gpu").toMap().value("model").toString();
+        deploy(item.value("id").toString(), name, gpu, count);
+        return;
+    }
+    QVariantMap sent = body;
+    sent.remove("olderCore");
+    sent["name"] = name;
+    sent["count"] = count;
+    auto req = request(QStringLiteral("/v1/deploy") + projectQuery(), true);
+    req.setRawHeader("Idempotency-Key", key.toLatin1());
+    setOrdering(true);
+    const auto context = m_context;
+    auto reply = m_net.post(req, QJsonDocument(QJsonObject::fromVariantMap(sent)).toJson(QJsonDocument::Compact));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, name, count, context]() {
+        reply->deleteLater();
+        setOrdering(false);
+        if (context != m_context) return;
+        const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const auto bytes = reply->readAll();
+        const auto o = QJsonDocument::fromJson(bytes).object();
+        if (code == 200 || code == 201) {
+            const auto made = o.value("instances").toArray().toVariantList();
+            emit deployed(made);
+            emit deployFinished(true, count > 1
+                ? tr("Deploying %1-1 to %1-%2.").arg(name).arg(count)
+                : tr("Deploying %1.").arg(name));
+            refresh(true);
+        } else if (code == 0) {
+            // Unanswered: Deploy again sends the same key, so it cannot rent two.
+            emit deployRefused(QString(), QString(), tr("Omnuv did not answer. Deploy again is safe: it cannot make a second %1.").arg(name));
+        } else {
+            emit deployRefused(o.value("field").toString(), o.value("code").toString(), refusalOf(reply, bytes));
+        }
+    });
+}
+
+void OmnuvSession::power(const QString& machineId, const QString& action)
+{
+    static const QStringList known{QStringLiteral("start"), QStringLiteral("stop"), QStringLiteral("reboot")};
+    if (!signedIn() || machineId.isEmpty() || !known.contains(action)) return;
+    QString name;
+    for (int r = 0; r < m_machines->rowCount(); ++r)
+        if (m_machines->idAt(r) == machineId) name = m_machines->nameAt(r);
+    if (name.isEmpty()) return;
+    const auto context = m_context;
+    auto reply = m_net.post(request(QStringLiteral("/v1/instances/%1/%2").arg(machineId, action) + projectQuery(), true), QByteArray());
+    connect(reply, &QNetworkReply::finished, this, [this, reply, name, action, context]() {
+        reply->deleteLater();
+        if (context != m_context) return;
+        const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const auto bytes = reply->readAll();
+        if (code >= 200 && code < 300) {
+            emit actionFinished(true, action == QLatin1String("start") ? tr("Starting %1.").arg(name)
+                                    : action == QLatin1String("stop") ? tr("Stopping %1.").arg(name)
+                                    : tr("Restarting %1.").arg(name));
+        } else if (code == 0) {
+            emit actionFinished(false, tr("Omnuv did not answer. Wait for the list to refresh to see what %1 is doing.").arg(name));
+        } else {
+            emit actionFinished(false, refusalOf(reply, bytes));
+        }
+        refresh(true);
+    });
+}
+
+void OmnuvSession::copyText(const QString& text)
+{
+    if (auto clipboard = QGuiApplication::clipboard()) clipboard->setText(text);
+}
+
 void OmnuvSession::deleteMachine(int row, const QString& confirmed, bool unprotect,
                                  const QString& machineId)
 {
@@ -1899,24 +2107,11 @@ void OmnuvSession::deleteMachine(int row, const QString& confirmed, bool unprote
     // clearing it unseen.
     const bool clear = unprotect && m_machines->protectedAt(row);
     setOrdering(true);
-    const auto context = m_context;
-    // The instance view names no deployment; the deployment view names its
-    // instance (see MachineModel::idAt).
-    auto reply = m_net.get(request(QStringLiteral("/v1/deployments") + projectQuery(), true));
-    connect(reply, &QNetworkReply::finished, this, [this, reply, id, name, clear, context]() {
-        reply->deleteLater();
-        if (context != m_context) { setOrdering(false); return; }
-        if (reply->error() != QNetworkReply::NoError) {
-            setOrdering(false);
-            emit deleteFinished(false, tr("Omnuv could not be reached, so %1 was not deleted.").arg(name));
-            return;
-        }
-        QString deployment;
-        for (const auto& value : QJsonDocument::fromJson(reply->readAll()).array())
-            if (value.toObject().value("instance_id").toString() == id) deployment = value.toObject().value("id").toString();
-        if (deployment.isEmpty()) removeAt(QStringLiteral("/v1/instances/%1").arg(id), name, clear);
-        else removeAt(QStringLiteral("/v1/deployments/%1").arg(deployment), name);
-    });
+    // **One call, by the machine's id** (the Instances redesign, section 5):
+    // `DELETE /v1/instances/{id}` ends an app's deployment in the transaction
+    // that removes the machine (0161), and spends its stream password with
+    // it, so the list of deployments is no longer read to find one.
+    removeAt(QStringLiteral("/v1/instances/%1").arg(id), name, clear);
 }
 
 void OmnuvSession::removeAt(const QString& path, const QString& name, bool unprotect)

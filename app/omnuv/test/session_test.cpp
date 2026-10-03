@@ -1,3 +1,4 @@
+#include <functional>
 #include "../omnuvsession.h"
 #include "../settingsmove.h"
 #include "../pairing.h"
@@ -39,7 +40,7 @@ QAtomicInt g_AsyncLoggingEnabled;
 // Requests can finish in any order. Tests exercise the real QNAM callbacks.
 class HeldServer : public QTcpServer {
 public:
-    struct Call { QByteArray path, body; QPointer<QTcpSocket> socket; QByteArray method; };
+    struct Call { QByteArray path, body; QPointer<QTcpSocket> socket; QByteArray method; QByteArray head; };
     QList<Call> calls;
     HeldServer() {
         listen(QHostAddress::LocalHost);
@@ -58,7 +59,7 @@ public:
                         if (line.toLower().startsWith("content-length:")) length=line.mid(15).trimmed().toInt();
                     if (buffer->size()<split+4+length) return;
                     *captured=true;
-                    calls.append({buffer->split(' ').at(1),buffer->mid(split+4,length),socket,buffer->split(' ').at(0)});
+                    calls.append({buffer->split(' ').at(1),buffer->mid(split+4,length),socket,buffer->split(' ').at(0),buffer->left(split)});
                 });
             }
         });
@@ -67,6 +68,14 @@ public:
     int find(const QByteArray& path, int after=0) const {
         for (int i=after;i<calls.size();++i) if (calls[i].path==path) return i;
         return -1;
+    }
+    // One request header's value, as sent, or "" when it was not.
+    QByteArray header(int i, const QByteArray& name) const {
+        for (auto line:calls[i].head.split('\n')) {
+            line=line.trimmed();
+            if (line.toLower().startsWith(name.toLower()+":")) return line.mid(name.size()+1).trimmed();
+        }
+        return QByteArray();
     }
     int count(const QByteArray& path) const {
         int n=0; for (const auto& call:calls) if(call.path==path) ++n; return n;
@@ -851,34 +860,31 @@ private slots:
         s.deploy("steam-gaming","  ","RTX 3090",1);
         QCOMPARE(done.size(),3); QVERIFY(!done[2][0].toBool());
     }
-    // A machine from a recipe goes as its deployment, so its login and card go
-    // with it; any other goes as an instance. Deleting what is already gone
-    // (404) is what was asked for.
-    void deleteTakesAMachineAwayByWhatMadeIt() {
+    // **One call, by the machine's id** (the Instances redesign, section 5):
+    // an app's machine and a plain one alike go as `DELETE /v1/instances/{id}`,
+    // which ends the app's deployment in Core's own transaction; the list of
+    // deployments is never read for it. Deleting what is already gone (404)
+    // is what was asked for.
+    void deleteTakesAMachineAwayByItsId() {
         HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
         s.m_machines->replace(QJsonArray{
-            QJsonObject{{"id","i-1"},{"name","steam"},{"status","Running"}},
+            QJsonObject{{"id","i-1"},{"name","steam"},{"status","Running"},{"app",QJsonObject{{"deployment_id","d-1"},{"name","Steam"},{"status","Running"}}}},
             QJsonObject{{"id","i-2"},{"name","plain"},{"status","Running"}}});
         QSignalSpy done(&s,&OmnuvSession::deleteFinished);
         s.deleteMachine(0,"steam",false);
-        QTRY_VERIFY(server.find("/v1/deployments?project=a")>=0);
-        server.answer(server.find("/v1/deployments?project=a"),200,R"([{"id":"d-9","instance_id":"i-7"},{"id":"d-1","instance_id":"i-1"}])");
-        QTRY_VERIFY(server.find("/v1/deployments/d-1?project=a")>=0);
-        const auto del=server.find("/v1/deployments/d-1?project=a");
+        QTRY_VERIFY(server.find("/v1/instances/i-1?project=a")>=0);
+        const auto del=server.find("/v1/instances/i-1?project=a");
         QCOMPARE(server.calls[del].method,QByteArray("DELETE"));
-        QCOMPARE(server.count("/v1/instances/i-1?project=a"),0);
         server.answer(del,202,"{}");
         QTRY_COMPARE(done.size(),1); QVERIFY(done[0][0].toBool()); QVERIFY(done[0][1].toString().contains("steam"));
-        const auto second=server.find("/v1/deployments?project=a",server.find("/v1/deployments?project=a")+1);
         s.deleteMachine(1,"plain",false);
-        QTRY_VERIFY(server.count("/v1/deployments?project=a")>=2);
-        server.answer(server.find("/v1/deployments?project=a",server.find("/v1/deployments?project=a")+1),200,R"([{"id":"d-1","instance_id":"i-1"}])");
         QTRY_VERIFY(server.find("/v1/instances/i-2?project=a")>=0);
         const auto inst=server.find("/v1/instances/i-2?project=a");
         QCOMPARE(server.calls[inst].method,QByteArray("DELETE"));
         server.answer(inst,404,R"({"error":"not found"})");
         QTRY_COMPARE(done.size(),2); QVERIFY(done[1][0].toBool());
-        Q_UNUSED(second);
+        QCOMPARE(server.count("/v1/deployments?project=a"),0);
+        for (const auto& call:server.calls) QVERIFY2(!call.path.startsWith("/v1/deployments/"),call.path.constData());
     }
     // A saved streaming host is kept only for the machine it was made for
     // (3 October 2026: a rig re-made under its old name never came online,
@@ -949,25 +955,25 @@ private slots:
     // Core, and that request carries nothing.
     void aProtectedMachineGoesOnlyWithItsOwnersConfirmation_data() {
         QTest::addColumn<bool>("isProtected"); QTest::addColumn<bool>("confirmed");
-        QTest::addColumn<QString>("project"); QTest::addColumn<QByteArray>("deployments");
+        QTest::addColumn<QString>("project"); QTest::addColumn<bool>("app");
         QTest::addColumn<QByteArray>("path");
-        const QByteArray none=R"([{"id":"d-9","instance_id":"i-7"}])", made=R"([{"id":"d-1","instance_id":"i-1"}])";
-        QTest::newRow("protected, confirmed")<<true<<true<<"a"<<none<<QByteArray("/v1/instances/i-1?project=a&unprotect=true");
-        QTest::newRow("protected, confirmed, default project")<<true<<true<<""<<none<<QByteArray("/v1/instances/i-1?unprotect=true");
-        QTest::newRow("not protected")<<false<<false<<"a"<<none<<QByteArray("/v1/instances/i-1?project=a");
-        QTest::newRow("not protected, the dialog said it was")<<false<<true<<"a"<<none<<QByteArray("/v1/instances/i-1?project=a");
-        QTest::newRow("protected, not told")<<true<<false<<"a"<<none<<QByteArray("/v1/instances/i-1?project=a");
-        QTest::newRow("protected, from a recipe")<<true<<true<<"a"<<made<<QByteArray("/v1/deployments/d-1?project=a");
+        QTest::newRow("protected, confirmed")<<true<<true<<"a"<<false<<QByteArray("/v1/instances/i-1?project=a&unprotect=true");
+        QTest::newRow("protected, confirmed, default project")<<true<<true<<""<<false<<QByteArray("/v1/instances/i-1?unprotect=true");
+        QTest::newRow("not protected")<<false<<false<<"a"<<false<<QByteArray("/v1/instances/i-1?project=a");
+        QTest::newRow("not protected, the dialog said it was")<<false<<true<<"a"<<false<<QByteArray("/v1/instances/i-1?project=a");
+        QTest::newRow("protected, not told")<<true<<false<<"a"<<false<<QByteArray("/v1/instances/i-1?project=a");
+        // An app's machine goes the same way, by its id (section 5).
+        QTest::newRow("protected, an app, confirmed")<<true<<true<<"a"<<true<<QByteArray("/v1/instances/i-1?project=a&unprotect=true");
     }
     void aProtectedMachineGoesOnlyWithItsOwnersConfirmation() {
         QFETCH(bool,isProtected); QFETCH(bool,confirmed); QFETCH(QString,project);
-        QFETCH(QByteArray,deployments); QFETCH(QByteArray,path);
+        QFETCH(bool,app); QFETCH(QByteArray,path);
         HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s); s.m_projectId=project;
-        const QByteArray list="/v1/deployments"+(project.isEmpty() ? QByteArray() : "?project="+project.toLatin1());
-        s.m_machines->replace(QJsonArray{QJsonObject{{"id","i-1"},{"name","kept"},{"status","Running"},{"protected",isProtected}}});
+        QJsonObject machine{{"id","i-1"},{"name","kept"},{"status","Running"},{"protected",isProtected}};
+        if (app) machine["app"]=QJsonObject{{"deployment_id","d-1"},{"name","Ollama"},{"status","Running"}};
+        s.m_machines->replace(QJsonArray{machine});
         QSignalSpy done(&s,&OmnuvSession::deleteFinished);
         QVERIFY(QMetaObject::invokeMethod(&s,"deleteMachine",Q_ARG(int,0),Q_ARG(QString,QStringLiteral("kept")),Q_ARG(bool,confirmed)));
-        QTRY_VERIFY(server.find(list)>=0); server.answer(server.find(list),200,deployments);
         QTRY_VERIFY(server.find(path)>=0);
         QTest::qWait(50);
         int deletes=0; for (const auto& call:server.calls) if (call.method=="DELETE") ++deletes;
@@ -982,8 +988,6 @@ private slots:
         s.m_machines->replace(QJsonArray{QJsonObject{{"id","i-1"},{"name","kept"},{"status","Running"},{"protected",true}}});
         QSignalSpy done(&s,&OmnuvSession::deleteFinished);
         QVERIFY(QMetaObject::invokeMethod(&s,"deleteMachine",Q_ARG(int,0),Q_ARG(QString,QStringLiteral("kept")),Q_ARG(bool,false)));
-        QTRY_VERIFY(server.find("/v1/deployments?project=a")>=0);
-        server.answer(server.find("/v1/deployments?project=a"),200,"[]");
         QTRY_VERIFY(server.find("/v1/instances/i-1?project=a")>=0);
         const QString said="this machine is protected against deletion; delete it with unprotect=true to clear its protection and remove it";
         server.answer(server.find("/v1/instances/i-1?project=a"),409,QJsonDocument(QJsonObject{{"error",said}}).toJson());
@@ -1017,8 +1021,6 @@ private slots:
         QSignalSpy done(&s,&OmnuvSession::deleteFinished);
         QVERIFY(QMetaObject::invokeMethod(&s,"deleteMachine",Q_ARG(int,0),Q_ARG(QString,QStringLiteral("gaming")),
                                           Q_ARG(bool,false),Q_ARG(QString,QStringLiteral("i-old"))));
-        QTRY_VERIFY(server.find("/v1/deployments?project=a")>=0);
-        server.answer(server.find("/v1/deployments?project=a"),200,"[]");
         QTRY_VERIFY(server.find("/v1/instances/i-old?project=a")>=0);
         QCOMPARE(server.count("/v1/instances/i-new?project=a"),0);
         server.answer(server.find("/v1/instances/i-old?project=a"),202,"{}");
@@ -1030,9 +1032,9 @@ private slots:
         QTRY_COMPARE(done.size(),2); QVERIFY(!done[1][0].toBool());
         QCOMPARE(server.count("/v1/instances/i-new?project=a"),0);
     }
-    // The confirmation itself, rendered on its own: it names the protection
-    // in the console's words for a protected machine and for no other, and
-    // only a confirmation that named it asks Core to clear it.
+    // The confirmation itself, rendered on its own (section 5): it lists what
+    // goes, opens on Cancel, and on a protected machine its button waits for
+    // the owner's box; only a ticked box asks Core to clear the protection.
     void theDeleteDialogNamesTheProtectionAndOnlyThenClearsIt() {
         HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
         s.m_machines->replace(QJsonArray{
@@ -1050,70 +1052,191 @@ private slots:
         auto object=component.create(); QVERIFY2(object,qPrintable(component.errorString()));
         view.setContent(QUrl("qrc:/omnuv/DeleteTest.qml"),&component,object); view.show();
         auto popup=object->findChild<QObject*>("deleteMachineDialog"); QVERIFY(popup);
-        const QString guard="It is protected against deletion: confirming clears that protection and deletes it.";
-        auto says=[popup]() { auto body=popup->property("contentItem").value<QObject*>(); return body ? body->property("text").toString() : QString(); };
+        auto box=object->findChild<QObject*>("deleteProtection"); QVERIFY(box);
+        auto confirm=object->findChild<QObject*>("deleteConfirm"); QVERIFY(confirm);
         QSignalSpy done(&s,&OmnuvSession::deleteFinished);
-        const QByteArray list="/v1/deployments?project=a";
 
         popup->setProperty("row",0); popup->setProperty("targetName",QStringLiteral("kept")); popup->setProperty("targetProtected",true);
+        popup->setProperty("losses",QStringList{"The instance's disk, 40 GiB","Its address on your private network"});
         QVERIFY(QMetaObject::invokeMethod(popup,"open")); QTRY_VERIFY(popup->property("visible").toBool());
-        QVERIFY2(says().contains(guard),qPrintable(says()));
+        QTRY_VERIFY(box->property("visible").toBool());
+        QVERIFY(!confirm->property("enabled").toBool());
+        QCOMPARE(confirm->property("text").toString(),QString("Delete kept"));
         QTest::qWait(100);
         auto shot=view.grabWindow(); QVERIFY(!shot.isNull());
         QVERIFY(shot.save(qEnvironmentVariable("OMNUV_TEST_ARTIFACT_DIR",QDir::tempPath())+"/delete-protected.png"));
+        QVERIFY(box->setProperty("checked",true));
+        QTRY_VERIFY(confirm->property("enabled").toBool());
         QVERIFY(QMetaObject::invokeMethod(popup,"accept"));
-        QTRY_VERIFY(server.find(list)>=0); server.answer(server.find(list),200,"[]");
         QTRY_VERIFY(server.find("/v1/instances/i-1?project=a&unprotect=true")>=0);
         server.answer(server.find("/v1/instances/i-1?project=a&unprotect=true"),202,"{}");
         QTRY_COMPARE(done.size(),1);
 
         popup->setProperty("row",1); popup->setProperty("targetName",QStringLiteral("loose")); popup->setProperty("targetProtected",false);
         QVERIFY(QMetaObject::invokeMethod(popup,"open")); QTRY_VERIFY(popup->property("visible").toBool());
-        QVERIFY2(!says().contains("protected"),qPrintable(says()));
+        QVERIFY(!box->property("visible").toBool()); QVERIFY(!box->property("checked").toBool());
+        QTRY_VERIFY(confirm->property("enabled").toBool());
         QVERIFY(QMetaObject::invokeMethod(popup,"accept"));
-        QTRY_COMPARE(server.count(list),2); server.answer(server.find(list,server.find(list)+1),200,"[]");
         QTRY_VERIFY(server.find("/v1/instances/i-2?project=a")>=0);
         QCOMPARE(server.count("/v1/instances/i-2?project=a&unprotect=true"),0);
+        QCOMPARE(server.count("/v1/deployments?project=a"),0);
     }
-    // The dialog itself, rendered on its own: it reads the offers when it
-    // opens, chooses the one there is, and Deploy sends the card it shows.
+    // **The deploy flow, rendered on its own** (the Instances redesign, step
+    // 8): it reads Core's catalogue, dims what cannot be had, and Deploy sends
+    // one `POST /v1/deploy` with a key minted when step 2 opened; Core's
+    // refusal lands beside the field it names, and the retry sends the same
+    // key, so a dropped answer can never rent a second machine.
     void theDeployDialogSendsWhatItShows() {
         HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
-        QFile source("/src/app/omnuv/OmnuvView.qml"); QVERIFY(source.open(QIODevice::ReadOnly));
-        const auto text=QString::fromUtf8(source.readAll());
-        const auto begin=text.indexOf("    Dialog {\n        id: deployMachine");
-        const auto end=text.indexOf("    // Taking a machine away",begin); QVERIFY(begin>=0 && end>begin);
-        auto dialog=text.mid(begin,end-begin).replace("target: Omnuv","target: sample").replace("Omnuv.","sample.").replace("Theme.spacing","8");
+        QFile source("/src/app/omnuv/DeployDialog.qml"); QVERIFY(source.open(QIODevice::ReadOnly));
+        auto text=QString::fromUtf8(source.readAll());
+        const auto begin=text.indexOf("\nDialog {"); QVERIFY(begin>=0);
+        auto dialog=text.mid(begin).replace("target: Omnuv","target: sample").replace("Omnuv.","sample.");
         QQuickWindow::setGraphicsApi(QSGRendererInterface::Software); QQuickView view;
         view.engine()->rootContext()->setContextProperty("sample",&s); QQmlComponent component(view.engine());
-        component.setData(("import QtQuick\nimport QtQuick.Controls\nimport QtQuick.Layouts\nRectangle { id: root; width: 900; height: 600; color: \"white\"\n"+dialog+"\n}").toUtf8(),QUrl("qrc:/omnuv/DeployTest.qml"));
+        component.setData(("import QtQuick\nimport QtQuick.Controls\nimport QtQuick.Layouts\nRectangle { id: root; width: 900; height: 800; color: \"white\"\n"+dialog+"\n}").toUtf8(),QUrl("qrc:/omnuv/DeployTest.qml"));
         QTRY_VERIFY_WITH_TIMEOUT(!component.isLoading(),2000); QVERIFY2(component.isReady(),qPrintable(component.errorString()));
         auto object=component.create(); QVERIFY2(object,qPrintable(component.errorString()));
         view.setContent(QUrl("qrc:/omnuv/DeployTest.qml"),&component,object); view.show();
-        auto popup=object->findChild<QObject*>("deployMachine"); QVERIFY(popup); QVERIFY(QMetaObject::invokeMethod(popup,"open"));
+        auto popup=object->findChild<QObject*>("deployFlow"); QVERIFY(popup); QVERIFY(QMetaObject::invokeMethod(popup,"open"));
         QTRY_VERIFY(popup->property("visible").toBool());
-        offersAreThePrivateRecipesWithTheGpusOnSale(server,s); if (QTest::currentTestFailed()) return;
+        QTRY_VERIFY(server.find("/v1/catalog/deployables")>=0 && server.find("/v1/capacity")>=0);
+        server.answer(server.find("/v1/catalog/deployables"),200,R"([
+            {"kind":"recipe","group":"apps","id":"ollama-openwebui","name":"Ollama + Open WebUI","mark":"chat","summary":"Chat.","gpu":"optional",
+             "sizes":[{"id":"recipe","name":"Recipe size","vcpus":4,"memory_gib":8,"disk_gib":60}],"typical_secs":190,"available":true},
+            {"kind":"image","group":"plain","id":"ubuntu-26.04","name":"Ubuntu 26.04 LTS","mark":"linux","summary":"Ubuntu.","gpu":"optional",
+             "sizes":[{"id":"small","name":"Small","vcpus":2,"memory_gib":4,"disk_gib":40}],"available":true},
+            {"kind":"recipe","group":"apps","id":"steam-gaming","name":"Steam","mark":"game","summary":"Games.","gpu":"required",
+             "sizes":[{"id":"recipe","name":"Recipe size","vcpus":8,"memory_gib":16,"disk_gib":200}],"available":false,"unavailable_because":"No GPU is free right now."}])");
+        server.answer(server.find("/v1/capacity"),200,R"([{"region":"eu-west","gpus":[{"model":"RTX 3090","available":1,"price_per_hour":"0.40"}]}])");
+        QTRY_COMPARE(s.deployables().size(),3);
+        // Apps first, in Core's order; the unavailable tile is listed, dimmed.
+        QCOMPARE(s.deployables()[0].toMap()["id"].toString(),QString("ollama-openwebui"));
+        QCOMPARE(s.deployables()[1].toMap()["id"].toString(),QString("steam-gaming"));
+        // A Repeater's tiles have a visual parent and no QObject one, so they
+        // are found through the item tree, not findChild.
+        std::function<QQuickItem*(QQuickItem*)> find=[&](QQuickItem* item) -> QQuickItem* {
+            if (!item) return nullptr;
+            if (item->objectName()=="tile-steam-gaming") return item;
+            for (auto child:item->childItems()) if (auto hit=find(child)) return hit;
+            return nullptr;
+        };
+        QQuickItem* gaming=nullptr;
+        QTRY_VERIFY((gaming=find(popup->property("contentItem").value<QQuickItem*>()))!=nullptr);
+        QTRY_VERIFY(gaming->isVisible()); QVERIFY(gaming->opacity()<1);
+        QVERIFY(QMetaObject::invokeMethod(popup,"pick",Q_ARG(QVariant,s.deployables()[1])));
+        QVERIFY(popup->property("chosen").isNull() || !popup->property("chosen").toMap().contains("id"));
+        QTest::qWait(100);
+        auto first=view.grabWindow(); QVERIFY(!first.isNull());
+        QVERIFY(first.save(qEnvironmentVariable("OMNUV_TEST_ARTIFACT_DIR",QDir::tempPath())+"/deploy-step1.png"));
+
+        QVERIFY(QMetaObject::invokeMethod(popup,"choose",Q_ARG(QVariant,s.deployables()[2])));
+        QTRY_COMPARE(popup->property("step").toInt(),2);
         auto name=object->findChild<QObject*>("deployName"); QVERIFY(name);
-        QTRY_COMPARE(name->property("text").toString(),QString("steam"));
+        QCOMPARE(name->property("text").toString(),QString("ubuntu-1"));
+        QVERIFY(name->setProperty("text",QStringLiteral("-notes")));
         auto confirm=object->findChild<QObject*>("deployConfirm"); QVERIFY(confirm);
+        QTRY_VERIFY(!confirm->property("enabled").toBool());
+        auto hint=object->findChild<QObject*>("deployNameHint"); QVERIFY(hint);
+        QCOMPARE(hint->property("text").toString(),QString("name cannot start or end with a hyphen"));
+        QVERIFY(name->setProperty("text",QStringLiteral("notes")));
         QTRY_VERIFY(confirm->property("enabled").toBool());
         QTest::qWait(100);
-        auto shot=view.grabWindow(); QVERIFY(!shot.isNull());
-        QVERIFY(shot.save(qEnvironmentVariable("OMNUV_TEST_ARTIFACT_DIR",QDir::tempPath())+"/deploy-machine.png"));
-        // "How many" starts at one; asked for three, the dialog sends one group
-        // of the recipe (a count of one is the recipe deployed alone, which
-        // theWindowOffersAndDeploysAPrivateRecipe holds).
-        auto count=object->findChild<QObject*>("deployCount"); QVERIFY(count);
-        QCOMPARE(count->property("value").toInt(),1);
-        QVERIFY(count->setProperty("value",3));
-        QVERIFY(QMetaObject::invokeMethod(popup,"accept"));
-        const QByteArray path="/v1/instance-groups?project=a";
+        auto second=view.grabWindow(); QVERIFY(!second.isNull());
+        QVERIFY(second.save(qEnvironmentVariable("OMNUV_TEST_ARTIFACT_DIR",QDir::tempPath())+"/deploy-step2.png"));
+
+        QVERIFY(QMetaObject::invokeMethod(popup,"deploy"));
+        const QByteArray path="/v1/deploy?project=a";
         QTRY_VERIFY(server.find(path)>=0);
-        QCOMPARE(server.count("/v1/recipes/steam-gaming/deploy?project=a"),0);
-        const auto body=QJsonDocument::fromJson(server.calls[server.find(path)].body).object();
-        QCOMPARE(body["count"].toInt(),3); QCOMPARE(body["recipe"].toString(),QString("steam-gaming"));
-        QCOMPARE(body["name"].toString(),QString("steam"));
-        QCOMPARE(body["gpu"].toObject()["model"].toString(),QString("RTX 3090"));
+        const auto post=server.find(path); QCOMPARE(server.calls[post].method,QByteArray("POST"));
+        const auto key=server.header(post,"Idempotency-Key"); QVERIFY2(key.size()>=32,key.constData());
+        const auto body=QJsonDocument::fromJson(server.calls[post].body).object();
+        QCOMPARE(body["item"].toObject()["kind"].toString(),QString("image"));
+        QCOMPARE(body["item"].toObject()["id"].toString(),QString("ubuntu-26.04"));
+        QCOMPARE(body["name"].toString(),QString("notes")); QCOMPARE(body["count"].toInt(),1);
+        QCOMPARE(body["size"].toString(),QString("small")); QVERIFY(!body.contains("gpu")); QVERIFY(!body.contains("olderCore"));
+        server.answer(post,400,R"({"error":"name may use letters, digits and hyphens only","code":"name_invalid","field":"name"})");
+        QTRY_COMPARE(hint->property("text").toString(),QString("name may use letters, digits and hyphens only"));
+        QVERIFY(popup->property("visible").toBool());
+
+        // The retry is the same attempt: the same key.
+        QSignalSpy made(&s,&OmnuvSession::deployed);
+        QVERIFY(QMetaObject::invokeMethod(popup,"deploy"));
+        QTRY_VERIFY(server.find(path,post+1)>=0);
+        const auto again=server.find(path,post+1);
+        QCOMPARE(server.header(again,"Idempotency-Key"),key);
+        server.answer(again,201,R"({"instances":[{"id":"i-9","name":"notes","console_password":"vK7q-ma2T-9xfP"}]})");
+        QTRY_COMPARE(made.size(),1);
+        QCOMPARE(made[0][0].toList()[0].toMap()["console_password"].toString(),QString("vK7q-ma2T-9xfP"));
+        QTRY_VERIFY(!popup->property("visible").toBool());
+        // A new deploy is a new attempt: a new key.
+        QVERIFY(QMetaObject::invokeMethod(popup,"open")); QTRY_VERIFY(popup->property("visible").toBool());
+        QVERIFY(QMetaObject::invokeMethod(popup,"choose",Q_ARG(QVariant,s.deployables()[2])));
+        QVERIFY(popup->property("key").toString().toLatin1()!=key);
+    }
+
+    // Core's name rule, in Core's words, before Core is asked; a batch is
+    // checked name by name.
+    void theNameRuleIsCores() {
+        QCOMPARE(OmnuvSession::nameProblem("team-chat"),QString());
+        QCOMPARE(OmnuvSession::nameProblem(QString(48,'x')),QString());
+        QCOMPARE(OmnuvSession::nameProblem(""),QString("name must be 1-48 characters"));
+        QCOMPARE(OmnuvSession::nameProblem(QString(49,'x')),QString("name must be 1-48 characters"));
+        QVERIFY(OmnuvSession::nameProblem("team chat").contains("letters, digits and hyphens only"));
+        QVERIFY(OmnuvSession::nameProblem("café").contains("letters, digits and hyphens only"));
+        QCOMPARE(OmnuvSession::nameProblem("chat-"),QString("name cannot start or end with a hyphen"));
+        QCOMPARE(OmnuvSession::nameProblem(QString(47,'x'),1),QString());
+        QVERIFY(OmnuvSession::nameProblem(QString(47,'x'),2).endsWith("-1: name must be 1-48 characters"));
+    }
+
+    // The card's word and its app, as Core sends them (section 7): `app`'s
+    // word, its step and its deployment; Core's mark over the image's guess;
+    // Ready is as usable as Running, and Installing is under way, not a fault.
+    void theModelReadsCoresWordAndApp() {
+        MachineModel m;
+        m.replace(QJsonArray{
+            QJsonObject{{"id","i-1"},{"name","chat"},{"status","Installing"},{"mark","chat"},{"access","web"},{"image","ubuntu-26.04-ollama"},
+                        {"private_name","chat-a.internal"},{"vcpus",4},{"memory_mib",8192},{"disk_gib",60},{"price_per_hour","0.42"},
+                        {"app",QJsonObject{{"deployment_id","d-1"},{"recipe_id","ollama-openwebui"},{"name","Ollama + Open WebUI"},{"status","Installing"},
+                                            {"step",QJsonObject{{"n",2},{"of",3},{"label","Starting the application"}}},{"typical_secs",190},
+                                            {"loses","its chats"}}}},
+            QJsonObject{{"id","i-2"},{"name","site"},{"status","Ready"},{"private_name","site-a.internal"},{"image","ubuntu-26.04"}}});
+        const auto roles=m.roleNames();
+        auto at=[&](int row,const char* role) { return m.data(m.index(row),roles.key(role,-1)); };
+        QCOMPARE(at(0,"status").toString(),QString("Installing"));
+        QCOMPARE(at(0,"workload").toString(),QString("chat"));
+        QCOMPARE(at(0,"access").toString(),QString("web"));
+        QCOMPARE(at(0,"hasApp").toBool(),true);
+        QCOMPARE(at(0,"stepN").toInt(),2); QCOMPARE(at(0,"stepOf").toInt(),3);
+        QCOMPARE(at(0,"stepLabel").toString(),QString("Starting the application"));
+        QCOMPARE(at(0,"typicalSecs").toInt(),190); QCOMPARE(at(0,"memoryGib").toInt(),8);
+        QCOMPARE(at(0,"ready").toBool(),false);
+        QCOMPARE(m.deploymentIdAt(0),QString("d-1"));
+        QCOMPARE(m.deploymentIdAt(1),QString());
+        QCOMPARE(at(1,"ready").toBool(),true);
+        QCOMPARE(m.healthAt(0),Machine::Health::Moving);
+        QCOMPARE(m.healthAt(1),Machine::Health::Good);
+        // "<name> is ready" on the word becoming usable, once.
+        QSignalSpy ready(&m,&MachineModel::machineBecameReady);
+        auto running=QJsonArray{QJsonObject{{"id","i-1"},{"name","chat"},{"status","Running"}},
+                                QJsonObject{{"id","i-2"},{"name","site"},{"status","Ready"}}};
+        m.replace(running);
+        QCOMPARE(ready.size(),1); QCOMPARE(ready[0][0].toString(),QString("chat"));
+        m.replace(running); QCOMPARE(ready.size(),1);
+    }
+
+    // Pairing claims the stream login of the row's own deployment
+    // (`app.deployment_id`), and never reads the list of deployments for it.
+    void pairingUsesTheRowsDeployment() {
+        HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
+        s.m_machines->replace(QJsonArray{QJsonObject{{"id","i-1"},{"name","rig"},{"status","Running"},{"private_name","rig-a.internal"},
+            {"stream_app","Desktop"},{"app",QJsonObject{{"deployment_id","d-7"},{"name","Steam"},{"status","Running"}}}}});
+        const auto target=s.connectionTarget(0); QVERIFY(!target.isEmpty());
+        s.deliverPin(target,"1234");
+        QTRY_VERIFY(server.find("/v1/deployments/d-7/stream-credentials/claim?project=a")>=0
+                    || server.find("/v1/deployments/d-7/stream-credentials/claim")>=0);
+        QCOMPARE(server.count("/v1/deployments?project=a"),0);
+        s.finishPairing();
     }
 
     // The macOS identity moved from Moonlight's domain to Omnuv's (25

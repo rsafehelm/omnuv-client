@@ -6,6 +6,7 @@
 <RCC>
     <qresource prefix="/omnuv">
         <file>Aurora.qml</file>
+        <file>DeployDialog.qml</file>
         <file>EstateRail.qml</file>
         <file>EstateHeader.qml</file>
         <file>Glyph.qml</file>

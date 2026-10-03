@@ -37,10 +37,11 @@ static QDateTime moment(const QJsonValue& value)
 // machine that is fine.
 Machine::Health Machine::health() const
 {
-    if (status == QStringLiteral("Running")) {
+    if (status == QStringLiteral("Running") || status == QStringLiteral("Ready")) {
         return Health::Good;
     }
-    if (status == QStringLiteral("Starting") || status == QStringLiteral("Restarting")
+    if (status == QStringLiteral("Deploying") || status == QStringLiteral("Installing")
+        || status == QStringLiteral("Starting") || status == QStringLiteral("Restarting")
         || status == QStringLiteral("Stopping")) {
         return Health::Moving;
     }
@@ -108,10 +109,29 @@ QVariant MachineModel::data(const QModelIndex& index, int role) const
     case ObservedAtRole:          return m.observedAt;
     case ObservationCompleteRole: return m.observationComplete;
     case ProtectedRole:           return m.deletionProtected;
-    // Running *and* reachable. A machine Core has not yet given a private name
-    // has no address to connect to, and a Connect button that opens nothing is
-    // worse than one that is plainly disabled.
-    case ReadyRole:     return m.status == QStringLiteral("Running") && !m.host.isEmpty();
+    case AccessRole:    return m.access;
+    case ImageRole:     return m.image;
+    case VcpusRole:     return m.vcpus;
+    case MemoryGibRole: return m.memoryGib;
+    case DiskGibRole:   return m.diskGib;
+    case GpuModelRole:  return m.gpuModel;
+    case GpuCountRole:  return m.gpuCount;
+    case PriceRole:     return m.price;
+    case HasAppRole:    return m.hasApp;
+    case AppNameRole:   return m.appName;
+    case DeploymentIdRole: return m.deploymentId;
+    case StepNRole:     return m.stepN;
+    case StepOfRole:    return m.stepOf;
+    case StepLabelRole: return m.stepLabel;
+    case AppSinceRole:  return m.appSince;
+    case TypicalSecsRole: return m.typicalSecs;
+    case AttentionRole: return m.attention;
+    case FirstUseRole:  return m.firstUse;
+    case LosesRole:     return m.loses;
+    // Usable *and* reachable: Core's word is Running or Ready, and it gave
+    // the machine a name. A primary action that opens nothing is worse than
+    // one that is plainly disabled.
+    case ReadyRole:     return usable(m.status) && !m.host.isEmpty();
     default:            return QVariant();
     }
 }
@@ -141,6 +161,25 @@ QHash<int, QByteArray> MachineModel::roleNames() const
         { ObservedAtRole,           "observedAt" },
         { ObservationCompleteRole,  "observationComplete" },
         { ProtectedRole,            "protected" },
+        { AccessRole,       "access" },
+        { ImageRole,        "image" },
+        { VcpusRole,        "vcpus" },
+        { MemoryGibRole,    "memoryGib" },
+        { DiskGibRole,      "diskGib" },
+        { GpuModelRole,     "gpuModel" },
+        { GpuCountRole,     "gpuCount" },
+        { PriceRole,        "price" },
+        { HasAppRole,       "hasApp" },
+        { AppNameRole,      "appName" },
+        { DeploymentIdRole, "deploymentId" },
+        { StepNRole,        "stepN" },
+        { StepOfRole,       "stepOf" },
+        { StepLabelRole,    "stepLabel" },
+        { AppSinceRole,     "appSince" },
+        { TypicalSecsRole,  "typicalSecs" },
+        { AttentionRole,    "attention" },
+        { FirstUseRole,     "firstUse" },
+        { LosesRole,        "loses" },
         { ReadyRole,     "ready" },
     };
 }
@@ -205,6 +244,35 @@ void MachineModel::replace(const QJsonArray& machines)
         m.privateIp = o["private_ip"].toString();
         m.lastError = o["last_error"].toString();
         m.deletionProtected = o["protected"].toBool();
+        m.access = o["access"].toString();
+        m.image = o["image"].toString();
+        m.vcpus = o["vcpus"].toInt();
+        m.memoryGib = o["memory_mib"].toInt() / 1024;
+        m.diskGib = o["disk_gib"].toInt();
+        m.price = o["price_per_hour"].toString();
+
+        // The app, when Core sends one. **Its word is the card's** (section 7:
+        // `app.status` when present, else `status`); Core makes them one word
+        // since step 1, so this only matters against a Core in between.
+        const QJsonObject app = o["app"].toObject();
+        m.hasApp = !app.isEmpty();
+        if (m.hasApp) {
+            m.appName = app["name"].toString();
+            m.appRecipe = app["recipe_id"].toString();
+            m.deploymentId = app["deployment_id"].toString();
+            if (!app["status"].toString().isEmpty()) {
+                m.status = app["status"].toString();
+            }
+            const QJsonObject step = app["step"].toObject();
+            m.stepN = step["n"].toInt();
+            m.stepOf = step["of"].toInt();
+            m.stepLabel = step["label"].toString();
+            m.appSince = moment(app["since"]);
+            m.typicalSecs = app["typical_secs"].toInt();
+            m.attention = app["attention"].toString();
+            m.firstUse = app["first_use"].toString();
+            m.loses = app["loses"].toString();
+        }
 
         // Both objects are omitted entirely when Core has nothing to say, so
         // the test is on the object and not on a field inside it. Core builds
@@ -228,10 +296,14 @@ void MachineModel::replace(const QJsonArray& machines)
         parts << QStringLiteral("%1 GiB").arg(o["memory_mib"].toInt() / 1024);
         const QJsonObject gpu = o["gpu"].toObject();
         m.hasGpu = !gpu.isEmpty();
-        m.workload = workloadOf(o["image"].toString(), o["os_family"].toString(),
-                                !m.streamApp.isEmpty(), m.webPort, m.hasGpu);
+        // Core's mark when it sends one; the image's guess only for an older Core.
+        m.workload = o["mark"].toString().isEmpty()
+            ? workloadOf(o["image"].toString(), o["os_family"].toString(), !m.streamApp.isEmpty(), m.webPort, m.hasGpu)
+            : o["mark"].toString();
         if (!gpu.isEmpty()) {
             const int count = gpu["count"].toInt(1);
+            m.gpuModel = gpu["model"].toString();
+            m.gpuCount = count;
             parts << (count > 1 ? QStringLiteral("%1 × %2").arg(count).arg(gpu["model"].toString())
                                 : gpu["model"].toString());
         }
@@ -262,17 +334,21 @@ void MachineModel::replace(const QJsonArray& machines)
         const bool wasKnown = previous.contains(m.id);
         m_lastStatus.insert(m.id, m.status);
 
-        const bool running = m.status == QStringLiteral("Running");
+        // Ready is Running with its page answering: one state to a person,
+        // so Running → Ready is not announced again.
+        const bool running = usable(m.status);
         const bool attention = m.health() == Machine::Health::Bad;
 
-        if (running && was != QStringLiteral("Running")) {
+        if (running && !usable(was)) {
             changes.append({ m.name, QString(), Ready });
         }
-        // Only *from* Running, so a machine that has been unhappy since before
-        // this client started is not announced, and one that is unhappy at
-        // every poll is announced once.
-        else if (attention && wasKnown && was == QStringLiteral("Running")) {
-            changes.append({ m.name, m.lastError, Attention });
+        // From Running, or from an install under way (an app that did not
+        // finish installing is the redesign's "needs attention"), so a machine
+        // unhappy since before this client started is not announced, and one
+        // unhappy at every poll is announced once.
+        else if (attention && wasKnown
+                 && (usable(was) || was == QStringLiteral("Installing") || was == QStringLiteral("Deploying"))) {
+            changes.append({ m.name, m.attention.isEmpty() ? m.lastError : m.attention, Attention });
         }
 
         if (!m.waitingOn.isEmpty()) {
@@ -364,6 +440,16 @@ Machine::Health MachineModel::healthAt(int row) const
 bool MachineModel::protectedAt(int row) const
 {
     return (row >= 0 && row < m_machines.count()) && m_machines.at(row).deletionProtected;
+}
+
+QString MachineModel::deploymentIdAt(int row) const
+{
+    return (row >= 0 && row < m_machines.count()) ? m_machines.at(row).deploymentId : QString();
+}
+
+bool MachineModel::usable(const QString& word)
+{
+    return word == QStringLiteral("Running") || word == QStringLiteral("Ready");
 }
 
 QString MachineModel::nameAt(int row) const

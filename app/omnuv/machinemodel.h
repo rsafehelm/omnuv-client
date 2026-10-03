@@ -97,6 +97,35 @@ struct Machine
     // Core sends nothing, which is not protected.
     bool deletionProtected = false;
 
+    // **What the card draws, from Core** (the Instances redesign, 3 October
+    // 2026; docs/plans/recipes-in-instances.md section 4). `mark` and `access`
+    // are Core's when it sends them; an older Core sends neither and the mark
+    // falls back to `workloadOf()`.
+    QString access;
+    QString image;
+    int vcpus = 0;
+    int memoryGib = 0;
+    int diskGib = 0;
+    QString gpuModel;
+    int gpuCount = 0;
+    QString price;   // Core's `price_per_hour`, an estimate while nothing charges
+
+    // The app on it, when it was deployed from a recipe (Core's `app`). The
+    // deployment's id is what pairing claims a stream login with, so the card
+    // never reads `/v1/deployments` to find it again.
+    bool hasApp = false;
+    QString appName;
+    QString appRecipe;
+    QString deploymentId;
+    int stepN = 0;
+    int stepOf = 0;
+    QString stepLabel;
+    QDateTime appSince;
+    int typicalSecs = 0;
+    QString attention;
+    QString firstUse;
+    QString loses;
+
     bool streamed() const { return !streamApp.isEmpty(); }
 
     // **Core's seven words, grouped into the four things a dot can mean.**
@@ -112,8 +141,9 @@ struct Machine
     // line the tray had to stay on the right side of to be allowed a machine
     // row at all.
     //
-    //   Good     Running
-    //   Moving   Starting, Restarting, Stopping — an action, not a fault
+    //   Good     Running, Ready
+    //   Moving   Deploying, Installing, Starting, Restarting, Stopping —
+    //            an action, not a fault
     //   Resting  Stopped, Deleting
     //   Bad      everything else, which is Core's "Needs attention"
     enum class Health { Good, Moving, Resting, Bad };
@@ -164,6 +194,25 @@ public:
         ObservationCompleteRole,
         // `protected` to QML, as Core names it.
         ProtectedRole,
+        AccessRole,
+        ImageRole,
+        VcpusRole,
+        MemoryGibRole,
+        DiskGibRole,
+        GpuModelRole,
+        GpuCountRole,
+        PriceRole,
+        HasAppRole,
+        AppNameRole,
+        DeploymentIdRole,
+        StepNRole,
+        StepOfRole,
+        StepLabelRole,
+        AppSinceRole,
+        TypicalSecsRole,
+        AttentionRole,
+        FirstUseRole,
+        LosesRole,
         // True when this machine can be connected to right now. A stopped or
         // starting machine is shown, and shown as unreachable, rather than
         // hidden — somebody who cannot find their machine assumes it is lost.
@@ -199,6 +248,13 @@ public:
     // Whether the machine in `row` is protected now. C++-only: OmnuvSession
     // asks it when a confirmed delete is sent; QML reads the role.
     bool protectedAt(int row) const;
+
+    // The app's deployment on this row, or "": what pairing claims a stream
+    // login with. C++-only, like `idAt`.
+    QString deploymentIdAt(int row) const;
+
+    // Whether Core's word means the machine is usable now: Running or Ready.
+    static bool usable(const QString& word);
 
     Q_INVOKABLE QString nameAt(int row) const;
     Q_INVOKABLE QString hostAt(int row) const;

@@ -1,100 +1,87 @@
-// Omnuv: one machine, as a card.
+// Omnuv: one instance, as a card — the web's card, 1:1 (the Instances
+// redesign, 3 October 2026; docs/plans/recipes-in-instances.md sections 2
+// and 4, in the omnuv repository).
 //
-// **The anatomy is Windows App's, because that is the application a person on
-// Windows already knows for "a computer of mine that is somewhere else".** A
-// picture across the top that is this machine's and no other's
-// (`MachineArt.qml`), the rest of the card washed faintly in that picture's
-// colour, the name large, what it is as one quiet run of text, the state as an
-// icon and a word in the state's colour directly above the one filled button,
-// and everything else under `…`. One accent-filled thing per card.
+//   header   mark · name · Protected · what it is · Core's word · price
+//   app      (an app only) its line: the step while it installs, the address
+//            once it runs, what went wrong when it did not
+//   access   (plain Linux only) the ssh line, with Copy command
+//   specs    vCPU · Memory · Disk · GPU, four tiles
+//   footer   hint · secondary · primary · More (⋯)
 //
-// Everything on it is a field Core sent. Nothing here infers a state from
-// another state, and nothing here is drawn as done because a constant said so
-// — the launch ladder in particular names, per step, the field that confirms
-// it, and draws a step with no evidence as *unknown* rather than as done or
-// pending. That is the same rule the web console's `ladder()` follows, and the
-// two vocabularies are deliberately identical: a person who reads "Private
-// network — not observed" in the browser and "Private network — not observed"
-// here has learned one thing, not two.
+// **The word is Core's, verbatim** (`recipes::word`): Deploying, Installing,
+// Running, Ready, Needs attention, Starting, Stopping, Restarting, Stopped.
+// The card draws it and decides nothing: no step it was not told, no verdict
+// from a clock — "taking longer than usual" past twice the measured install
+// is a note, never a word. Everything here is a field Core sent.
 //
-// Used as a GridView delegate, so `model` and `index` are the delegate's own
-// context. It reports what a person pressed and decides nothing: the view above
-// owns connecting, because connecting is upstream's machinery and this file is
-// a rendering.
+// Used as a GridView delegate, so `model` is the delegate's own context. It
+// reports what a person pressed; the view above acts.
 
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import StreamingPreferences 1.0
 
 import Omnuv 1.0
 
 ItemDelegate {
     id: card
 
-    // The wall clock, ticked by the view that owns the list. Every card shows
-    // the same second, so there is one timer for the screen rather than one per
-    // card — and a card that is not on a screen is not driving anything.
+    // The wall clock, ticked by the view: one timer for the screen.
     property double now: 0
-
-    // Space kept free on the right and below, so cards laid edge to edge in
-    // a grid cell still stand apart. The card fills its cell; the gap is
-    // part of it and draws nothing.
+    // Space kept free on the right and below, so cards laid edge to edge in a
+    // grid cell stand apart.
     property int gap: 0
 
     rightInset: gap
     bottomInset: gap
     padding: 0
     hoverEnabled: true
-    // The card under the pointer is drawn over its neighbours, so the shadow
-    // it lifts on falls across them rather than under them.
-    z: hovered || activeFocus ? 1 : 0
+    focusPolicy: Qt.StrongFocus
 
     signal primaryActivated()
     signal chooseAppRequested()
     signal terminalRequested()
     signal settingsRequested()
     signal deleteRequested()
+    signal powerRequested(string action)
 
-    // Protected against deletion: Core's `protected` (0195), read so the
-    // view's confirmation can say so when this card asks for its machine to
-    // go. An older Core sends nothing, which is not protected.
     readonly property bool deletionProtected: model.protected === true
 
-    onClicked: if (model.ready) card.primaryActivated()
+    // ---- What the card is about, named once ----------------------------
+    readonly property string word: model.status
+    readonly property bool app: model.hasApp === true
+    readonly property string what: app ? model.appName : model.image
+    readonly property bool usable: word === "Running" || word === "Ready"
+    readonly property bool installing: word === "Installing"
+    readonly property bool deploying: word === "Deploying"
+    readonly property bool stopped: word === "Stopped"
+    readonly property bool attention: word === "Needs attention"
+    readonly property bool moving: word === "Starting" || word === "Restarting" || word === "Stopping"
+    readonly property bool progress: deploying || installing || moving
+    readonly property bool web: model.access === "web" || model.webPort > 0
+    readonly property bool stream: model.access === "stream" || model.streamed
+    // A plain Linux machine is reached by its ssh line (section 2).
+    readonly property bool shell: !app && !stream && !web
+    readonly property var specs: [
+        { value: String(model.vcpus), unit: qsTr("vCPU") },
+        { value: model.memoryGib + " GiB", unit: qsTr("Memory") },
+        { value: model.diskGib + " GiB", unit: qsTr("Disk") },
+        { value: model.gpuModel !== "" ? (model.gpuCount > 1 ? model.gpuCount + " × " : "") + model.gpuModel : "—",
+          unit: qsTr("GPU") }
+    ]
 
-    // ---- The evidence, named once ---------------------------------------
+    // ---- A plain machine's launch, as far as it can be observed ----------
     //
-    // These are the four tests the console's `ladder()` makes, under the same
-    // names, so the two can be compared by reading them side by side. Core's
-    // `friendly()` collapses PENDING and PROVISIONING into one word, which is
-    // why `booted` tests for "Starting" rather than for a runtime state the
-    // buyer API does not publish.
+    // Kept line for line with the web console's `ladder()`: each step names
+    // the field that confirms it, and a step nobody has observed is drawn as
+    // unknown, never as done. An app's install has its own steps above.
     readonly property bool running: model.status === "Running"
     readonly property bool booted: running || model.status === "Starting"
     readonly property bool addressed: model.privateIp !== ""
     readonly property bool failed: model.status === "Needs attention"
+    readonly property bool launching: !app && (model.operating || deploying || model.status === "Starting")
 
-    // Shown while something is happening, and the test is Core's object rather
-    // than our reading of the status word — an operation with no word yet is
-    // still an operation.
-    readonly property bool launching: model.operating || model.status === "Starting"
-
-    /**
-     * The launch, as far as it can be *observed*.
-     *
-     * Kept line for line with `console-buyer/.../instances/+page.svelte`:
-     *
-     *     Requested and placed   the row exists, and its provider was chosen in
-     *                            the same transaction — so placement is known
-     *                            at the same moment and is one step, not two
-     *     Booting                status is Starting or Running
-     *     Private network        private_ip is set
-     *     Running                status is Running
-     *
-     * There is no "Creating disk" and no "Attaching GPU": nothing reports them,
-     * and a step nothing reports is a step that would always be a guess.
-     */
     function ladder() {
         return [
             { label: qsTr("Requested and placed"), state: "done", note: "" },
@@ -104,8 +91,6 @@ ItemDelegate {
                 note: (!running && booted) ? model.waitingOn : ""
             },
             {
-                // Not "pending": until an address is assigned nobody has
-                // looked, and `unknown` is the honest word for that.
                 label: qsTr("Private network"),
                 state: addressed ? "done" : running ? "unknown" : "pending",
                 note: ""
@@ -118,27 +103,16 @@ ItemDelegate {
         ]
     }
 
-    // An action under way is progress, not a fault. Anything Core can say has
-    // to be named here, or it falls through to the colour that means trouble —
-    // which is why Restarting and Stopping are listed rather than assumed.
-    // The glyph that goes with the word — and only ever with it.
-    function statusIcon(status) {
-        switch (status) {
-        case "Running":  return Theme.icon.completed
-        case "Stopped":
-        case "Deleting": return Theme.icon.ring
-        case "Starting":
-        case "Restarting":
-        case "Stopping": return Theme.icon.sync
-        default:         return Theme.icon.error
-        }
-    }
-
+    // The one grouping of Core's words, the same as the tray's
+    // (`Machine::health()`); `checks.sh` holds the two together.
     function statusColour(status) {
         switch (status) {
-        case "Running":  return Theme.fillSuccess
+        case "Running":
+        case "Ready":    return Theme.fillSuccess
         case "Stopped":
         case "Deleting": return Theme.fillNeutral
+        case "Deploying":
+        case "Installing":
         case "Starting":
         case "Restarting":
         case "Stopping": return Theme.fillCaution
@@ -146,510 +120,546 @@ ItemDelegate {
         }
     }
 
-    /**
-     * How long the action Core has in flight has been running.
-     *
-     * Empty rather than a number when the timestamp did not parse. A clock
-     * that cannot read the time says nothing; it does not print "NaNs", which
-     * is what an unguarded `getTime()` on an invalid date puts on the card.
-     */
-    function elapsed() {
-        var at = model.since.getTime()
-        if (isNaN(at)) {
-            return ""
-        }
-        var s = Math.max(0, Math.round((now - at) / 1000))
-        return s < 60 ? qsTr("%1s").arg(s)
-                      : qsTr("%1m %2s").arg(Math.floor(s / 60)).arg(s % 60)
+    // "4 min" or "40 s": how long the app has been at it.
+    function since(at) {
+        var t = at && at.getTime ? at.getTime() : NaN
+        if (isNaN(t)) return ""
+        var s = Math.max(0, Math.round((now - t) / 1000))
+        return s < 60 ? qsTr("%1 s").arg(s) : qsTr("%1 min").arg(Math.floor(s / 60))
+    }
+    // D-7: past twice a measured install, and never on a guess.
+    readonly property bool takingLonger: {
+        if (!installing || model.typicalSecs <= 0) return false
+        var t = model.appSince && model.appSince.getTime ? model.appSince.getTime() : NaN
+        return !isNaN(t) && now - t > 2 * model.typicalSecs * 1000
     }
 
-    /**
-     * When the provider last *looked*, shown only when it did.
-     *
-     * Empty when Core sent no observation, or when its sweep did not cover
-     * machines — Core decides that, and a client must not invent a timestamp.
-     * An incomplete sweep says so instead of dating the claim: it can prove a
-     * machine was there and can never prove one was not.
-     */
-    function observed() {
-        if (!model.observed) {
-            return ""
-        }
-        if (!model.observationComplete) {
-            return qsTr("last observation incomplete")
-        }
-        var at = model.observedAt.getTime()
-        if (isNaN(at)) {
-            // Core said it had looked and gave a time nothing could read. That
-            // is a fact about the report, not about the machine, and it is
-            // better said than dated.
-            return qsTr("last observation incomplete")
-        }
-        var s = Math.max(0, Math.round((now - at) / 1000))
-        return s < 60 ? qsTr("observed %1s ago").arg(s)
-                      : qsTr("observed %1m ago").arg(Math.floor(s / 60))
+    // The app section's line, in the state table's words.
+    function appLine() {
+        if (deploying) return qsTr("Getting an instance ready for %1.").arg(model.appName)
+        if (installing) return model.stepN > 0
+            ? qsTr("Step %1 of %2").arg(model.stepN).arg(model.stepOf) + (model.stepLabel !== "" ? " · " + model.stepLabel : "")
+            : qsTr("Installing %1.").arg(model.appName)
+        if (attention) return model.stepN > 0
+            ? qsTr("%1 did not finish installing. It stopped at step %2 of %3%4.")
+                .arg(model.appName).arg(model.stepN).arg(model.stepOf)
+                .arg(model.stepLabel !== "" ? ", " + model.stepLabel : "")
+            : qsTr("%1 needs attention.").arg(model.appName)
+        if (word === "Starting" || word === "Restarting") return qsTr("Starting. %1 comes back with it.").arg(model.appName)
+        if (word === "Stopping") return qsTr("Stopping. %1 stops answering.").arg(model.appName)
+        if (stopped) return qsTr("Stopped. Its disk and everything %1 holds are kept.").arg(model.appName)
+        return model.firstUse
     }
 
-    // WinUI has a card; Qt Quick Controls does not, so this one surface is ours
-    // to paint. The fills and strokes are Microsoft's and translucent by
-    // design — CardBackgroundFillColorDefault at rest, ControlFillColorSecondary
-    // under the pointer, which is what a SettingsCard does.
-    //
-    // The shadow is a picture (`card-shadow.png`, hollow where the card is)
-    // rather than an effect: a drop-shadow effect is a shader, and the software
-    // backend — which is what a PC without working graphics drivers gets —
-    // draws no shaders at all. A nine-patch is drawn identically everywhere.
+    // The address a person copies: Core's private name, and the port for a
+    // web app. The long name-by-id (`host`) is what the app connects to.
+    readonly property string address: model.shortHost !== ""
+        ? model.shortHost + (web && model.webPort > 0 ? ":" + model.webPort : "") : ""
+
+    // ---- Primary and secondary, section 2's table ------------------------
+    readonly property string primaryText: stopped ? qsTr("Start")
+        : attention ? qsTr("Terminal")
+        : stream ? qsTr("Play")
+        : web ? qsTr("Open ↗")
+        : qsTr("Terminal")
+    // Disabled, never hidden, while it cannot be used; the reason is the hint.
+    // A machine that needs attention is still reached by Terminal when it has
+    // an address: that is how a person looks at what went wrong.
+    readonly property bool primaryBlocked: stopped ? Omnuv.ordering
+        : attention ? model.host === ""
+        : !model.ready
+    readonly property string hint: {
+        if (stopped || attention) return ""
+        if (deploying || installing) return app ? qsTr("Opens once it has installed.") : qsTr("Available once it is running.")
+        if (moving) return qsTr("Available once it is running.")
+        if (!model.ready && usable) return qsTr("Waiting for its address on your network.")
+        return ""
+    }
+    readonly property string secondaryText: stopped || attention ? qsTr("Delete…")
+        : stream ? qsTr("Choose what to stream")
+        : web ? qsTr("Terminal")
+        : ""
+    function secondary() {
+        if (stopped || attention) card.deleteRequested()
+        else if (stream) card.chooseAppRequested()
+        else if (web) card.terminalRequested()
+    }
+    function primary() {
+        if (primaryBlocked) return
+        if (stopped) card.powerRequested("start")
+        else if (attention) card.terminalRequested()
+        else card.primaryActivated()
+    }
+
+    onClicked: if (model.ready && !stopped && !attention) card.primaryActivated()
+
+    Accessible.role: Accessible.Grouping
+    Accessible.name: [model.name, what, word,
+                      installing && model.stepN > 0 ? qsTr("step %1 of %2").arg(model.stepN).arg(model.stepOf) : ""]
+                     .filter(function (p) { return p !== "" }).join(", ")
+
+    // The insets above keep the gap; the frame fills what is left.
     background: Item {
-        BorderImage {
-            // A shadow is depth, which high contrast asks an application not
-            // to imply: there the card's own border is what separates it.
-            visible: !Theme.highContrast
-            x: -28
-            y: -24
-            width: parent.width + 56
-            height: parent.height + 56
-            source: "card-shadow.png"
-            border { left: 40; top: 40; right: 40; bottom: 40 }
-            opacity: (card.hovered ? 0.55 : 0.18) * (Theme.onDarkSurface ? 1.6 : 1)
-            Behavior on opacity {
-                NumberAnimation { duration: Theme.durationFast }
-            }
-        }
-
         Rectangle {
             anchors.fill: parent
-            radius: Theme.radiusCard
-            color: card.pressed ? Theme.fillCardPressed
-                 : card.hovered ? Theme.fillCardHover : Theme.fillCard
-            // Two pixels under the pointer as well, under high contrast: the
-            // edge is the whole of the hover state there.
-            border.width: card.activeFocus || (Theme.highContrast && card.hovered) ? 2 : 1
-            border.color: card.activeFocus ? Theme.accent
+            radius: 16
+            color: card.hovered ? Theme.fillCardHover : Theme.fillCard
+            border.width: card.visualFocus || card.activeFocus ? 2 : 1
+            border.color: card.visualFocus || card.activeFocus ? Theme.accent
                         : card.hovered ? Theme.strokeCardHover : Theme.strokeCard
-
-            Behavior on color {
-                ColorAnimation { duration: Theme.durationFaster }
-            }
         }
     }
 
-    Item {
-        id: face
-        anchors.fill: parent
-        anchors.rightMargin: card.gap
-        anchors.bottomMargin: card.gap
-
-        // ---- The picture, and the wash it leaves on the card --------------
-        MachineArt {
-            id: art
-            x: 1
-            y: 1
-            width: face.width - 2
-            height: 64
-            radius: Theme.radiusCard - 1
-            seed: model.name
-            asleep: !card.booted
-        }
-
-        Rectangle {
-            x: 1
-            y: art.y + art.height
-            width: face.width - 2
-            height: face.height - art.height - 2
-            bottomLeftRadius: Theme.radiusCard - 1
-            bottomRightRadius: Theme.radiusCard - 1
-            gradient: Gradient {
-                GradientStop { position: 0.0; color: Qt.rgba(art.tint.r, art.tint.g, art.tint.b, Theme.onDarkSurface ? 0.20 : 0.16) }
-                GradientStop { position: 0.75; color: Qt.rgba(art.tint.r, art.tint.g, art.tint.b, 0) }
-            }
-        }
-
-        // What it is for, on the picture, as a mark (WorkloadMark.qml): a
-        // chat, a page, a game, Windows, a GPU, or Linux, and the card's eye
-        // when there is a GPU under it.
-        WorkloadMark {
-            x: Theme.padding
-            y: art.y + (art.height - height) / 2
-            workload: model.workload
-            hasGpu: model.hasGpu
-            asleep: !card.booted
-            scale: card.hovered ? 1.06 : 1
-            Behavior on scale {
-                NumberAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic }
-            }
-        }
-
-        // Where it is, as a tag on the picture — Windows App's "Windows 365".
-        Rectangle {
-            visible: model.region !== ""
-            anchors.right: art.right
-            anchors.rightMargin: Theme.padding - 1
-            y: art.y + Theme.spacingLoose
-            height: 22
-            width: regionRow.implicitWidth + 2 * Theme.spacing
-            radius: height / 2
-            color: Theme.onDarkSurface ? "#73000000" : "#D9FFFFFF"
-
-            Row {
-                id: regionRow
-                anchors.centerIn: parent
-
-                Label {
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: model.region
-                    font.family: Theme.textFamily
-                    font.pixelSize: Theme.captionSize
-                }
-            }
-        }
-
+    contentItem: Item {
         ColumnLayout {
             id: body
             anchors.fill: parent
-            anchors.topMargin: art.y + art.height + Theme.spacingLoose
-            anchors.leftMargin: Theme.padding
-            anchors.rightMargin: Theme.padding
-            anchors.bottomMargin: Theme.padding
-            spacing: 2
+            anchors.leftMargin: 20
+            anchors.topMargin: 20
+            anchors.rightMargin: 20 + card.gap
+            anchors.bottomMargin: 20 + card.gap
+            spacing: 14
 
-            // ---- Name, what it is, and what it answers to -----------------
-            Label {
-                Layout.fillWidth: true
-                text: model.name
-                font.family: Theme.displayFamily
-                font.pixelSize: Theme.subtitleSize
-                font.weight: Theme.strongWeight
-                elide: Label.ElideRight
-            }
-
-            // One quiet run rather than a row of chips: "8 vCPU · 16 GiB ·
-            // RTX 3090" is read as a sentence, and three boxes are not.
-            Label {
-                Layout.fillWidth: true
-                text: model.summary
-                font.family: Theme.textFamily
-                font.pixelSize: Theme.bodySize
-                opacity: 0.78
-                elide: Label.ElideRight
-            }
-
-            // The name it answers to on the project network — the one address
-            // this application ever connects to. Empty until one is assigned,
-            // and left out while something is wrong: a machine that did not
-            // start has no use for an address and the card needs the room.
-            Label {
-                Layout.fillWidth: true
-                visible: model.host !== "" && model.lastError === ""
-                text: model.shortHost !== "" ? model.shortHost : model.host
-                font.family: Theme.monoFamily
-                font.pixelSize: Theme.captionSize
-                opacity: 0.6
-                elide: Label.ElideMiddle
-            }
-
-            // **What Play will use, before it is pressed** (1 October 2026: a
-            // first stream ran at upstream's 1280x720 and nothing on the card
-            // said so). The same preferences the stream reads.
-            Label {
-                Layout.fillWidth: true
-                visible: model.streamed
-                text: qsTr("Streams at %1 × %2 · %3 fps · %4 Mbps")
-                    .arg(StreamingPreferences.width).arg(StreamingPreferences.height)
-                    .arg(StreamingPreferences.fps)
-                    .arg(Math.round(StreamingPreferences.bitrateKbps / 1000))
-                font.family: Theme.textFamily
-                font.pixelSize: Theme.captionSize
-                opacity: 0.6
-                elide: Label.ElideRight
-            }
-
-            // ---- The state, in its colour and its word --------------------
-            //
-            // The glyph and the word, never the glyph alone. Under high
-            // contrast Windows sets every system fill colour to the same red
-            // on purpose, so the word is the only thing left carrying meaning
-            // — and a person who cannot tell amber from green is in the same
-            // position on an ordinary display.
+            // ---- Header -------------------------------------------------
             RowLayout {
-                id: ladderView
                 Layout.fillWidth: true
-                Layout.topMargin: Theme.spacing
-                spacing: Theme.spacingTight + 2
+                spacing: 12
 
-                readonly property var steps: card.launching ? card.ladder() : []
+                WorkloadMark {
+                    Layout.alignment: Qt.AlignTop
+                    Layout.preferredWidth: 48
+                    Layout.preferredHeight: 48
+                    workload: model.workload
+                    hasGpu: model.hasGpu
+                    asleep: card.stopped
+                    Accessible.ignored: true
+                }
 
-                // The step to name: a failure first, then the one in progress,
-                // then one nobody has observed, then the next still to come.
-                readonly property var current: {
-                    var order = ["failed", "active", "unknown", "pending"]
-                    for (var o = 0; o < order.length; o++) {
-                        for (var i = 0; i < steps.length; i++) {
-                            if (steps[i].state === order[o]) {
-                                return steps[i]
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 2
+
+                    RowLayout {
+                        id: nameRow
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Label {
+                            // Its own width, bounded by the card's, which the
+                            // grid fixes: a bound on the row it sits in would
+                            // send the layout round again (Qt aborts it).
+                            Layout.maximumWidth: Math.max(48, card.width - card.gap - 40 - 60 - 12 - wordColumn.implicitWidth
+                                                          - (protectedPill.visible ? protectedPill.implicitWidth + 8 : 0))
+                            text: model.name
+                            font.family: Theme.displayFamily
+                            font.pixelSize: 18
+                            font.weight: Theme.strongWeight
+                            elide: Label.ElideRight
+                        }
+                        Pill {
+                            id: protectedPill
+                            visible: card.deletionProtected
+                            text: qsTr("Protected")
+                            Accessible.description: qsTr("Protected against deletion")
+                        }
+                        Item { Layout.fillWidth: true }
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        text: card.what + (model.gpuModel !== "" ? " · " + model.gpuModel : "")
+                        font.family: Theme.textFamily
+                        font.pixelSize: 13
+                        opacity: 0.7
+                        elide: Label.ElideRight
+                    }
+                }
+
+                ColumnLayout {
+                    id: wordColumn
+                    Layout.alignment: Qt.AlignTop
+                    spacing: 6
+
+                    // The word, in a pill: Core's, verbatim.
+                    Rectangle {
+                        objectName: "wordBadge"
+                        Layout.alignment: Qt.AlignRight
+                        implicitHeight: 26
+                        implicitWidth: wordRow.implicitWidth + 20
+                        radius: 13
+                        readonly property color tone: card.statusColour(card.word)
+                        color: Qt.rgba(tone.r, tone.g, tone.b, Theme.onDarkSurface ? 0.22 : 0.12)
+                        Accessible.role: Accessible.StaticText
+                        Accessible.name: card.word
+
+                        Row {
+                            id: wordRow
+                            anchors.centerIn: parent
+                            spacing: 6
+                            Rectangle {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 7
+                                height: 7
+                                radius: 3.5
+                                color: parent.parent.tone
+                                // Under way, it breathes once a second on the
+                                // screen's own clock; still under reduced motion.
+                                opacity: card.progress && Theme.motion && Math.floor(card.now / 1000) % 2 === 1 ? 0.35 : 1
+                                Behavior on opacity { NumberAnimation { duration: Theme.durationFast } }
+                            }
+                            Label {
+                                text: card.word
+                                color: parent.parent.tone
+                                font.family: Theme.textFamily
+                                font.pixelSize: 13
+                                font.weight: Theme.strongWeight
                             }
                         }
                     }
-                    return steps.length > 0 ? steps[steps.length - 1] : null
-                }
-
-                Glyph {
-                    icon: card.statusIcon(model.status)
-                    size: 14
-                    color: card.statusColour(model.status)
-                }
-                // Where the icon font is not, the dot the pills use.
-                Rectangle {
-                    visible: !Theme.iconsInstalled
-                    implicitWidth: 8
-                    implicitHeight: 8
-                    radius: 4
-                    color: card.statusColour(model.status)
-                }
-
-                Label {
-                    text: model.status
-                    color: card.statusColour(model.status)
-                    font.family: Theme.textFamily
-                    font.pixelSize: Theme.bodySize
-                    font.weight: Theme.strongWeight
-
-                    Behavior on color {
-                        ColorAnimation { duration: Theme.durationNormal }
+                    Label {
+                        Layout.alignment: Qt.AlignRight
+                        visible: model.price !== ""
+                        text: qsTr("€%1/h").arg(model.price)
+                        font.family: Theme.monoFamily
+                        font.pixelSize: 12
+                        opacity: 0.7
                     }
-                }
-
-                // The step, beside the word: "Starting · Booting". A failed
-                // step is said in words, not only in red.
-                Label {
-                    Layout.fillWidth: true
-                    text: !ladderView.current ? ""
-                          : ladderView.current.state === "failed" ? qsTr("\u00B7 stopped at %1").arg(ladderView.current.label)
-                          : qsTr("\u00B7 %1").arg(ladderView.current.label)
-                    font.family: Theme.textFamily
-                    font.pixelSize: Theme.bodySize
-                    opacity: 0.78
-                    elide: Label.ElideRight
-                }
-
-                // How long and how many times while Core has an operation to
-                // date them from — attempt 1 is not news — and otherwise when
-                // the provider last looked, when it has.
-                Label {
-                    text: model.operating ? (model.attempt > 1 ? qsTr("%1 \u00B7 attempt %2").arg(card.elapsed()).arg(model.attempt)
-                                                               : card.elapsed())
-                        : model.observed ? card.observed() : ""
-                    font.family: Theme.textFamily
-                    font.pixelSize: Theme.captionSize
-                    opacity: 0.6
                 }
             }
 
-            // ---- The ladder, while something is happening -----------------
-            //
-            // Four segments for `ladder()`'s four steps; the step that matters
-            // is named in the row above, and its note beneath. The steps, their
-            // states and their words are still `ladder()`'s, so the console and
-            // this card say the same thing; only the drawing folded.
-            RowLayout {
+            // ---- The app ------------------------------------------------
+            Rectangle {
+                objectName: "appSection"
                 Layout.fillWidth: true
-                Layout.topMargin: Theme.spacingTight + 2
-                visible: card.launching
-                spacing: 3
-                Accessible.role: Accessible.ProgressBar
-                Accessible.name: {
-                    var parts = []
-                    for (var i = 0; i < ladderView.steps.length; i++) {
-                        parts.push(ladderView.steps[i].label + ": " + ladderView.steps[i].state)
+                visible: card.app && (card.appLine() !== "" || card.address !== "")
+                implicitHeight: appColumn.implicitHeight + 24
+                radius: 12
+                color: card.attention ? Qt.rgba(Theme.fillCaution.r, Theme.fillCaution.g, Theme.fillCaution.b, 0.12)
+                                      : Theme.fillSubtle
+
+                ColumnLayout {
+                    id: appColumn
+                    x: 12
+                    y: 12
+                    width: parent.width - 24
+                    spacing: 6
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: card.appLine()
+                        visible: text !== ""
+                        wrapMode: Text.WordWrap
+                        maximumLineCount: 3
+                        elide: Label.ElideRight
+                        font.family: Theme.textFamily
+                        font.pixelSize: 14
+                        font.weight: card.installing ? Theme.strongWeight : Theme.regularWeight
+                        color: card.attention ? Theme.fillCaution : palette.windowText
                     }
-                    return parts.join(", ")
-                }
 
-                Repeater {
-                    model: ladderView.steps
-
+                    // Where the install is, as a bar: half a step for the step
+                    // under way, so it never reads as done before it is.
                     Rectangle {
                         Layout.fillWidth: true
+                        visible: card.installing || card.deploying
                         implicitHeight: 4
                         radius: 2
-                        readonly property string state_: modelData.state
-                        color: state_ === "done" ? Theme.fillSuccess
-                             : state_ === "failed" ? Theme.fillCritical
-                             : state_ === "active" ? Theme.accent
-                             : state_ === "unknown" ? "transparent"
-                             : Theme.fillSubtle
-                        border.width: state_ === "unknown" ? 1 : 0
-                        border.color: Theme.fillNeutral
+                        color: "transparent"
+                        border.width: 1
+                        border.color: Theme.strokeCard
+                        Rectangle {
+                            height: parent.height
+                            radius: 2
+                            color: Theme.accent
+                            width: card.installing && model.stepOf > 0
+                                   ? parent.width * Math.max(0, model.stepN - 0.5) / model.stepOf
+                                   : parent.width * 0.12
+                        }
+                    }
 
-                        // The one moving thing on the card: the active step
-                        // dims and returns once a second, on the screen's own
-                        // clock. A continuous animation redraws the window
-                        // sixty times a second for as long as a machine is
-                        // starting — measured at 18 % of a core in the Linux
-                        // loop — where this redraws for a sixth of a second.
-                        // Under reduced motion it holds still.
-                        opacity: state_ === "active" && Theme.motion
-                                 && Math.floor(card.now / 1000) % 2 === 1 ? 0.45 : 1
-                        Behavior on opacity {
-                            NumberAnimation { duration: Theme.durationFast }
+                    Label {
+                        Layout.fillWidth: true
+                        visible: card.installing && text !== ""
+                        text: [card.since(model.appSince) !== "" ? qsTr("%1 so far").arg(card.since(model.appSince)) : "",
+                               model.typicalSecs > 0 ? qsTr("usually ~%1 min").arg(Math.max(1, Math.round(model.typicalSecs / 60))) : ""]
+                              .filter(function (p) { return p !== "" }).join(" · ")
+                        font.family: Theme.textFamily
+                        font.pixelSize: 12
+                        opacity: 0.6
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        visible: card.takingLonger
+                        text: qsTr("Taking longer than usual. Still being watched.")
+                        font.family: Theme.textFamily
+                        font.pixelSize: 12
+                        wrapMode: Text.WordWrap
+                    }
+
+                    // Once it runs: where it answers, with Copy address.
+                    RowLayout {
+                        Layout.fillWidth: true
+                        visible: card.usable && card.address !== ""
+                        spacing: 8
+                        Label {
+                            Layout.fillWidth: true
+                            text: card.web ? qsTr("%1 · port %2").arg(model.name).arg(model.webPort) : card.address
+                            font.family: card.web ? Theme.textFamily : Theme.monoFamily
+                            font.pixelSize: 13
+                            elide: Label.ElideMiddle
+                        }
+                        Button {
+                            flat: true
+                            text: qsTr("Copy address")
+                            Accessible.name: qsTr("Copy the address of %1").arg(model.name)
+                            onClicked: { Omnuv.copyText(card.address); copied.show() }
+                        }
+                    }
+
+                    // What the instance said, folded (Needs attention).
+                    ToolButton {
+                        id: disclosure
+                        visible: card.attention && (model.attention !== "" || model.lastError !== "")
+                        checkable: true
+                        text: (checked ? "▾ " : "▸ ") + qsTr("What the instance said")
+                        font.pixelSize: 13
+                        Accessible.name: qsTr("What the instance said")
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        visible: disclosure.visible && disclosure.checked
+                        text: model.attention !== "" ? model.attention : model.lastError
+                        wrapMode: Text.WordWrap
+                        font.family: Theme.textFamily
+                        font.pixelSize: 12
+                        opacity: 0.8
+                    }
+                }
+            }
+
+            // ---- A plain machine: the ssh line, or Core's reason --------
+            RowLayout {
+                Layout.fillWidth: true
+                visible: card.shell && model.shortHost !== "" && !card.attention && !card.stopped
+                spacing: 8
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: 32
+                    radius: 8
+                    color: Theme.fillSubtle
+                    Label {
+                        anchors.fill: parent
+                        anchors.leftMargin: 10
+                        anchors.rightMargin: 10
+                        verticalAlignment: Text.AlignVCenter
+                        text: "ssh " + model.user + "@" + model.shortHost
+                        font.family: Theme.monoFamily
+                        font.pixelSize: 12
+                        elide: Label.ElideMiddle
+                    }
+                }
+                Button {
+                    flat: true
+                    text: qsTr("Copy command")
+                    Accessible.name: qsTr("Copy the ssh command for %1").arg(model.name)
+                    onClicked: { Omnuv.copyText("ssh " + model.user + "@" + model.shortHost); copied.show() }
+                }
+            }
+            Label {
+                Layout.fillWidth: true
+                visible: !card.app && text !== "" && (card.attention || card.deploying || card.stopped)
+                text: card.stopped ? qsTr("Stopped. Its disk is kept.")
+                      : model.lastError !== "" ? model.lastError : model.waitingOn
+                wrapMode: Text.WordWrap
+                maximumLineCount: 3
+                elide: Label.ElideRight
+                font.family: Theme.textFamily
+                font.pixelSize: 13
+                color: card.attention ? Theme.fillCritical : palette.windowText
+                opacity: card.attention ? 1 : 0.7
+            }
+
+            // The ladder, while a plain machine launches: four segments and
+            // the step that matters, in the console's words.
+            ColumnLayout {
+                id: ladderView
+                Layout.fillWidth: true
+                visible: card.launching
+                spacing: 4
+                readonly property var steps: card.launching ? card.ladder() : []
+                readonly property var current: {
+                    var order = ["failed", "active", "unknown", "pending"]
+                    for (var o = 0; o < order.length; o++)
+                        for (var i = 0; i < steps.length; i++)
+                            if (steps[i].state === order[o]) return steps[i]
+                    return steps.length > 0 ? steps[steps.length - 1] : null
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: ladderView.current ? (ladderView.current.state === "failed" ? qsTr("Stopped at %1").arg(ladderView.current.label)
+                                                : ladderView.current.label + (ladderView.current.state === "unknown" ? qsTr(" \u00B7 not observed") : ""))
+                          : ""
+                    font.pixelSize: 13
+                    opacity: 0.8
+                    elide: Label.ElideRight
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 3
+                    Accessible.role: Accessible.ProgressBar
+                    Accessible.name: ladderView.steps.map(function (s) { return s.label + ": " + s.state }).join(", ")
+                    Repeater {
+                        model: ladderView.steps
+                        Rectangle {
+                            required property var modelData
+                            Layout.fillWidth: true
+                            implicitHeight: 4
+                            radius: 2
+                            color: modelData.state === "done" ? Theme.fillSuccess
+                                 : modelData.state === "failed" ? Theme.fillCritical
+                                 : modelData.state === "active" ? Theme.accent
+                                 : modelData.state === "unknown" ? "transparent" : Theme.fillSubtle
+                            border.width: modelData.state === "unknown" ? 1 : 0
+                            border.color: Theme.fillNeutral
                         }
                     }
                 }
             }
 
-            // The agent's own words when it said any, and "not observed" when
-            // nobody looked. Colour is never the only carrier of either.
-            Label {
+            // ---- Specs ---------------------------------------------------
+            GridLayout {
                 Layout.fillWidth: true
-                Layout.topMargin: 2
-                text: !ladderView.current ? ""
-                      : ladderView.current.note !== "" ? ladderView.current.note
-                      : ladderView.current.state === "unknown" ? qsTr("not observed") : ""
-                visible: text !== "" && model.lastError === ""
-                font.family: Theme.textFamily
-                font.pixelSize: Theme.captionSize
-                opacity: 0.6
-                elide: Label.ElideRight
-            }
+                columns: card.width < 380 ? 2 : 4
+                columnSpacing: 8
+                rowSpacing: 8
 
-            // ---- What went wrong, in Core's words -------------------------
-            //
-            // A badge that says "Needs attention" and nothing else is the same
-            // defect as a numeric code: it tells a person something is wrong
-            // and gives them nowhere to go. Core already composes a sentence;
-            // it is shown verbatim rather than translated into one of ours.
-            Label {
-                Layout.fillWidth: true
-                Layout.topMargin: Theme.spacingTight
-                visible: model.lastError !== ""
-                text: model.lastError
-                font.family: Theme.textFamily
-                font.pixelSize: Theme.captionSize
-                color: Theme.fillCritical
-                wrapMode: Text.WordWrap
-                // Two lines here; the whole sentence is one hover away,
-                // because a truncated reason is still Core's reason.
-                maximumLineCount: 2
-                elide: Label.ElideRight
-                ToolTip.visible: truncated && errorHover.containsMouse
-                ToolTip.text: model.lastError
-                // Hover only: it takes no buttons, so a press still reaches the card.
-                MouseArea {
-                    id: errorHover
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    acceptedButtons: Qt.NoButton
+                Repeater {
+                    model: card.specs
+                    Rectangle {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        Layout.preferredWidth: 1
+                        implicitHeight: 54
+                        radius: 10
+                        color: Theme.fillSubtle
+                        Column {
+                            x: 10
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: parent.width - 20
+                            spacing: 2
+                            Label {
+                                width: parent.width
+                                text: modelData.value
+                                font.family: Theme.textFamily
+                                font.pixelSize: 15
+                                font.weight: Theme.strongWeight
+                                elide: Label.ElideRight
+                            }
+                            Label {
+                                text: modelData.unit
+                                font.family: Theme.textFamily
+                                font.pixelSize: 12
+                                opacity: 0.6
+                            }
+                        }
+                    }
                 }
             }
 
-            // The actions sit on the card's floor whatever is above them, so a
-            // row of cards reads as a row.
-            Item {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-            }
+            Item { Layout.fillHeight: true }
 
-            // ---- One filled action, and the rest under a menu -------------
+            // ---- Footer: hint · secondary · primary · More ---------------
             RowLayout {
                 Layout.fillWidth: true
-                spacing: Theme.spacing
+                spacing: 8
 
-                Button {
-                    // Play when the machine streams something, Terminal when
-                    // it does not. Never both as buttons: a card with two
-                    // equal actions makes a person choose before they know
-                    // what they want.
-                    // A web recipe opens its page in the browser (Ollama + Open
-                    // WebUI, 2 October 2026).
-                    text: model.streamed ? qsTr("Play") : model.webPort > 0 ? qsTr("Open") : qsTr("Terminal")
-                    enabled: model.ready
-                    highlighted: true
-                    implicitWidth: Math.max(96, implicitContentWidth + leftPadding + rightPadding)
-                    onClicked: card.primaryActivated()
+                Label {
+                    Layout.fillWidth: true
+                    text: copied.shown ? qsTr("Copied") : card.hint
+                    font.family: Theme.textFamily
+                    font.pixelSize: 12
+                    opacity: 0.6
+                    elide: Label.ElideRight
+                    Timer {
+                        id: copied
+                        property bool shown: false
+                        interval: 2000
+                        function show() { shown = true; restart() }
+                        onTriggered: shown = false
+                    }
                 }
 
-                // Everything else behind it. The grid Play used to open lives
-                // here now — a choice made once a month does not deserve to be
-                // the screen between a person and their machine.
+                Button {
+                    objectName: "secondaryAction"
+                    visible: card.secondaryText !== ""
+                    text: card.secondaryText
+                    enabled: !(card.stopped || card.attention) || !Omnuv.ordering
+                    onClicked: card.secondary()
+                }
+
+                Button {
+                    objectName: "primaryAction"
+                    text: card.primaryText
+                    highlighted: !card.primaryBlocked
+                    // Disabled, but still focusable, with its reason read out.
+                    opacity: card.primaryBlocked ? 0.5 : 1
+                    Accessible.name: card.stream && !card.stopped && !card.attention ? qsTr("Play on %1").arg(model.name)
+                                   : card.web && !card.stopped && !card.attention
+                                     ? qsTr("Open %1 on %2").arg(model.appName !== "" ? model.appName : model.name).arg(model.name)
+                                   : qsTr("%1 on %2").arg(card.primaryText).arg(model.name)
+                    Accessible.description: card.primaryBlocked ? card.hint : ""
+                    implicitWidth: Math.max(96, implicitContentWidth + leftPadding + rightPadding)
+                    onClicked: card.primary()
+                }
+
                 ToolButton {
                     id: moreButton
-                    text: Theme.iconsInstalled ? Theme.icon.more : qsTr("More")
+                    objectName: "moreActions"
+                    text: Theme.iconsInstalled ? Theme.icon.more : "⋯"
                     font.family: Theme.iconsInstalled ? Theme.iconFamily : Theme.textFamily
                     font.pixelSize: Theme.bodySize
-                    hoverEnabled: true
-                    // On every machine since Delete lives here (25 September
-                    // 2026): a stopped or broken machine is the one most often
-                    // taken away. What only a stream can use is shown on a
-                    // streamed machine, and pressable when it is ready.
-                    visible: true
-                    // Screen readers and the tooltip get a word; the glyph is only
-                    // for the eye.
                     Accessible.name: qsTr("More actions for %1").arg(model.name)
                     ToolTip.visible: hovered
                     ToolTip.text: Accessible.name
                     onClicked: moreMenu.open()
 
+                    // Section 2's order: what to use, what it is doing, then
+                    // Delete… last.
                     Menu {
                         id: moreMenu
                         y: moreButton.height
 
                         MenuItem {
-                            text: qsTr("Choose what to stream")
-                            visible: model.streamed
-                            height: visible ? implicitHeight : 0
-                            enabled: model.ready
-                            onTriggered: card.chooseAppRequested()
-                        }
-
-                        // The other way in, for a machine whose primary action is
-                        // the stream. An SSH session is still how a person fixes a
-                        // rig that will not stream, which is exactly when they need
-                        // it most.
-                        // And for a web recipe, whose button opens its page
-                        // (the operator, 3 October 2026).
-                        MenuItem {
                             text: qsTr("Terminal")
-                            visible: model.streamed || model.webPort > 0
+                            visible: card.stream && !card.stopped
                             height: visible ? implicitHeight : 0
                             enabled: model.ready
                             onTriggered: card.terminalRequested()
                         }
-
                         MenuItem {
                             text: qsTr("Stream settings")
-                            visible: model.streamed
+                            visible: card.stream && !card.stopped
                             height: visible ? implicitHeight : 0
                             onTriggered: card.settingsRequested()
                         }
-
-                        // Asks first: the window's confirmation names what
-                        // goes with the machine and, for a protected one
-                        // (`deletionProtected`), that confirming clears it.
+                        MenuItem {
+                            text: qsTr("Restart")
+                            visible: card.usable || card.attention
+                            height: visible ? implicitHeight : 0
+                            onTriggered: card.powerRequested("reboot")
+                        }
+                        MenuItem {
+                            text: qsTr("Stop")
+                            visible: card.usable || card.attention
+                            height: visible ? implicitHeight : 0
+                            onTriggered: card.powerRequested("stop")
+                        }
+                        MenuSeparator {}
                         MenuItem {
                             objectName: "deleteMachine"
-                            text: qsTr("Delete machine…")
+                            text: qsTr("Delete…")
                             enabled: !Omnuv.ordering
                             onTriggered: card.deleteRequested()
                         }
-
-                        // ponytail: the design's menu also lists *Console in
-                        // browser*, *Stop* and *Delete*, and none is a rendering
-                        // problem:
-                        //
-                        //   Stop, Delete         need buyer endpoints this
-                        //       application does not have — it makes four calls and
-                        //       the console makes thirty-one. Closing that gap is
-                        //       I5, with a test that fails on any endpoint the
-                        //       console has and the client lacks.
-                        //   Console in browser   needs the console's own address,
-                        //       which this application is never told. It holds the
-                        //       *API* address, and turning one into the other is
-                        //       the client inventing a name — the habit
-                        //       `private_name` was taken away from it to break.
                     }
-                }
-
-                Item {
-                    Layout.fillWidth: true
                 }
             }
         }

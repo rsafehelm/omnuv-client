@@ -51,6 +51,14 @@ class OmnuvSession : public QObject
     Q_PROPERTY(QVariantList offers READ offers NOTIFY offersChanged)
     // True while a deploy or a delete this window asked for is unanswered.
     Q_PROPERTY(bool ordering READ ordering NOTIFY orderingChanged)
+    // **The deploy flow's catalogue** (the Instances redesign, step 8): Core's
+    // `GET /v1/catalog/deployables`, apps then plain instances, each saying
+    // whether it can be had now; and the GPU models on sale, free counts and
+    // prices, from `/v1/capacity`. Empty until `loadDeployables()` answers.
+    Q_PROPERTY(QVariantList deployables READ deployables NOTIFY deployablesChanged)
+    Q_PROPERTY(QVariantList saleGpus READ saleGpus NOTIFY deployablesChanged)
+    // Why the catalogue could not be read, in words, or "".
+    Q_PROPERTY(QString deployablesProblem READ deployablesProblem NOTIFY deployablesChanged)
     Q_PROPERTY(QString productionCoreUrl READ productionCoreUrl CONSTANT)
     Q_PROPERTY(bool signedIn READ signedIn NOTIFY signedInChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
@@ -220,22 +228,51 @@ public:
     // (empty for none). The answer arrives on `deployFinished`, and the
     // machine in the list on the next refresh, which this starts.
     Q_INVOKABLE void deploy(const QString& recipe, const QString& name, const QString& gpuModel, int count);
-    // Take away the machine in `row` and everything on it. A machine that came
-    // from a recipe is removed as that deployment, so its login and its GPU go
-    // with it; any other is removed as an instance. Answers on
+    // Take away the machine in `row` and everything on it, as one
+    // `DELETE /v1/instances/{id}`: an app's deployment, its login and its GPU
+    // go with the machine in Core's transaction (0161). Answers on
     // `deleteFinished`.
     //
     // `name` is the machine the person confirmed: the list refreshes under an
     // open dialog, and a row that holds another machine by now deletes
     // nothing. `unprotect` says the confirmation named the machine's
     // protection (Core's `protected`, 0195): only then, and only while the
-    // machine is protected, does an instance's delete ask Core to clear it. A
-    // deployment's removal clears it in Core and carries nothing.
+    // machine is protected, does the delete ask Core to clear it.
     // `machineId`, when given, is the machine the dialog was opened for: the
     // row is only where it was then (3 October 2026).
     Q_INVOKABLE void deleteMachine(int row, const QString& name, bool unprotect,
                                    const QString& machineId = QString());
     QVariantList offers() const { return m_offers; }
+
+    // Read the deploy flow's catalogue and the GPUs on sale. Against an older
+    // Core with no catalogue, the recipes stand in, as `loadOffers()` reads them.
+    Q_INVOKABLE void loadDeployables();
+    QVariantList deployables() const { return m_deployables; }
+    QVariantList saleGpus() const { return m_saleGpus; }
+    QString deployablesProblem() const { return m_deployablesProblem; }
+
+    // Why `name` would be refused for `count` instances, in Core's words
+    // (`instances::valid_machine_name`: 1-48 characters, ASCII letters,
+    // digits and hyphens, no hyphen at either end), or "". A batch is named
+    // `<name>-1…n`, and each of those is checked.
+    Q_INVOKABLE static QString nameProblem(const QString& name, int count = 1);
+    // A fresh idempotency key: the deploy flow mints one when its second step
+    // opens and sends it again on a retry, so a dropped answer never rents
+    // a second machine.
+    Q_INVOKABLE static QString newIdempotencyKey();
+    // **The deploy flow's one write**: `POST /v1/deploy` with `key` as its
+    // Idempotency-Key. `request` is Core's body: item {kind, id}, name,
+    // count, size or custom, gpu. A refusal arrives on `deployRefused` with
+    // the field Core named; success on `deployFinished(true, …)` and
+    // `deployed`, which carries the instances and any one-time password.
+    Q_INVOKABLE void deployItem(const QVariantMap& request, const QString& key);
+    // Start, stop or restart the machine with Core's id `machineId`
+    // (`action`: start, stop, reboot): Core's `/v1/instances/{id}/<action>`.
+    // A destination, not a command, on Core's side; the answer arrives on
+    // `actionFinished`, and the card's word on the next refresh, which this starts.
+    Q_INVOKABLE void power(const QString& machineId, const QString& action);
+    // The clipboard, for Copy address and Copy command.
+    Q_INVOKABLE void copyText(const QString& text);
     bool ordering() const { return m_ordering; }
 
     // Open a terminal on an ordinary machine. Returns false when no terminal
@@ -331,6 +368,13 @@ signals:
     // deploy rents a machine, so a blind retry can rent two.
     void deployFinished(bool ok, const QString& message);
     void deleteFinished(bool ok, const QString& message);
+    void deployablesChanged();
+    void actionFinished(bool ok, const QString& message);
+    // Core's refusal of a deploy: its sentence, the code a client branches on
+    // and the field it is about ("" when it names none).
+    void deployRefused(const QString& field, const QString& code, const QString& message);
+    // What a deploy made: [{id, name, deployment_id, console_password}].
+    void deployed(const QVariantList& instances);
 
     // The machine took the code. Whether the pairing then completed is
     // ComputerModel::pairingCompleted's answer; this only says the delivery
@@ -382,6 +426,9 @@ private:
     QString m_claimDeployment;
     void acceptToken(const QString& token);
     QVariantList m_offers;
+    QVariantList m_deployables;
+    QVariantList m_saleGpus;
+    QString m_deployablesProblem;
     bool m_ordering = false;
     void setOrdering(bool ordering);
     void removeAt(const QString& path, const QString& name, bool unprotect = false);

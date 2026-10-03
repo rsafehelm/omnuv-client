@@ -20,6 +20,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Window
+import QtQml.Models
 
 import ComputerModel 1.0
 import ComputerManager 1.0
@@ -38,7 +39,7 @@ Item {
     }
 
     // The toolbar shows this, so it should say where a person actually is.
-    objectName: Omnuv.signedIn ? qsTr("Machines") : qsTr("Sign in to Omnuv")
+    objectName: Omnuv.signedIn ? qsTr("Instances") : qsTr("Sign in to Omnuv")
 
     // One operation at a time, identified independently of model row order.
     property var activeTarget: null
@@ -48,6 +49,64 @@ Item {
     property string justPaired: ""
     property var launchApps: null
     property ComputerModel hosts: createHosts()
+
+    // ---- The Instances page's own state (the redesign, section 4) -------
+    // The chip in view: one of Core's words, or "" for All.
+    property string filter: ""
+    // The sum of Core's prices, an estimate while nothing charges.
+    property real estimate: 0
+    // The one-time console password a deploy answered with, and whose.
+    property string oneTimePassword: ""
+    property string oneTimeFor: ""
+
+    // A chip counts the words it stands for: Running with Ready, Installing
+    // with Deploying, as the card tones them.
+    function wordsOf(chip) {
+        return chip === "Running" ? ["Running", "Ready"] : chip === "Installing" ? ["Installing", "Deploying"] : [chip]
+    }
+    function countOf(chip) {
+        var counts = Omnuv.machines.statusCounts, n = 0, words = wordsOf(chip)
+        for (var i = 0; i < words.length; ++i) n += counts[words[i]] || 0
+        return n
+    }
+    // Which cards the chip shows, and the estimate, from the list as it is.
+    function refilter() {
+        var total = 0, words = wordsOf(filter)
+        for (var i = 0; i < shown.items.count; ++i) {
+            var item = shown.items.get(i)
+            item.inMatching = filter === "" || words.indexOf(item.model.status) >= 0
+            total += parseFloat(item.model.price) || 0
+        }
+        estimate = total
+        // A chip whose last card went shows All again, never an empty page.
+        if (filter !== "" && countOf(filter) === 0) { filter = ""; refilter() }
+    }
+    // What deleting it loses, one line each (section 5).
+    function lossesOf(m) {
+        var out = []
+        if (m.hasApp) out.push(m.loses !== "" ? qsTr("%1, %2").arg(m.appName).arg(m.loses) : m.appName)
+        out.push(qsTr("The instance's disk, %1 GiB").arg(m.diskGib))
+        if (m.privateIp !== "") out.push(qsTr("Its address on your private network"))
+        if (m.gpuModel !== "") out.push(qsTr("Its %1, back for others to rent").arg(m.gpuModel))
+        return out
+    }
+    Connections {
+        target: Omnuv.machines
+        function onCountChanged() { root.refilter() }
+    }
+    Connections {
+        target: Omnuv
+        function onDeployed(instances) {
+            for (var i = 0; i < instances.length; ++i) {
+                if (instances[i].console_password) {
+                    root.oneTimePassword = instances[i].console_password
+                    root.oneTimeFor = instances[i].name
+                    break
+                }
+            }
+        }
+        function onActionFinished(ok, text) { if (!ok) message.show(text) }
+    }
 
     StackView.onActivated: { Omnuv.refresh(true); Omnuv.tunnel.watch(true) }
     StackView.onDeactivating: Omnuv.tunnel.watch(false)
@@ -407,7 +466,7 @@ Item {
             else networkMove.close()
         }
         function onHostPairingFinished(address, error) { root.pairingFinished(address, error) }
-        function onDeployFinished(ok, text) { message.show(text) }
+        function onDeployFinished(ok, text) { if (!ok) message.show(text) }
         function onDeleteFinished(ok, text) { message.show(text) }
         function onPairingFailed(why, detail) {
             if (!root.validTarget(pairing.target)) return
@@ -472,194 +531,79 @@ Item {
         }
         onAccepted: Omnuv.coreUrl = deploymentField.text
     }
-    // **Renting a machine from the window** (the operator, 25 September 2026:
-    // a machine is created and torn down from the client). What can be
-    // rented is Core's list, read when the dialog opens; each choice is a
-    // button, so a person sees them all and a screen reader can press one.
-    Dialog {
+    // **The deploy flow** (the Instances redesign, step 8): the web's two
+    // steps, through `POST /v1/deploy` with an idempotency key.
+    DeployDialog {
         id: deployMachine
-        background: Rectangle {
-            color: deployMachine.palette.base
-            radius: Theme.radiusOverlay
-            border.color: Theme.strokeCard
-        }
         objectName: "deployMachine"
-        anchors.centerIn: parent
-        width: Math.min(root.width - 80, 620)
-        modal: true
-        title: qsTr("Deploy a machine")
-        property string recipe: ""
-        readonly property var chosen: {
-            for (var i = 0; i < Omnuv.offers.length; ++i)
-                if (Omnuv.offers[i].id === recipe) return Omnuv.offers[i]
-            return null
-        }
-        readonly property var freeGpus: chosen ? chosen.gpus.filter(function (g) { return g.available > 0 }) : []
-        function choose(offer) {
-            recipe = offer.id
-            deployName.text = offer.id.split("-")[0]
-            gpuChoice.currentIndex = 0
-            deployCount.value = 1
-        }
-        onAboutToShow: {
-            recipe = ""
-            deployName.text = ""
-            deployCount.value = 1
-            Omnuv.loadOffers()
-        }
-        Connections {
-            target: Omnuv
-            // One offer is chosen for the person; more are theirs to pick.
-            function onOffersChanged() {
-                if (deployMachine.visible && deployMachine.recipe === "" && Omnuv.offers.length > 0)
-                    deployMachine.choose(Omnuv.offers[0])
-            }
-        }
-        contentItem: ColumnLayout {
-            spacing: Theme.spacing
-            Label {
-                Layout.fillWidth: true
-                visible: Omnuv.offers.length === 0
-                text: qsTr("Reading what you can deploy…")
-                wrapMode: Text.WordWrap
-            }
-            Repeater {
-                model: Omnuv.offers
-                delegate: Button {
-                    required property var modelData
-                    Layout.fillWidth: true
-                    checkable: true
-                    checked: deployMachine.recipe === modelData.id
-                    // A mark, not `highlighted`: Material draws a highlighted,
-                    // checked button white on white (the session test's
-                    // render, 25 September 2026), and Material is the style
-                    // everywhere but Windows. The name stays the recipe's.
-                    text: (checked ? "\u2713  " : "") + modelData.name
-                    Accessible.name: modelData.name
-                    onClicked: deployMachine.choose(modelData)
-                }
-            }
-            Label {
-                Layout.fillWidth: true
-                visible: deployMachine.chosen !== null
-                text: deployMachine.chosen ? deployMachine.chosen.description + "\n" + deployMachine.chosen.machine : ""
-                wrapMode: Text.WordWrap
-                opacity: 0.78
-            }
-            TextField {
-                id: deployName
-                objectName: "deployName"
-                Layout.fillWidth: true
-                visible: deployMachine.chosen !== null
-                placeholderText: qsTr("Name")
-                Accessible.name: qsTr("Machine name")
-                maximumLength: 48
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                visible: deployMachine.chosen !== null
-                spacing: Theme.spacing
-                Label {
-                    text: qsTr("How many")
-                    Layout.fillWidth: true
-                }
-                SpinBox {
-                    id: deployCount
-                    objectName: "deployCount"
-                    from: 1
-                    to: 16
-                    editable: true
-                    Accessible.name: qsTr("How many machines")
-                }
-            }
-            Label {
-                Layout.fillWidth: true
-                visible: deployCount.value > 1
-                text: qsTr("They are held together and start at the same time, or none of them does. Named %1-1 to %1-%2.")
-                          .arg(deployName.text.trim()).arg(deployCount.value)
-                wrapMode: Text.WordWrap
-                opacity: 0.78
-            }
-            ComboBox {
-                id: gpuChoice
-                objectName: "gpuChoice"
-                Layout.fillWidth: true
-                visible: deployMachine.chosen !== null && deployMachine.chosen.gpu !== "none"
-                model: deployMachine.freeGpus
-                textRole: "label"
-                Accessible.name: qsTr("Graphics card")
-            }
-            Label {
-                Layout.fillWidth: true
-                visible: deployMachine.chosen !== null && deployMachine.chosen.gpu === "required"
-                         && deployMachine.freeGpus.length === 0
-                text: qsTr("No graphics card is free right now, and this machine needs one.")
-                wrapMode: Text.WordWrap
-            }
-        }
-        footer: OmnuvButtonBox {
-            Button {
-                objectName: "deployConfirm"
-                text: Omnuv.ordering ? qsTr("Deploying…") : qsTr("Deploy")
-                Accessible.name: qsTr("Deploy")
-                highlighted: true
-                enabled: !Omnuv.ordering && deployMachine.chosen !== null && deployName.text.trim() !== ""
-                         && (deployMachine.chosen.gpu !== "required" || deployMachine.freeGpus.length > 0)
-                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
-            }
-            Button {
-                text: qsTr("Cancel")
-                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
-            }
-        }
-        onAccepted: {
-            var gpu = ""
-            if (chosen && chosen.gpu !== "none" && freeGpus.length > 0)
-                gpu = freeGpus[Math.max(0, gpuChoice.currentIndex)].model
-            Omnuv.deploy(recipe, deployName.text, gpu, deployCount.value)
-        }
     }
 
-    // Taking a machine away, asked once, in words that say what goes with it.
+    // Taking a machine away, asked once, in words that say what goes with it
+    // (the Instances redesign, section 5): what it loses, line by line; on a
+    // protected machine a box the owner ticks, which is what clears the
+    // protection; Cancel first, so a stray Enter keeps the machine.
     Dialog {
         id: deleteMachine
         background: Rectangle {
             color: deleteMachine.palette.base
-            radius: Theme.radiusOverlay
+            radius: 16
             border.color: Theme.strokeCard
         }
         objectName: "deleteMachineDialog"
         anchors.centerIn: parent
-        width: Math.min(root.width - 80, 520)
+        width: Math.min(root.width - 32, 520)
         modal: true
         title: qsTr("Delete %1?").arg(targetName)
         property int row: -1
         property string targetName: ""
         property string targetId: ""
-        // Core's `protected` (0195), as the card had it when this opened. Said
-        // in the console's words, and only this confirmation asks Core to
-        // clear it.
+        // Core's `protected` (0195), as the card had it when this opened.
         property bool targetProtected: false
-        contentItem: Label {
-            text: qsTr("The machine and everything on it are taken away, and the capacity it held goes back on sale. This cannot be undone.")
-                  + (deleteMachine.targetProtected
-                     ? " " + qsTr("It is protected against deletion: confirming clears that protection and deletes it.")
-                     : "")
-            wrapMode: Text.WordWrap
+        property var losses: []
+        onAboutToShow: protectionBox.checked = false
+        onOpened: cancelDelete.forceActiveFocus()
+        contentItem: ColumnLayout {
+            spacing: Theme.spacing
+            Label {
+                Layout.fillWidth: true
+                text: qsTr("This removes the instance and everything on it. It cannot be undone.")
+                wrapMode: Text.WordWrap
+            }
+            Repeater {
+                model: deleteMachine.losses
+                Label {
+                    required property var modelData
+                    Layout.fillWidth: true
+                    Layout.leftMargin: Theme.spacing
+                    text: "\u00B7  " + modelData
+                    wrapMode: Text.WordWrap
+                    opacity: 0.8
+                }
+            }
+            CheckBox {
+                id: protectionBox
+                objectName: "deleteProtection"
+                Layout.fillWidth: true
+                visible: deleteMachine.targetProtected
+                text: qsTr("%1 is protected. Remove the protection and delete it.").arg(deleteMachine.targetName)
+            }
         }
         footer: OmnuvButtonBox {
             Button {
-                objectName: "deleteConfirm"
-                text: qsTr("Delete")
-                Accessible.name: text
-                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
-            }
-            Button {
+                id: cancelDelete
                 text: qsTr("Cancel")
                 DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
             }
+            Button {
+                objectName: "deleteConfirm"
+                text: qsTr("Delete %1").arg(deleteMachine.targetName)
+                Accessible.name: text
+                enabled: !deleteMachine.targetProtected || protectionBox.checked
+                DialogButtonBox.buttonRole: DialogButtonBox.DestructiveRole
+                onClicked: deleteMachine.accept()
+            }
         }
-        onAccepted: Omnuv.deleteMachine(row, targetName, targetProtected, targetId)
+        onAccepted: Omnuv.deleteMachine(row, targetName, targetProtected && protectionBox.checked, targetId)
     }
 
     Dialog {
@@ -1272,8 +1216,8 @@ Item {
         }
 
         // An organization with no project: nothing project-scoped exists to
-        // read, so the window says what to do rather than showing a grid and
-        // a rail that would wait for ever.
+        // read, so the window says what to do rather than showing a grid that
+        // would wait for ever.
         Item {
             visible: Omnuv.noProject
             Layout.fillWidth: true
@@ -1289,328 +1233,194 @@ Item {
             }
         }
 
-        RowLayout {
-            id: estateBody
+        // **The Instances page, the web's 1:1** (the Instances redesign, 3
+        // October 2026; docs/plans/recipes-in-instances.md section 4): a
+        // header with Deploy, the filter chips, two cards a row from 900 px,
+        // the content capped at 1152 px. The summary column is gone; the
+        // network join stays the notice above.
+        ColumnLayout {
+            id: page
             visible: !Omnuv.noProject
             Layout.fillWidth: true
             Layout.fillHeight: true
-            spacing: Theme.padding
+            Layout.maximumWidth: 1152
+            Layout.alignment: Qt.AlignHCenter
+            spacing: Theme.spacingLoose
 
-            readonly property bool wideEnough: width >= 900
+            // Read for what it decides, not drawn: what waits for capacity,
+            // and which reads could not be refreshed.
+            EstateHeader {
+                id: estateHeader
+                visible: false
+                now: machineList.now
+            }
 
-            ColumnLayout {
+            RowLayout {
                 Layout.fillWidth: true
-                Layout.fillHeight: true
-                spacing: Theme.spacingLoose
+                spacing: Theme.padding
 
-                EstateHeader {
-                    id: estateHeader
+                ColumnLayout {
                     Layout.fillWidth: true
-                    now: machineList.now
+                    spacing: 2
+                    Label {
+                        text: qsTr("Instances")
+                        font.family: Theme.displayFamily
+                        font.pixelSize: 28
+                        font.weight: Theme.strongWeight
+                        Accessible.role: Accessible.Heading
+                    }
+                    Label {
+                        objectName: "instancesSubtitle"
+                        Layout.fillWidth: true
+                        text: {
+                            var n = Omnuv.machines.count
+                            var parts = [Omnuv.projectName, n === 1 ? qsTr("1 instance") : qsTr("%1 instances").arg(n)]
+                            if (root.estimate > 0) parts.push(qsTr("€%1/h estimated").arg(root.estimate.toFixed(2)))
+                            return parts.filter(function (p) { return p !== "" }).join(" · ")
+                        }
+                        font.pixelSize: 14
+                        opacity: 0.7
+                        elide: Label.ElideRight
+                    }
                 }
+                Button {
+                    objectName: "deployButton"
+                    Layout.alignment: Qt.AlignVCenter
+                    highlighted: true
+                    text: "+  " + qsTr("Deploy")
+                    Accessible.name: qsTr("Deploy")
+                    enabled: !Omnuv.ordering
+                    onClicked: deployMachine.open()
+                }
+            }
 
-                GridView {
-                    id: machineList
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    model: Omnuv.machines
-                    clip: true
-                    focus: true
-                    keyNavigationWraps: true
-                    boundsBehavior: Flickable.StopAtBounds
-
-                    // As many columns of 280 or more as fit, then shared out,
-                    // so a row always reaches the edge. Every cell is one
-                    // height: a grid whose rows do not line up reads as a pile.
-                    readonly property int gap: Theme.spacingLoose
-                    readonly property int columns: Math.max(1, Math.floor(width / 292))
-                    cellWidth: Math.floor(width / columns)
-                    // A picture, a name, a state and a button, with room for a
-                    // launch under way and for two lines of Core's reason.
-                    cellHeight: 292
-                    // The shadows reach past the cards; the first row's must
-                    // not be cut by the grid's own edge.
-                    topMargin: 4
-
-                    ScrollBar.vertical: ScrollBar {}
-
-                    // Seconds are shown — "observed 8s ago", "42s" — so
-                    // seconds have to pass. One timer for the whole screen
-                    // rather than one per card, and it stops when nobody is
-                    // looking.
-                    property double now: Date.now()
-
-                    Timer {
-                        interval: 1000
-                        repeat: true
-                        running: machineList.visible && machineList.Window.active
-                        onTriggered: machineList.now = Date.now()
+            // The one-time console password, shown once, naming its instance.
+            Rectangle {
+                objectName: "passwordBanner"
+                Layout.fillWidth: true
+                visible: root.oneTimePassword !== ""
+                implicitHeight: passwordRow.implicitHeight + 24
+                radius: 12
+                color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.10)
+                border.color: Theme.accent
+                RowLayout {
+                    id: passwordRow
+                    x: 16
+                    y: 12
+                    width: parent.width - 32
+                    spacing: Theme.spacing
+                    Label {
+                        Layout.fillWidth: true
+                        text: qsTr("%1's console password. Shown once.").arg(root.oneTimeFor)
+                        wrapMode: Text.WordWrap
                     }
-
-                    // Nothing rented yet — said only once the list has actually
-                    // been read, and not while something is waiting for
-                    // capacity, which is drawn as a card of its own.
-                    EmptyState {
-                        visible: Omnuv.machines.loaded && Omnuv.machines.count === 0 && estateHeader.waiting.length === 0
-                        x: (machineList.width - width) / 2
-                        y: Math.max(0, (machineList.height - height) / 2 - 24)
-                        icon: Theme.icon.game
-                        title: qsTr("No machines yet")
-                        text: qsTr("Choose Deploy a machine above, and it appears here, ready to play.")
+                    Label {
+                        text: root.oneTimePassword
+                        font.family: Theme.monoFamily
                     }
+                    Button { text: qsTr("Copy"); onClicked: Omnuv.copyText(root.oneTimePassword) }
+                    Button { text: qsTr("Done"); onClicked: { root.oneTimePassword = ""; root.oneTimeFor = "" } }
+                }
+            }
 
-                    // The cards arrive, one after another, rising a little as
-                    // they do — Windows' own entrance, and its own curve. Once:
-                    // a refresh updates the cards where they stand
-                    // (`MachineModel::replace`), so this runs when the list is
-                    // first read or is a different list, not every fifteen
-                    // seconds. Under reduced motion every duration is zero and
-                    // the cards are simply there.
-                    populate: Transition {
-                        id: arrive
-                        SequentialAnimation {
-                            PropertyAction { property: "opacity"; value: 0 }
-                            PauseAnimation { duration: Theme.motion ? Math.min(arrive.ViewTransition.index, 6) * 45 : 0 }
-                            ParallelAnimation {
-                                NumberAnimation { property: "opacity"; to: 1; duration: Theme.durationNormal }
-                                NumberAnimation {
-                                    property: "y"
-                                    from: arrive.ViewTransition.destination.y + 18
-                                    to: arrive.ViewTransition.destination.y
-                                    duration: Theme.durationSlow
-                                    easing.type: Easing.Bezier
-                                    easing.bezierCurve: Theme.easeEntrance
-                                }
-                            }
-                        }
-                    }
-
-                    // Until the machines have been read: the shape of what is
-                    // coming, breathing, in the places the cards will take —
-                    // Docker Desktop draws its empty list the same way. Three,
-                    // because that is a row; gone the moment the list lands.
-                    Row {
-                        visible: !Omnuv.machines.loaded
-                        z: 2
-
-                        Repeater {
-                            model: Omnuv.machines.loaded ? 0 : Math.min(3, machineList.columns)
-
-                            Item {
-                                width: machineList.cellWidth
-                                height: machineList.cellHeight
-
-                                Rectangle {
-                                    width: parent.width - machineList.gap
-                                    height: parent.height - machineList.gap
-                                    radius: Theme.radiusCard
-                                    color: Theme.fillCard
-                                    border.width: 1
-                                    border.color: Theme.strokeCard
-
-                                    Column {
-                                        x: Theme.padding
-                                        y: 64 + Theme.padding
-                                        width: parent.width - 2 * Theme.padding
-                                        spacing: Theme.spacingLoose
-
-                                        Repeater {
-                                            model: [0.55, 0.8, 0.4]
-
-                                            Rectangle {
-                                                width: parent.width * modelData
-                                                height: index === 0 ? 20 : 12
-                                                radius: Theme.radiusControl
-                                                color: Theme.fillSubtle
-                                            }
-                                        }
-                                    }
-
-                                    Rectangle {
-                                        x: 1
-                                        y: 1
-                                        width: parent.width - 2
-                                        height: 64
-                                        topLeftRadius: Theme.radiusCard - 1
-                                        topRightRadius: Theme.radiusCard - 1
-                                        color: Theme.fillSubtle
-                                    }
-
-                                    SequentialAnimation on opacity {
-                                        // Only while it can be seen: an
-                                        // animation on a hidden item still
-                                        // ticks, for ever, with no project.
-                                        running: Theme.motion && parent.visible
-                                        loops: Animation.Infinite
-                                        NumberAnimation { from: 1; to: 0.45; duration: 700; easing.type: Easing.InOutSine }
-                                        NumberAnimation { from: 0.45; to: 1; duration: 700; easing.type: Easing.InOutSine }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    delegate: MachineCard {
-                        width: machineList.cellWidth
-                        height: machineList.cellHeight
-                        gap: machineList.gap
-                        now: machineList.now
-
-                        onPrimaryActivated: Omnuv.machines.webPortAt(index) > 0 ? root.openWeb(index) : root.connectTo(index)
-                        onTerminalRequested: root.openTerminalFor(index)
-                        onChooseAppRequested: {
-                            root.connectTo(index, true)
-                        }
-                        onSettingsRequested: streamSettings.open()
-                        onDeleteRequested: {
-                            deleteMachine.row = index
-                            deleteMachine.targetId = Omnuv.machines.idAt(index)
-                            deleteMachine.targetName = name
-                            deleteMachine.targetProtected = deletionProtected
-                            deleteMachine.open()
-                        }
-                    }
-
-                    // After the machines: what is waiting for capacity, as
-                    // cards that are not machines yet — a dashed outline, the
-                    // reason in Core's words, and when it gives up. Then, on a
-                    // narrow window, the rail.
-                    footer: Column {
-                        width: machineList.width
-                        spacing: Theme.padding
-
-                        Flow {
-                            width: parent.width
-
-                            Repeater {
-                                model: estateHeader.waiting
-
-                                Item {
-                                    width: machineList.cellWidth
-                                    height: machineList.cellHeight
-
-                                    Canvas {
-                                        id: outline
-                                        x: 0.5
-                                        y: 0.5
-                                        width: parent.width - machineList.gap - 1
-                                        height: parent.height - machineList.gap - 1
-                                        onWidthChanged: requestPaint()
-                                        onHeightChanged: requestPaint()
-                                        onPaint: {
-                                            var ctx = getContext("2d")
-                                            ctx.reset()
-                                            ctx.strokeStyle = Theme.fillNeutral
-                                            ctx.lineWidth = 1
-                                            ctx.setLineDash([4, 3])
-                                            ctx.beginPath()
-                                            ctx.roundedRect(0, 0, width, height, Theme.radiusCard, Theme.radiusCard)
-                                            ctx.stroke()
-                                        }
-                                    }
-
-                                    ColumnLayout {
-                                        x: Theme.padding
-                                        y: Theme.padding
-                                        width: outline.width - 2 * Theme.padding
-                                        height: outline.height - 2 * Theme.padding
-                                        spacing: Theme.spacing
-
-                                        // The place a machine's picture will
-                                        // be, holding the one thing known
-                                        // about it so far: it is waiting.
-                                        Rectangle {
-                                            Layout.bottomMargin: Theme.spacing
-                                            implicitWidth: 36
-                                            implicitHeight: 36
-                                            radius: Theme.radiusOverlay
-                                            color: Theme.fillSubtle
-                                            visible: Theme.iconsInstalled
-
-                                            Glyph {
-                                                anchors.centerIn: parent
-                                                icon: Theme.icon.waiting
-                                                size: 18
-                                                opacity: 0.8
-                                            }
-                                        }
-                                        Label {
-                                            Layout.fillWidth: true
-                                            text: qsTr("Waiting for capacity")
-                                            font.family: Theme.displayFamily
-                                            font.pixelSize: Theme.subtitleSize
-                                            font.weight: Theme.strongWeight
-                                            elide: Label.ElideRight
-                                        }
-                                        Label {
-                                            Layout.fillWidth: true
-                                            text: modelData.waiting_on
-                                            wrapMode: Text.WordWrap
-                                            maximumLineCount: 3
-                                            elide: Label.ElideRight
-                                            font.family: Theme.textFamily
-                                            font.pixelSize: Theme.bodySize
-                                        }
-                                        Label {
-                                            Layout.fillWidth: true
-                                            text: modelData.billing
-                                            wrapMode: Text.WordWrap
-                                            font.family: Theme.textFamily
-                                            font.pixelSize: Theme.captionSize
-                                            opacity: 0.6
-                                        }
-                                        Item {
-                                            Layout.fillHeight: true
-                                        }
-                                        Label {
-                                            Layout.fillWidth: true
-                                            text: qsTr("gives up %1").arg(Estate.ago(modelData.expires_at, machineList.now))
-                                            font.family: Theme.textFamily
-                                            font.pixelSize: Theme.captionSize
-                                            opacity: 0.6
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        EstateRail {
-                            visible: !estateBody.wideEnough
-                            width: parent.width
-                            now: machineList.now
-                        }
+            // The filters: Core's words, each with its count; a chip with
+            // none is hidden except All.
+            Flow {
+                objectName: "filterChips"
+                Layout.fillWidth: true
+                spacing: Theme.spacing
+                visible: Omnuv.machines.count > 0
+                Repeater {
+                    model: [ { label: qsTr("All"), word: "" },
+                             { label: qsTr("Running"), word: "Running" },
+                             { label: qsTr("Installing"), word: "Installing" },
+                             { label: qsTr("Needs attention"), word: "Needs attention" },
+                             { label: qsTr("Stopped"), word: "Stopped" } ]
+                    Button {
+                        required property var modelData
+                        readonly property int n: modelData.word === "" ? Omnuv.machines.count : root.countOf(modelData.word)
+                        visible: modelData.word === "" || n > 0
+                        checkable: true
+                        checked: root.filter === modelData.word
+                        flat: !checked
+                        text: modelData.label + "  " + n
+                        Accessible.name: qsTr("%1, %2").arg(modelData.label).arg(n)
+                        onClicked: { root.filter = modelData.word; root.refilter() }
                     }
                 }
             }
 
-            // The rail, on one quiet layer — LayerFillColorDefault, the
-            // surface Windows lays content on above Mica — rather than a box
-            // per section. It scrolls on its own when it is taller than the
-            // window.
-            Rectangle {
-                visible: estateBody.wideEnough
-                Layout.preferredWidth: 320
+            GridView {
+                id: machineList
+                Layout.fillWidth: true
                 Layout.fillHeight: true
-                radius: Theme.radiusOverlay
-                color: Theme.fillLayer
-                border.width: 1
-                border.color: Theme.strokeCard
+                model: shown
+                clip: true
+                focus: true
+                keyNavigationWraps: true
+                boundsBehavior: Flickable.StopAtBounds
 
-                Flickable {
-                    id: railScroller
-                    anchors.fill: parent
-                    anchors.margins: 1
-                    contentHeight: sideRail.implicitHeight + 2 * Theme.padding
-                    clip: true
-                    boundsBehavior: Flickable.StopAtBounds
-                    ScrollBar.vertical: ScrollBar {}
+                // Two cards a row from 900 px of content, one below; every
+                // cell one height, so a row reads as a row.
+                readonly property int gap: 20
+                readonly property int columns: width >= 900 ? 2 : 1
+                cellWidth: Math.floor(width / columns)
+                cellHeight: 376
 
-                    EstateRail {
-                        id: sideRail
-                        x: Theme.padding
-                        y: Theme.padding
-                        width: railScroller.width - 2 * Theme.padding
-                        now: machineList.now
+                ScrollBar.vertical: ScrollBar {}
+
+                // Seconds are shown, so seconds have to pass: one timer for
+                // the screen, and it stops when nobody is looking.
+                property double now: Date.now()
+                Timer {
+                    interval: 1000
+                    repeat: true
+                    running: machineList.visible && machineList.Window.active
+                    onTriggered: machineList.now = Date.now()
+                }
+
+                // Nothing rented yet: said once the list has been read, with
+                // the way to rent one.
+                EmptyState {
+                    visible: Omnuv.machines.loaded && Omnuv.machines.count === 0 && estateHeader.waiting.length === 0
+                    x: (machineList.width - width) / 2
+                    y: Math.max(0, (machineList.height - height) / 2 - 24)
+                    icon: Theme.icon.cloud
+                    title: qsTr("No instances in %1 yet").arg(Omnuv.projectName)
+                    text: qsTr("Deploy an app or a plain machine. The marketplace chooses the provider.")
+                    actionText: qsTr("Deploy")
+                    onAction: deployMachine.open()
+                }
+            }
+
+            // The machines, filtered by Core's word. The row a card acts on
+            // is its place in the machine list, which the filter does not change.
+            DelegateModel {
+                id: shown
+                model: Omnuv.machines
+                groups: [ DelegateModelGroup { id: matching; name: "matching"; includeByDefault: true } ]
+                filterOnGroup: "matching"
+
+                delegate: MachineCard {
+                    id: cardDelegate
+                    readonly property int row: DelegateModel.itemsIndex
+                    width: machineList.cellWidth
+                    height: machineList.cellHeight
+                    gap: machineList.gap
+                    now: machineList.now
+
+                    onPrimaryActivated: Omnuv.machines.webPortAt(row) > 0 ? root.openWeb(row) : root.connectTo(row)
+                    onTerminalRequested: root.openTerminalFor(row)
+                    onChooseAppRequested: root.connectTo(row, true)
+                    onSettingsRequested: streamSettings.open()
+                    onPowerRequested: function (action) { Omnuv.power(Omnuv.machines.idAt(row), action) }
+                    onDeleteRequested: {
+                        deleteMachine.row = row
+                        deleteMachine.targetId = Omnuv.machines.idAt(row)
+                        deleteMachine.targetName = model.name
+                        deleteMachine.targetProtected = deletionProtected
+                        deleteMachine.losses = root.lossesOf(model)
+                        deleteMachine.open()
                     }
                 }
             }

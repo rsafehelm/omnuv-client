@@ -1,12 +1,8 @@
-// Omnuv: the top bar — whose cloud this is, which project is in view, and the
-// window's two actions. What just happened is said in the messages panel at
-// the bottom, not here. One row, no frame: it is the answer to "what am I
-// looking at", so it never scrolls away and never competes with the machines.
-//
-// The project switch is a row of segments rather than a menu: a person with
-// three projects should see all three names, and the selected one is the only
-// thing on the bar drawn in the accent. With one project there is nothing to
-// switch, so the row is not drawn — a switch with one position is furniture.
+// Omnuv: the slim app bar — the brand, the project in view, and the account
+// (the Instances redesign, section 4: "brand, project switcher, account; 52
+// px; the web top bar's style"). It replaces the organization block, the
+// project tabs, Refresh and the bar's own Deploy: the list refreshes itself,
+// and Deploy lives in the page's header, as on the web.
 
 import QtQuick
 import QtQuick.Controls
@@ -16,167 +12,68 @@ import Omnuv 1.0
 
 RowLayout {
     id: bar
+    objectName: "appBar"
     spacing: Theme.spacingLoose
+    implicitHeight: 52
 
     // The window owns the dialog; the bar only asks for it.
     signal switchDeploymentRequested()
+    // Kept for callers: Deploy is in the page header now.
     signal deployRequested()
 
     readonly property var estate: Omnuv.estate
-    readonly property var members: estate.members.data
 
-    // "2 members · you are the owner". A part whose source has not been read
-    // is left out rather than guessed.
-    function detail() {
-        var parts = []
-        if (members !== undefined && members.length !== undefined) {
-            parts.push(members.length === 1 ? qsTr("1 member") : qsTr("%1 members").arg(members.length))
-        }
-        if (estate.organizationName !== "") {
-            parts.push(estate.owner ? qsTr("you are the owner") : qsTr("you are a member"))
-        }
-        return parts.join(" \u00B7 ")
+    Image {
+        source: "omnuv.svg"
+        sourceSize: Qt.size(28, 28)
+        Layout.preferredWidth: 28
+        Layout.preferredHeight: 28
+        Accessible.ignored: true
+    }
+    Label {
+        text: qsTr("Omnuv")
+        font.family: Theme.displayFamily
+        font.pixelSize: 16
+        font.weight: Theme.strongWeight
     }
 
-    // Whose cloud: an initial on the accent, lit from one corner like the
-    // pictures on the cards below it, then the name and the two facts about
-    // the person's place in it. The tile is always a deep colour, so the
-    // initial is always white — see `Theme.tileFrom`.
     Rectangle {
-        visible: bar.estate.organizationName !== ""
-        implicitWidth: 40
-        implicitHeight: 40
-        radius: Theme.radiusOverlay
-        gradient: Gradient {
-            orientation: Gradient.Horizontal
-            GradientStop { position: 0; color: Theme.tileFrom }
-            GradientStop { position: 1; color: Theme.tileTo }
-        }
-
-        Label {
-            anchors.centerIn: parent
-            text: bar.estate.organizationName.charAt(0).toUpperCase()
-            color: Theme.onTile
-            font.family: Theme.displayFamily
-            font.pixelSize: Theme.subtitleSize
-            font.weight: Theme.strongWeight
-        }
-    }
-
-    ColumnLayout {
-        visible: bar.estate.organizationName !== ""
-        spacing: 0
-        Layout.maximumWidth: 280
-
-        Label {
-            Layout.fillWidth: true
-            text: bar.estate.organizationName
-            elide: Label.ElideRight
-            font.family: Theme.textFamily
-            font.pixelSize: Theme.bodySize
-            font.weight: Theme.strongWeight
-        }
-        Label {
-            Layout.fillWidth: true
-            text: bar.detail()
-            visible: text !== ""
-            elide: Label.ElideRight
-            font.family: Theme.textFamily
-            font.pixelSize: Theme.captionSize
-            opacity: 0.6
-        }
-    }
-
-    // A hairline between whose it is and which part of it is in view.
-    Rectangle {
-        visible: segments.visible
         implicitWidth: 1
         implicitHeight: 24
         color: Theme.strokeCard
     }
 
-    // The ids are the values and the names the labels: two projects may share
-    // a name, and choosing by name would choose the wrong network.
-    Row {
-        id: segments
+    // The ids are the values and the names the labels: two projects may
+    // share a name, and choosing by name would choose the wrong network.
+    ComboBox {
+        id: projects
+        objectName: "projectSwitcher"
         visible: Omnuv.projectIds.length > 1
-        spacing: Theme.spacingTight
-
-        Repeater {
-            model: Omnuv.projectIds
-
-            // Windows' SelectorBar: every name plain, and a short rule in
-            // the accent under the one in view. A filled button here was the
-            // loudest thing in the window, louder than Play, for a choice
-            // most people make once.
-            ToolButton {
-                id: segment
-                readonly property bool selected: modelData === Omnuv.projectId
-                text: Omnuv.projectNames[index]
-                font.family: Theme.textFamily
-                font.pixelSize: Theme.bodySize
-                font.weight: selected ? Theme.strongWeight : Theme.regularWeight
-                opacity: selected || hovered ? 1 : 0.78
-                Accessible.name: selected ? qsTr("%1, the project in view").arg(text) : text
-                onClicked: Omnuv.selectProject(modelData)
-
-                Rectangle {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    anchors.bottom: parent.bottom
-                    anchors.bottomMargin: 1
-                    width: segment.selected ? 16 : 0
-                    height: 3
-                    radius: 1.5
-                    color: Theme.accent
-                    Behavior on width {
-                        NumberAnimation {
-                            duration: Theme.durationFast
-                            easing.type: Easing.Bezier
-                            easing.bezierCurve: Theme.easeEntrance
-                        }
-                    }
-                }
-            }
-        }
+        model: Omnuv.projectNames
+        currentIndex: Omnuv.projectIds.indexOf(Omnuv.projectId)
+        Accessible.name: qsTr("Project")
+        implicitContentWidthPolicy: ComboBox.WidestText
+        onActivated: function (i) { Omnuv.selectProject(Omnuv.projectIds[i]) }
+    }
+    Label {
+        visible: Omnuv.projectIds.length <= 1
+        text: Omnuv.projectName
+        font.pixelSize: Theme.bodySize
     }
 
-    Item {
-        Layout.fillWidth: true
-    }
-
-    // Renting a machine is what this window is for when it has none, so it is
-    // a labelled button on the bar rather than an entry in the menu.
-    Button {
-        objectName: "deployButton"
-        text: qsTr("Deploy a machine")
-        Accessible.name: text
-        enabled: !Omnuv.ordering
-        onClicked: bar.deployRequested()
-    }
+    Item { Layout.fillWidth: true }
 
     ToolButton {
-        text: Theme.iconsInstalled ? Theme.icon.refresh : Accessible.name
-        font.family: Theme.iconsInstalled ? Theme.iconFamily : Theme.textFamily
+        id: account
+        objectName: "accountMenu"
+        text: bar.estate.organizationName !== "" ? bar.estate.organizationName : qsTr("Account")
         font.pixelSize: Theme.bodySize
-        Accessible.name: qsTr("Refresh")
-        ToolTip.visible: hovered
-        ToolTip.text: Accessible.name
-        onClicked: Omnuv.refresh(true)
-    }
-
-    ToolButton {
-        id: more
-        text: Theme.iconsInstalled ? Theme.icon.more : Accessible.name
-        font.family: Theme.iconsInstalled ? Theme.iconFamily : Theme.textFamily
-        font.pixelSize: Theme.bodySize
-        Accessible.name: qsTr("More")
-        ToolTip.visible: hovered
-        ToolTip.text: Accessible.name
-        onClicked: moreMenu.open()
+        Accessible.name: qsTr("Account, %1").arg(text)
+        onClicked: accountMenu.open()
 
         Menu {
-            id: moreMenu
-            y: more.height
+            id: accountMenu
+            y: account.height
 
             // Another Omnuv deployment, without signing out of this one:
             // each keeps its own sign-in, so coming back needs none.
