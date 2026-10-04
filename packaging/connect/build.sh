@@ -56,6 +56,19 @@ CORE_URL="${OMNUV_CORE_URL:?set OMNUV_CORE_URL: where this deployment Core is}"
 CORE_HOST="$(printf '%s' "$CORE_URL" | sed -E 's#^[a-z]+://##; s#[/:].*$##')"
 [ -n "$CORE_HOST" ] || { echo "OMNUV_CORE_URL has no host: $CORE_URL" >&2; exit 1; }
 OUT="${OMNUV_CONNECT_OUT:-$HERE/dist/$CORE_HOST}"
+# **A dirty build never lands where a release is shipped from** (4 October
+# 2026). OMNUV_CONNECT_ALLOW_DIRTY names the files as a release would, so it
+# is allowed only into an OMNUV_CONNECT_OUT outside dist/: platform.yml ships
+# dist/<core host>, and a release-named installer of no commit must not be
+# one directory listing away from it.
+case "$CLIENT_COMMIT" in
+    *+dirty)
+        case "$(realpath -m "$OUT")/" in
+            "$(realpath -m "$HERE/dist")/"*)
+                echo "build.sh: a dirty tree builds only into an OMNUV_CONNECT_OUT outside $HERE/dist, not $OUT" >&2
+                exit 2 ;;
+        esac ;;
+esac
 
 # A full build starts from an empty directory. A partial one
 # (OMNUV_CONNECT_ONLY) must not: emptying it took the other platforms'
@@ -90,6 +103,28 @@ from_this_commit() {
     [ "$k" = yes ] || { echo "  $3 FAILED: $1 is not from a clean build (clean=$k); release installers are" >&2; return 1; }
     [ "$(sha256sum "$1" | cut -d' ' -f1)" = "$(sed -n 's/^sha256=//p' "$meta")" ] || {
         echo "  $3 FAILED: $1 does not match the checksum taken where it was built" >&2; return 1; }
+}
+
+# **The .deb says its commit, read back out of the built file** (4 October
+# 2026): the control file's Omnuv-Commit and, with the client inside, the
+# BUILT_FROM installed beside it. Read by dpkg-deb in a container, never
+# taken from the arguments that went in.
+# Usage: deb_names_its_commit <file in $OUT> [<BUILT_FROM's path inside>]
+deb_names_its_commit() {
+    local said control inside
+    said="$(docker run --rm -v "$OUT:/out:ro" debian:trixie-slim sh -c '
+        set -e
+        printf "control=%s\n" "$(dpkg-deb -f "/out/$1" Omnuv-Commit)"
+        if [ -n "$2" ]; then dpkg-deb --fsys-tarfile "/out/$1" | tar -xO "$2" | sed -n "s/^commit=/inside=/p"; fi
+    ' sh "$1" "${2:-}")" || { echo "  deb    FAILED: could not read $1 back" >&2; return 1; }
+    control="$(printf '%s\n' "$said" | sed -n 's/^control=//p')"
+    inside="$(printf '%s\n' "$said" | sed -n 's/^inside=//p')"
+    [ "$control" = "$CLIENT_COMMIT" ] || {
+        echo "  deb    FAILED: $1 says Omnuv-Commit ${control:-(none)}, and this is $CLIENT_COMMIT" >&2; return 1; }
+    if [ -n "${2:-}" ] && [ "$inside" != "$CLIENT_COMMIT" ]; then
+        echo "  deb    FAILED: $1's ${2#./} names ${inside:-nothing}, and this is $CLIENT_COMMIT" >&2; return 1
+    fi
+    echo "  deb    $1 names commit $CLIENT_COMMIT"
 }
 
 fill() {
@@ -136,6 +171,7 @@ build_deb() {
         chown $(id -u):$(id -g) /out/omnuv-connect_${VERSION}_amd64.deb" \
         || { echo "  deb    FAILED: packaging did not finish" >&2; return 1; }
     rm -rf "$stage"
+    deb_names_its_commit "omnuv-connect_${VERSION}_amd64.deb" ./opt/omnuv/BUILT_FROM || return 1
     echo "  deb    omnuv-connect_${VERSION}_amd64.deb (client, Qt and tunnel service)"
 }
 
@@ -167,6 +203,7 @@ Architecture: all
 Depends: curl
 Recommends: flatpak
 Maintainer: Omnuv <ops@omnuv.com>
+Omnuv-Commit: $CLIENT_COMMIT
 Description: Join a device to your Omnuv private network
  One command that installs the tunnel client if it is missing, joins your
  private network with the key from your Omnuv console, and tells you whether
@@ -181,6 +218,7 @@ CTL
         sh -c "apt-get -qq update >/dev/null && apt-get -qq install -y fakeroot >/dev/null \
                && fakeroot dpkg-deb --build .deb omnuv-connect_${VERSION}-noclient_all.deb" >/dev/null
     rm -rf "$stage"
+    deb_names_its_commit "omnuv-connect_${VERSION}-noclient_all.deb" || return 1
     echo "  deb    $(basename "$OUT"/omnuv-connect_*.deb)"
 }
 
@@ -196,6 +234,13 @@ build_exe_released() {
     [ -f "$exe" ] && [ "$(stat -c%s "$exe")" -gt 10000000 ] || {
         echo "  exe    FAILED: $exe is missing or too small to carry the client" >&2; return 1; }
     from_this_commit "$exe" "$exe.built-from" "exe   " || return 1
+    # The MSI's version is VERSION (wix/Omnuv/Omnuv.wixproj); omnuv's
+    # lab-windows-msi.yml reads it back out of the built MSI and the bundle,
+    # and writes it into the sidecar.
+    local built_version
+    built_version="$(sed -n 's/^version=//p' "$exe.built-from")"
+    [ "$built_version" = "$VERSION" ] || {
+        echo "  exe    FAILED: $exe carries version ${built_version:-(not recorded)}, and this is $VERSION" >&2; return 1; }
     cp "$exe" "$OUT/OmnuvConnect-$VERSION-setup.exe"
     chmod 0644 "$OUT/OmnuvConnect-$VERSION-setup.exe"
     echo "  exe    OmnuvConnect-${VERSION}-setup.exe (the rig's bundle, $(stat -c%s "$exe") bytes)"
