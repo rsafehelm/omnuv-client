@@ -12,7 +12,16 @@
 # will see nothing.
 set -euo pipefail
 
-VERSION="${1:-0.1.0}"
+# **One version, in packaging/connect/VERSION** (4 October 2026). It was a
+# default here (0.1.0), an argument each caller typed, and a value in the macOS
+# play, so a .deb once came out as 0.1.0 beside 0.2.0 installers. An argument
+# that disagrees with the file is refused rather than obeyed.
+VERSION_FILE="$(dirname "$0")/VERSION"
+VERSION="$(tr -d '[:space:]' < "$VERSION_FILE")"
+if [ -n "${1:-}" ] && [ "$1" != "$VERSION" ]; then
+    echo "build.sh: asked for $1, but $VERSION_FILE says $VERSION; change the file, not the argument" >&2
+    exit 2
+fi
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 HERE="$ROOT/packaging/connect"
 # Beside the thing it builds, like tunnel/dist, and ignored by
