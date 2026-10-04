@@ -32,7 +32,12 @@
   <PropertyGroup>
     <!-- The omnuv:// handler, from the tree, as the NSIS installer takes it (F2). -->
     <ConnectFolder>$(MSBuildThisFileDirectory)..\..\packaging\connect</ConnectFolder>
-    <DefineConstants>DeployDir=$(DEPLOY_FOLDER);BuildDir=$(BUILD_FOLDER);TunnelDir=$(TunnelFolder);ConnectDir=$(ConnectFolder)</DefineConstants>
+    <!-- The installer's version is Omnuv Connect's, packaging/connect/VERSION,
+         the one place it is set (4 October 2026): bound to the client exe's
+         file version it was upstream's 6.1.0 on every release, so Windows'
+         installed programs never said which Omnuv this was. -->
+    <ConnectVersion>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)..\..\packaging\connect\VERSION').Trim())</ConnectVersion>
+    <DefineConstants>DeployDir=$(DEPLOY_FOLDER);BuildDir=$(BUILD_FOLDER);TunnelDir=$(TunnelFolder);ConnectDir=$(ConnectFolder);ConnectVersion=$(ConnectVersion)</DefineConstants>
   </PropertyGroup>
   <PropertyGroup>
     <AcceptEula>wix7</AcceptEula>

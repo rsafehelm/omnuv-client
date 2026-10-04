@@ -32,6 +32,11 @@ bin=/build/app/OmnuvClient
 rm -rf "$out"
 mkdir -p "$out/bin" "$out/lib" "$out/plugins" "$out/qml"
 cp "$bin" "$out/bin/OmnuvClient.bin"
+# **The commit the client in /build was built from** (4 October 2026), said
+# by whoever built it, written beside it, and checked by build.sh against the
+# tree it packages; installed as /opt/omnuv/BUILT_FROM.
+commit="${OMNUV_CLIENT_COMMIT:?OMNUV_CLIENT_COMMIT is not set: the commit the client in /build was built from}"
+printf 'commit=%s\nclient_sha256=%s\n' "$commit" "$(sha256sum "$bin" | cut -d' ' -f1)" > "$out/BUILT_FROM"
 
 # The plugin families a desktop Qt Quick client loads on X11 and Wayland.
 for dir in platforms xcbglintegrations platforminputcontexts platformthemes iconengines imageformats tls \

@@ -23,6 +23,9 @@
 # network; the peer is revoked from the console, as on Windows.
 set -euo pipefail
 staged="$1"; daemon="$2"; connect="$3"; version="$4"; out="$5"
+# The client commit it was built from (build.sh), in the control file as
+# Omnuv-Commit so `dpkg -I` says it; required, as build.sh refuses without one.
+commit="${6:?package-deb.sh needs the client commit as its sixth argument}"
 here="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 root="$(mktemp -d)"
 
@@ -73,6 +76,7 @@ Priority: optional
 Architecture: amd64
 Depends: $depends
 Maintainer: Omnuv <ops@omnuv.com>
+Omnuv-Commit: $commit
 Description: Omnuv on this device: the app and its private network
  The Omnuv client, the service that holds this device on its private network,
  and omnuv-connect, the command that joins it with a key from the Omnuv

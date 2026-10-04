@@ -9,10 +9,15 @@
 
   <Package Name="$(var.FullName)"
            Language="1033"
-           Version="!(bind.fileVersion.OmnuvClientExe)"
+           Version="$(var.ConnectVersion)"
            Manufacturer="Omnuv"
            UpgradeCode="3c64f1f8-c43d-468a-ae92-7a6da2622ce2">
-    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." Schedule="afterInstallInitialize" />
+    <!-- AllowDowngrades: the version became Connect's (0.2.1) on 4 October
+         2026, numerically below the 6.1.0 every earlier installer carried, so
+         without it an upgrade from any of them would read as a downgrade and
+         be refused. One product, one line of releases: the installed one is
+         always replaced. -->
+    <MajorUpgrade AllowDowngrades="yes" Schedule="afterInstallInitialize" />
     <MediaTemplate CompressionLevel="high" EmbedCab="yes" />
 
     <Property Id="APPDATAFOLDER" Value="%LOCALAPPDATA%\Omnuv" />

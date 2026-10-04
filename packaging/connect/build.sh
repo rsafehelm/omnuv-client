@@ -24,6 +24,20 @@ if [ -n "${1:-}" ] && [ "$1" != "$VERSION" ]; then
 fi
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 HERE="$ROOT/packaging/connect"
+# **Which client commit this is** (4 October 2026). A macOS package from
+# before a rename was served for five days and nothing said which commit it
+# was; every installer now names the commit it was built from, and each input
+# a rig made has to prove it came from this one. A tree with uncommitted
+# changes has no commit to name, so it is refused; OMNUV_CONNECT_ALLOW_DIRTY=1
+# builds one for a local test and says so in BUILT_FOR.
+CLIENT_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
+if [ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no)" ]; then
+    [ "${OMNUV_CONNECT_ALLOW_DIRTY:-}" = 1 ] || {
+        echo "build.sh: $ROOT has uncommitted changes; an installer must name the commit it was built from" >&2
+        exit 2
+    }
+    CLIENT_COMMIT="$CLIENT_COMMIT+dirty"
+fi
 # Beside the thing it builds, like tunnel/dist, and ignored by
 # packaging/.gitignore. It was $ROOT/dist/connect while this lived in the
 # private repository; the play that ships it reads onv_connect_dist now, so
@@ -50,6 +64,11 @@ OUT="${OMNUV_CONNECT_OUT:-$HERE/dist/$CORE_HOST}"
 # restored from the mirror's own copy by its hash).
 if [ -z "${OMNUV_CONNECT_ONLY:-}" ]; then
     rm -rf "$OUT"
+elif [ -f "$OUT/BUILT_FOR" ] && [ "$(sed -n 's/^commit=//p' "$OUT/BUILT_FOR")" != "$CLIENT_COMMIT" ]; then
+    # A partial build keeps the other platforms' files, and BUILT_FOR names one
+    # commit for all of them: they must be this commit's, or be rebuilt.
+    echo "build.sh: $OUT holds installers from $(sed -n 's/^commit=//p' "$OUT/BUILT_FOR"), not $CLIENT_COMMIT; build all three" >&2
+    exit 2
 fi
 mkdir -p "$OUT"
 echo "omnuv-connect $VERSION -> overlay $MANAGEMENT_URL, core $CORE_URL"
@@ -57,7 +76,21 @@ echo "omnuv-connect $VERSION -> overlay $MANAGEMENT_URL, core $CORE_URL"
 # one deployment's addresses, and the directory's name alone is a convention;
 # platform.yml reads this and refuses a directory built for another
 # deployment, or one that does not say.
-printf 'core_url=%s\nmanagement_url=%s\nversion=%s\n' "$CORE_URL" "$MANAGEMENT_URL" "$VERSION" > "$OUT/BUILT_FOR"
+printf 'core_url=%s\nmanagement_url=%s\nversion=%s\ncommit=%s\n' "$CORE_URL" "$MANAGEMENT_URL" "$VERSION" "$CLIENT_COMMIT" > "$OUT/BUILT_FOR"
+
+# An input a rig made is taken only from this commit, built clean: its
+# sidecar says so, and its checksum is the one taken where it was made.
+# Usage: from_this_commit <file> <sidecar> <what>
+from_this_commit() {
+    local meta="$2"
+    [ -f "$meta" ] || { echo "  $3 FAILED: $meta is missing; it names the commit $1 was built from" >&2; return 1; }
+    local c k
+    c="$(sed -n 's/^commit=//p' "$meta")"; k="$(sed -n 's/^clean=//p' "$meta")"
+    [ "$c" = "$CLIENT_COMMIT" ] || { echo "  $3 FAILED: $1 was built from $c, and this is $CLIENT_COMMIT" >&2; return 1; }
+    [ "$k" = yes ] || { echo "  $3 FAILED: $1 is not from a clean build (clean=$k); release installers are" >&2; return 1; }
+    [ "$(sha256sum "$1" | cut -d' ' -f1)" = "$(sed -n 's/^sha256=//p' "$meta")" ] || {
+        echo "  $3 FAILED: $1 does not match the checksum taken where it was built" >&2; return 1; }
+}
 
 fill() {
     sed -e "s|@MANAGEMENT_URL@|$MANAGEMENT_URL|g" -e "s|@CORE_URL@|$CORE_URL|g" \
@@ -84,6 +117,11 @@ build_deb() {
         echo "  deb    FAILED: no staged client at OMNUV_CLIENT_LINUX_DIR=$OMNUV_CLIENT_LINUX_DIR" >&2; return 1; }
     [ -x "$ROOT/tunnel/dist/onvtunneld" ] || {
         echo "  deb    FAILED: no tunnel/dist/onvtunneld; run tunnel/build.sh linux" >&2; return 1; }
+    # The staged client names its commit (stage-client.sh, OMNUV_CLIENT_COMMIT).
+    local staged_from
+    staged_from="$(sed -n 's/^commit=//p' "$OMNUV_CLIENT_LINUX_DIR/BUILT_FROM" 2>/dev/null)"
+    [ "$staged_from" = "$CLIENT_COMMIT" ] || {
+        echo "  deb    FAILED: the staged client is from ${staged_from:-an unnamed commit}, and this is $CLIENT_COMMIT" >&2; return 1; }
     local stage="$OUT/.deb-full"
     rm -rf "$stage" && mkdir -p "$stage"
     fill "$HERE/omnuv-connect" > "$stage/omnuv-connect"
@@ -94,7 +132,7 @@ build_deb() {
         set -e
         apt-get -qq update >/dev/null 2>&1
         DEBIAN_FRONTEND=noninteractive apt-get -qq install -y dpkg-dev >/dev/null 2>&1
-        bash /linux/package-deb.sh /in/client /in/onvtunneld /in/omnuv-connect '$VERSION' /out
+        bash /linux/package-deb.sh /in/client /in/onvtunneld /in/omnuv-connect '$VERSION' /out '$CLIENT_COMMIT'
         chown $(id -u):$(id -g) /out/omnuv-connect_${VERSION}_amd64.deb" \
         || { echo "  deb    FAILED: packaging did not finish" >&2; return 1; }
     rm -rf "$stage"
@@ -157,6 +195,7 @@ build_exe_released() {
     local exe="$OMNUV_WINDOWS_SETUP"
     [ -f "$exe" ] && [ "$(stat -c%s "$exe")" -gt 10000000 ] || {
         echo "  exe    FAILED: $exe is missing or too small to carry the client" >&2; return 1; }
+    from_this_commit "$exe" "$exe.built-from" "exe   " || return 1
     cp "$exe" "$OUT/OmnuvConnect-$VERSION-setup.exe"
     chmod 0644 "$OUT/OmnuvConnect-$VERSION-setup.exe"
     echo "  exe    OmnuvConnect-${VERSION}-setup.exe (the rig's bundle, $(stat -c%s "$exe") bytes)"
@@ -258,8 +297,7 @@ build_pkg_released() {
         echo "  pkg    FAILED: $pkg was built for $(field core_url) $(field version), not $CORE_URL $VERSION" >&2
         return 1
     fi
-    [ "$(sha256sum "$pkg" | cut -d' ' -f1)" = "$(field sha256)" ] || {
-        echo "  pkg    FAILED: $pkg does not match the checksum taken where it was built" >&2; return 1; }
+    from_this_commit "$pkg" "$meta" "pkg   " || return 1
     cp "$pkg" "$OUT/OmnuvConnect-$VERSION.pkg"
     chmod 0644 "$OUT/OmnuvConnect-$VERSION.pkg"
     echo "  pkg    OmnuvConnect-${VERSION}.pkg (the client, built on the lab Mac)"
@@ -329,6 +367,12 @@ for platform in ${OMNUV_CONNECT_ONLY:-deb exe pkg}; do
         deb|exe|pkg) "build_$platform" ;;
         *) echo "OMNUV_CONNECT_ONLY names $platform; it is deb, exe or pkg" >&2; exit 1 ;;
     esac
+done
+# Every file shipped, by its checksum, so the platform's check binds each one
+# to the commit named above (omnuv's tasks/connect-built-for.yml).
+for f in "$OUT"/*; do
+    [ -f "$f" ] && [ "$(basename "$f")" != BUILT_FOR ] || continue
+    printf 'sha256.%s=%s\n' "$(basename "$f")" "$(sha256sum "$f" | cut -d' ' -f1)" >> "$OUT/BUILT_FOR"
 done
 echo "artifacts in ${OUT#"$ROOT"/}"
 ls -1 "$OUT" 2>/dev/null | sed 's/^/  /'
