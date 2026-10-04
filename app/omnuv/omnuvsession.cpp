@@ -1987,6 +1987,8 @@ void OmnuvSession::loadDeployables()
                     sizes.append(m);
                 }
                 o["sizes"] = sizes;
+                // The tile's mark, by the card's own rule: a Windows image's says so.
+                o["mark"] = MachineModel::markFor(o.value("mark").toString(), o.value("os_family").toString());
                 items->append(o);
             }
             // Apps first, then plain instances; Core's order inside each.
