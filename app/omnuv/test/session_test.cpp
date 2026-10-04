@@ -1296,6 +1296,18 @@ private slots:
         QCOMPARE(m.rowsFor(a), QList<int>{0});                                   // an id finds even the one going
         QCOMPARE(m.rowsFor(b.toUpper()), QList<int>{1});
         QCOMPARE(m.rowsFor(a+"."+proj+".cloud.omnuv.com"), QList<int>{0});        // Core's name by id
+        // D-1: a name by id saved under another domain finds its machine by
+        // the id it carries, and is given the machine's current host.
+        QCOMPARE(m.rowsFor(b+"."+proj+".omnuv.net"), QList<int>{1});
+        QCOMPARE(m.rowsFor(b.toUpper()+"."+proj+".OMNUV.NET."), QList<int>{1});
+        QCOMPARE(m.hostAt(m.rowsFor(b+"."+proj+".omnuv.net").value(0, -1)), b+"."+proj+".cloud.omnuv.com");
+        // The nearest things it must ignore: an unknown id in a name by id, a
+        // first label that is not a whole id, no project id, no domain.
+        QVERIFY(m.rowsFor("6f1c2d4e-0000-4000-8000-0000000000ff."+proj+".omnuv.net").isEmpty());
+        QCOMPARE(m.rowsFor("rig."+proj+".omnuv.net"), QList<int>{1});            // a bare name, as before
+        QVERIFY(m.rowsFor(b.left(8)+"."+proj+".omnuv.net").isEmpty());
+        QVERIFY(m.rowsFor(b+".rig.omnuv.net").isEmpty());
+        QVERIFY(m.rowsFor(b+"."+proj).isEmpty());
         QCOMPARE(m.rowsFor("rig-7a1b2c3d.internal"), QList<int>{1});              // the older name: live rows only
         QCOMPARE(m.rowsFor("rig"), QList<int>{1});                                 // the deleting namesake excluded
         QCOMPARE(m.rowsFor("chat-7a1b2c3d.internal"), QList<int>{2});

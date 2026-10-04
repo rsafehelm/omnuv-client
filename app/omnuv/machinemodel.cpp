@@ -514,6 +514,21 @@ QList<int> MachineModel::rowsFor(const QString& target) const
             return {i};
         }
     }
+    // **A private name by id, under any domain** (0229; D-1, 4 October 2026):
+    // `<machine uuid>.<project uuid>.<domain>`. Core moves the domain
+    // (`cloud.omnuv.com` to `omnuv.net`), and a name saved under the old one
+    // still carries the machine's whole id, so it finds that machine, whose
+    // host is then the current one. The id decides, never the domain.
+    const QString first = t.section(QLatin1Char('.'), 0, 0);
+    if (isInstanceId(first) && isInstanceId(t.section(QLatin1Char('.'), 1, 1))
+        && !t.section(QLatin1Char('.'), 2).isEmpty()) {
+        for (int i = 0; i < m_machines.count(); ++i) {
+            if (m_machines.at(i).id.compare(first, Qt::CaseInsensitive) == 0) {
+                return {i};
+            }
+        }
+        return rows;
+    }
     // Core's older name, `<name>-<project8>.internal`: shared by a machine
     // being deleted and the one made again under its name, so live rows only.
     for (int i = 0; i < m_machines.count(); ++i) {
