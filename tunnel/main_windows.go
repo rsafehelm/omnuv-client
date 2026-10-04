@@ -50,15 +50,12 @@ func (h handler) Execute(_ []string, r <-chan svc.ChangeRequest, s chan<- svc.St
 	const accepted = svc.AcceptStop | svc.AcceptShutdown
 	s <- svc.Status{State: svc.StartPending}
 
-	go func() {
-		// **Resume at start, so a machine that has joined before is on its
-		// network before anyone logs in.** It creates nothing: with no key,
-		// the library is given the identity already on disk, and with no
-		// identity it refuses rather than enrolling.
-		if err := h.t.start("", ""); err != nil {
-			log.Printf("onv-tunnel: nothing to resume: %v", err)
-		}
-	}()
+	// **Resume at start, so a machine that has joined before is on its
+	// network before anyone logs in.** It creates nothing: with no key, the
+	// library is given the identity already on disk, and with no identity it
+	// refuses rather than enrolling. In machine mode, the loop that waits for
+	// the first-boot drive's join file (machine.go).
+	h.t.begin()
 	go func() {
 		if err := serve(h.t); err != nil {
 			log.Printf("onv-tunnel: serve: %v", err)
@@ -157,11 +154,7 @@ func run(t *tunnel) error {
 		return err
 	}
 	if !isService {
-		go func() {
-			if err := t.start("", ""); err != nil {
-				log.Printf("onv-tunnel: nothing to resume: %v", err)
-			}
-		}()
+		t.begin()
 		return serve(t)
 	}
 	return svc.Run(serviceName, handler{t: t})

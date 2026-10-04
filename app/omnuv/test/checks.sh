@@ -19,7 +19,8 @@
 #                rode with it: stdout's writers, icons, the segue, the stream
 #                mark, the tray. Greps, two small C++ programs, a node test
 #     handlers   the omnuv:// link handlers under sh, then under pwsh
-#     tunnel     go test, and go vet of the Windows and macOS builds
+#     tunnel     go test, go vet of the Windows and macOS builds, and the
+#                machine-mode install script under pwsh
 #     terminal   cargo test of the marketplace CLI
 #
 # Stops at the first failure and names the step. Needs git, python3, g++,
@@ -1104,6 +1105,12 @@ go_run 'go test ./...'
 
 step "Vet the Windows and macOS builds"
 go_run 'GOOS=windows go vet ./... && GOOS=darwin go vet ./...'
+
+# What a Windows image runs to install the daemon in machine mode (W3): its
+# files, record and refusals in a scratch root. The ACL and the service are
+# Windows' alone, and the image build asserts them from its report.
+step "The machine-mode install script, under pwsh"
+pwsh_file tunnel/machine/install-machine_test.ps1
 fi
 
 if want terminal; then

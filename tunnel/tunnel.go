@@ -130,6 +130,14 @@ type tunnel struct {
 	portmap         *portmapObserver
 	mapperOn        bool
 	portmapLeftover string
+	// Machine mode (machine.go): declared by <base>/mode, fixed for the life
+	// of the process. The rest is the loop's: an administrator's hold, an
+	// identity or key the overlay refused, and the retry backoff.
+	machine         bool
+	machineHeld     bool
+	machineRefused  bool
+	machineFailures int
+	machineNextTry  time.Time
 }
 
 func (t *tunnel) setFailed(err error) {

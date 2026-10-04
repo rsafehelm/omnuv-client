@@ -28,6 +28,10 @@ import (
 //	resume-v1 <payload>    → ok | err <sentence> (exact verified membership)
 //	enrol-v1 <payload>     → ok | err <sentence> (confirmed revision replacement)
 //	stop-v1 <payload>      → ok | err <sentence> (matching membership + revision)
+//	machine-v1             → JSON: a machine's id, peer and join (machine mode only)
+//
+// In machine mode (machine.go) only `state` is anybody's, the rest an
+// administrator's, and nothing that would change the membership is accepted.
 //
 // The address and the name are this device's own, taken from the client's
 // status recorder rather than from the machine's interface list — see
@@ -82,6 +86,10 @@ func handle(t *tunnel, conn net.Conn) {
 // the difference between a protocol with a check and one with a comment saying
 // what it would do.
 func answerFor(t *tunnel, who caller, line string) string {
+	if t.machine {
+		// No owner, no pairing, no membership: machine.go.
+		return machineAnswer(t, who, line)
+	}
 	fields := strings.Fields(line)
 	if len(fields) == 0 {
 		return "err empty request"

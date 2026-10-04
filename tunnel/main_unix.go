@@ -78,10 +78,6 @@ func run(t *tunnel) error {
 		}
 		os.Exit(0)
 	}()
-	go func() {
-		if err := t.start("", ""); err != nil {
-			log.Printf("onv-tunnel: nothing to resume: %v", err)
-		}
-	}()
+	t.begin()
 	return serve(t)
 }
