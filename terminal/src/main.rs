@@ -26,8 +26,9 @@ struct Cli {
     /// first sign-in.
     #[arg(long, global = true)]
     core: Option<String>,
-    /// Which project to act on, by id or name; OMNUV_PROJECT if unset.
-    /// Without either, Core's default project, as before.
+    /// Which project to act on, by id; a name or slug only when exactly one
+    /// of your projects has it. OMNUV_PROJECT if unset. Without either,
+    /// Core's default project, as before.
     #[arg(long, global = true)]
     project: Option<String>,
     #[command(subcommand)]
@@ -45,16 +46,22 @@ enum Command {
     Machines,
     /// Launch a machine.
     Launch(Launch),
-    /// Print the command that opens a shell on a machine.
-    Ssh { name: String },
+    /// Print the command that opens a shell on a machine (its id, or a name
+    /// only one live machine has).
+    Ssh { machine: String },
     /// The address of a machine's browser console.
-    Console { name: String },
+    Console { machine: String },
     /// What happened to a machine, in order.
-    Events { name: Option<String> },
+    Events { machine: Option<String> },
     /// Requests waiting for capacity.
     Waiting,
-    /// Delete a machine.
-    Rm { name: String },
+    /// Delete a machine. Asks first, by its name, unless --yes.
+    Rm {
+        machine: String,
+        /// Delete without asking.
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(clap::Args)]
@@ -186,7 +193,7 @@ async fn get<T: for<'de> Deserialize<'de>>(s: &Session, path: &str) -> Result<T>
     Ok(res.json().await?)
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct Machine {
     id: String,
     name: String,
@@ -197,13 +204,20 @@ struct Machine {
     price_per_hour: String,
     #[serde(default)]
     stream_app: Option<String>,
+    /// Core's name for it by id (`<machine uuid>.<project uuid>.<domain>`),
+    /// when the site has one; unique to this machine for ever.
+    #[serde(default)]
+    private_host: Option<String>,
+    /// Core's `<name>-<project8>.internal`, the older form.
+    #[serde(default)]
+    private_name: Option<String>,
     #[serde(default)]
     gpu: Option<Gpu>,
     vcpus: i32,
     memory_mib: i64,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct Gpu {
     model: String,
     count: i64,
@@ -213,12 +227,105 @@ async fn machines(s: &Session) -> Result<Vec<Machine>> {
     get(s, "/v1/instances").await
 }
 
-async fn machine_named(s: &Session, name: &str) -> Result<Machine> {
-    machines(s)
-        .await?
-        .into_iter()
-        .find(|m| m.name == name)
-        .with_context(|| format!("no machine called {name}"))
+/// **By id, never by a name that is not unique** (the operator's rule, 3
+/// October 2026: assets are referred to by id). `rm <name>` deleted the first
+/// machine with that name, and a name is reused the moment its machine is
+/// deleted and made again. A whole id finds its machine; a name only when
+/// exactly one live machine has it, and otherwise the ids are listed so the
+/// person can choose one.
+fn pick_machine<'a>(list: &'a [Machine], key: &str) -> Result<&'a Machine> {
+    let key = key.trim();
+    if is_uuid(key) {
+        return list
+            .iter()
+            .find(|m| m.id.eq_ignore_ascii_case(key))
+            .with_context(|| format!("no machine of yours has the id {key}"));
+    }
+    let named: Vec<&Machine> = list.iter().filter(|m| m.name == key && m.status != "Deleting").collect();
+    match named.as_slice() {
+        [one] => Ok(one),
+        [] => bail!("no machine called {key}; `omnuv machines` lists them"),
+        many => bail!(
+            "{} machines are called {key}: {}. Name one by its id.",
+            many.len(),
+            many.iter().map(|m| m.id.as_str()).collect::<Vec<_>>().join(", ")
+        ),
+    }
+}
+
+/// A whole uuid, as Core writes ids: 8-4-4-4-12 hex digits.
+fn is_uuid(s: &str) -> bool {
+    let parts: Vec<&str> = s.split('-').collect();
+    parts.len() == 5
+        && parts.iter().zip([8, 4, 4, 4, 12]).all(|(p, n)| p.len() == n && p.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
+async fn machine(s: &Session, key: &str) -> Result<Machine> {
+    let list = machines(s).await?;
+    let id = pick_machine(&list, key)?.id.clone();
+    Ok(list.into_iter().find(|m| m.id == id).expect("picked from this list"))
+}
+
+/// Where a machine answers on its project's network: Core's names, never one
+/// built here. `<name>.internal` resolved to nothing (the label carries the
+/// project) and, being a name, to the wrong machine once one was made again.
+fn address(m: &Machine) -> Option<&str> {
+    m.private_host.as_deref().or(m.private_name.as_deref()).filter(|a| !a.is_empty())
+}
+
+#[derive(Deserialize)]
+struct Project {
+    id: String,
+    name: String,
+    #[serde(default)]
+    slug: String,
+}
+
+#[derive(Deserialize)]
+struct Me {
+    projects: Vec<Project>,
+}
+
+/// The project a person named, as its id: Core matches `?project=` by id or
+/// slug and, for a slug shared by two of the person's projects, picks one by
+/// an order of its own. So a name is resolved here, against the person's own
+/// projects, and only when exactly one has it.
+fn pick_project(projects: &[Project], want: &str) -> Result<String> {
+    let want = want.trim();
+    if is_uuid(want) {
+        return Ok(want.to_ascii_lowercase());
+    }
+    let hits: Vec<&Project> = projects.iter().filter(|p| p.name == want || p.slug == want).collect();
+    match hits.as_slice() {
+        [one] => Ok(one.id.clone()),
+        [] => bail!(
+            "no project called {want}; yours: {}",
+            projects.iter().map(|p| format!("{} ({})", p.name, p.id)).collect::<Vec<_>>().join(", ")
+        ),
+        many => bail!(
+            "{} projects are called {want}: {}. Name one by its id.",
+            many.len(),
+            many.iter().map(|p| p.id.as_str()).collect::<Vec<_>>().join(", ")
+        ),
+    }
+}
+
+/// The session, with a named project resolved to its id.
+async fn session(core: Option<String>, project: Option<String>) -> Result<Session> {
+    let mut s = load_session(core, None)?;
+    if let Some(want) = project.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+        s.project = Some(if is_uuid(want) {
+            want.to_ascii_lowercase()
+        } else {
+            pick_project(&get::<Me>(&s, "/v1/me").await?.projects, want)?
+        });
+    }
+    Ok(s)
+}
+
+/// Whether the answer to "type its name" confirms deleting `m`.
+fn confirmed(answer: &str, m: &Machine) -> bool {
+    answer.trim() == m.name
 }
 
 // ---------- signing in ----------
@@ -303,8 +410,9 @@ fn print_machines(list: &[Machine]) {
             m.price_per_hour,
             w = w
         );
-        if let Some(ip) = &m.private_ip {
-            println!("  {:w$}  {}.internal ({ip}){}", "", m.name, if m.stream_app.is_some() { "  streamable" } else { "" }, w = w);
+        println!("  {:w$}  {}", "", m.id, w = w);
+        if let (Some(ip), Some(at)) = (&m.private_ip, address(m)) {
+            println!("  {:w$}  {at} ({ip}){}", "", if m.stream_app.is_some() { "  streamable" } else { "" }, w = w);
         }
     }
 }
@@ -346,24 +454,26 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Command::Machines => {
-            let s = load_session(cli.core, project.clone())?;
+            let s = session(cli.core, project.clone()).await?;
             print_machines(&machines(&s).await?);
             Ok(())
         }
-        Command::Ssh { name } => {
-            let s = load_session(cli.core, project.clone())?;
-            let m = machine_named(&s, &name).await?;
-            if m.private_ip.is_none() {
-                bail!("{name} has no private address yet; it may still be starting");
-            }
+        Command::Ssh { machine: key } => {
+            let s = session(cli.core, project.clone()).await?;
+            let m = machine(&s, &key).await?;
+            let Some(at) = address(&m).filter(|_| m.private_ip.is_some()) else {
+                bail!("{} has no private address yet; it may still be starting", m.name);
+            };
             // Printed rather than executed: this way it composes, and nobody is
-            // surprised by a program that suddenly opens a shell.
-            println!("ssh {}@{}.internal", m.default_user, m.name);
+            // surprised by a program that suddenly opens a shell. Keyed by the
+            // machine's id, so a machine made again under an old name is never
+            // trusted with the old one's host key.
+            println!("ssh -o HostKeyAlias=omnuv-{} {}@{at}", m.id, m.default_user);
             Ok(())
         }
-        Command::Console { name } => {
-            let s = load_session(cli.core, project.clone())?;
-            let m = machine_named(&s, &name).await?;
+        Command::Console { machine: key } => {
+            let s = session(cli.core, project.clone()).await?;
+            let m = machine(&s, &key).await?;
             // api.<domain> -> console.<domain> in a deployment; the port swap is
             // the lab's own shape, where both run on one address.
             let console = s
@@ -374,19 +484,19 @@ async fn main() -> Result<()> {
             println!("  The console runs in a browser and works even when the machine's network does not.");
             Ok(())
         }
-        Command::Events { name } => {
-            let s = load_session(cli.core, project.clone())?;
-            let path = match &name {
-                Some(n) => format!("/v1/events?limit=25&resource_id={}", machine_named(&s, n).await?.id),
+        Command::Events { machine: key } => {
+            let s = session(cli.core, project.clone()).await?;
+            let path = match &key {
+                Some(k) => format!("/v1/events?limit=25&resource_id={}", machine(&s, k).await?.id),
                 None => "/v1/events?limit=25".to_string(),
             };
             for e in get::<Vec<Event>>(&s, &path).await? {
-                println!("  {}  {}", &e.at[..19].replace('T', " "), e.summary);
+                println!("  {}  {}", e.at[..19].replace('T', " "), e.summary);
             }
             Ok(())
         }
         Command::Waiting => {
-            let s = load_session(cli.core, project.clone())?;
+            let s = session(cli.core, project.clone()).await?;
             let rows: Vec<Parked> = get(&s, "/v1/parked").await?;
             let waiting: Vec<_> = rows.into_iter().filter(|r| r.status == "WAITING").collect();
             if waiting.is_empty() {
@@ -397,14 +507,14 @@ async fn main() -> Result<()> {
                     "  waiting for {}\n    tried {} time(s), stops waiting {}",
                     r.waiting_on,
                     r.attempts,
-                    &r.expires_at[..16].replace('T', " ")
+                    r.expires_at[..16].replace('T', " ")
                 );
             }
             println!("  Nothing is reserved or charged while a request waits.");
             Ok(())
         }
         Command::Launch(l) => {
-            let s = load_session(cli.core, project.clone())?;
+            let s = session(cli.core, project.clone()).await?;
             let mut body = serde_json::json!({
                 "name": l.name, "region": l.region, "vcpus": l.vcpus,
                 "memory_gb": l.memory_gb, "disk_gb": l.disk_gb, "wait": l.wait,
@@ -434,9 +544,18 @@ async fn main() -> Result<()> {
             }
             Ok(())
         }
-        Command::Rm { name } => {
-            let s = load_session(cli.core, project.clone())?;
-            let m = machine_named(&s, &name).await?;
+        Command::Rm { machine: key, yes } => {
+            let s = session(cli.core, project.clone()).await?;
+            let m = machine(&s, &key).await?;
+            if !yes {
+                print!("  Delete {} ({})? It cannot be undone. Type its name to confirm: ", m.name, m.id);
+                std::io::stdout().flush().ok();
+                let mut answer = String::new();
+                std::io::stdin().read_line(&mut answer)?;
+                if !confirmed(&answer, &m) {
+                    bail!("not deleted");
+                }
+            }
             let res = reqwest::Client::new()
                 .delete(url(&s, &format!("/v1/instances/{}", m.id))?)
                 .bearer_auth(&s.token)
@@ -445,7 +564,7 @@ async fn main() -> Result<()> {
             if !res.status().is_success() {
                 bail!("{}", res.status());
             }
-            println!("  {name} is being deleted. Its allocation is released when it is gone.");
+            println!("  {} ({}) is being deleted. Its allocation is released when it is gone.", m.name, m.id);
             Ok(())
         }
     }
@@ -501,6 +620,62 @@ mod tests {
             "verification_uri":"https://console.omnuv.com/device","interval":5,"expires_in":600}"#)
             .expect("the device-code start as Core writes it");
         assert_eq!((pending.user_code.as_str(), pending.interval), ("ABCD-EFGH", 5));
+    }
+
+    fn mach(id: &str, name: &str, status: &str) -> Machine {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "name": name, "region": "eu-west", "status": status, "default_user": "ubuntu",
+            "private_ip": null, "price_per_hour": "0", "vcpus": 2, "memory_mib": 4096
+        })).unwrap()
+    }
+    const A: &str = "6f1c2d4e-0000-4000-8000-00000000000a";
+    const B: &str = "6f1c2d4e-0000-4000-8000-00000000000b";
+
+    /// **A name finds a machine only when it is the only live one with it**
+    /// (the audit of 3 October 2026): `rm gaming` deleted the first machine
+    /// called gaming. An id always finds its own; two live machines sharing a
+    /// name are refused with both ids; one being deleted does not count.
+    #[test]
+    fn a_machine_is_found_by_id_and_by_a_name_only_when_unique() {
+        let list = vec![mach(A, "gaming", "Running"), mach(B, "gaming", "Running")];
+        assert_eq!(pick_machine(&list, B).unwrap().id, B, "an id finds its own machine");
+        assert_eq!(pick_machine(&list, &B.to_uppercase()).unwrap().id, B);
+        let err = pick_machine(&list, "gaming").unwrap_err().to_string();
+        assert!(err.contains(A) && err.contains(B), "the ambiguity names both ids: {err}");
+        let list = vec![mach(A, "gaming", "Deleting"), mach(B, "gaming", "Running")];
+        assert_eq!(pick_machine(&list, "gaming").unwrap().id, B, "one being deleted is not a namesake");
+        assert!(pick_machine(&list, "nope").is_err());
+        assert!(pick_machine(&list, "6f1c2d4e-0000-4000-8000-0000000000ff").is_err(), "an unknown id is not a name");
+    }
+
+    #[test]
+    fn a_project_named_is_one_of_yours_by_id() {
+        let p = |id: &str, name: &str, slug: &str| Project { id: id.into(), name: name.into(), slug: slug.into() };
+        let mine = vec![p(A, "research", "research"), p(B, "Default", "default")];
+        assert_eq!(pick_project(&mine, "default").unwrap(), B, "by slug");
+        assert_eq!(pick_project(&mine, "research").unwrap(), A, "by name");
+        assert_eq!(pick_project(&mine, &A.to_uppercase()).unwrap(), A, "an id passes as itself");
+        assert!(pick_project(&mine, "other").is_err());
+        let twins = vec![p(A, "lab", "lab"), p(B, "lab", "lab-2")];
+        let err = pick_project(&twins, "lab").unwrap_err().to_string();
+        assert!(err.contains(A) && err.contains(B), "{err}");
+    }
+
+    #[test]
+    fn a_machine_answers_at_cores_name_never_one_built_here() {
+        let mut m = mach(A, "gaming", "Running");
+        assert_eq!(address(&m), None);
+        m.private_name = Some("gaming-6f1c2d4e.internal".into());
+        assert_eq!(address(&m), Some("gaming-6f1c2d4e.internal"));
+        m.private_host = Some(format!("{A}.{B}.cloud.omnuv.com"));
+        assert_eq!(address(&m), Some(format!("{A}.{B}.cloud.omnuv.com").as_str()), "the name by id first");
+    }
+
+    #[test]
+    fn a_delete_is_confirmed_only_by_the_machines_own_name() {
+        let m = mach(A, "gaming", "Running");
+        assert!(confirmed("gaming\n", &m));
+        assert!(!confirmed("y\n", &m) && !confirmed("\n", &m) && !confirmed("Gaming", &m));
     }
 
     #[test]
