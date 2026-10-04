@@ -110,6 +110,10 @@ func hashText(value string) string {
 // The directory of the identity in use: the active deployment's own, or the
 // base for an identity no membership names. Caller holds t.mu or operations.
 func (t *tunnel) directory() string {
+	if t.machine {
+		// One identity, the machine's, never a deployment's (machine.go).
+		return filepath.Join(t.base(), machineDirName)
+	}
 	t.loadActive()
 	return t.dirFor(t.active)
 }

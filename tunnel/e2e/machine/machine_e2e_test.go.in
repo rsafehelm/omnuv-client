@@ -1,0 +1,384 @@
+package main
+
+// Machine mode against a real NetBird: the management and signal servers of
+// v0.78.1, in this process, built the way NetBird's own client/embed test
+// builds them, and the tunnel's real start path (netbird.New, NoUserspace: a
+// WireGuard interface in this container). Laid into the tunnel's package by
+// run.sh, so it is never part of `go test ./...`.
+//
+// Every assertion prints a PROOF line when it holds.
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/sirupsen/logrus"
+	"go.opentelemetry.io/otel"
+	"go.uber.org/mock/gomock"
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+	"google.golang.org/grpc"
+
+	netbird "github.com/netbirdio/netbird/client/embed"
+	"github.com/netbirdio/netbird/management/internals/controllers/network_map/controller"
+	"github.com/netbirdio/netbird/management/internals/controllers/network_map/update_channel"
+	"github.com/netbirdio/netbird/management/internals/modules/peers"
+	"github.com/netbirdio/netbird/management/internals/modules/peers/ephemeral/manager"
+	"github.com/netbirdio/netbird/management/internals/server/config"
+	nbgrpc "github.com/netbirdio/netbird/management/internals/shared/grpc"
+	mgmt "github.com/netbirdio/netbird/management/server"
+	"github.com/netbirdio/netbird/management/server/activity"
+	nbcache "github.com/netbirdio/netbird/management/server/cache"
+	"github.com/netbirdio/netbird/management/server/groups"
+	"github.com/netbirdio/netbird/management/server/integrations/integrated_validator/validator"
+	"github.com/netbirdio/netbird/management/server/integrations/port_forwarding"
+	"github.com/netbirdio/netbird/management/server/job"
+	"github.com/netbirdio/netbird/management/server/permissions"
+	"github.com/netbirdio/netbird/management/server/settings"
+	"github.com/netbirdio/netbird/management/server/store"
+	"github.com/netbirdio/netbird/management/server/telemetry"
+	"github.com/netbirdio/netbird/management/server/types"
+	mgmtProto "github.com/netbirdio/netbird/shared/management/proto"
+	signalProto "github.com/netbirdio/netbird/shared/signal/proto"
+	signalServer "github.com/netbirdio/netbird/signal/server"
+	"github.com/netbirdio/netbird/util"
+)
+
+const (
+	e2eAccount = "bf1c8084-ba50-4ce7-9439-34653001fc3b"
+	e2eAdmin   = "edafee4e-63fb-11ec-90d6-0242ac120003"
+	e2eMachine = "3c9e1f4a-7b2d-4e6f-8a1b-5c4d3e2f1a0b"
+	e2eOther   = "9d8c7b6a-5f4e-4d3c-8b2a-1f0e9d8c7b6a"
+)
+
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	os.Stderr.Write(p)
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func proof(t *testing.T, format string, args ...any) {
+	t.Helper()
+	t.Logf("PROOF "+format, args...)
+}
+
+func startE2ESignal(t *testing.T) string {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := grpc.NewServer()
+	srv, err := signalServer.NewServer(context.Background(), otel.Meter(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	signalProto.RegisterSignalExchangeServer(s, srv)
+	go func() { _ = s.Serve(lis) }()
+	t.Cleanup(s.Stop)
+	return lis.Addr().String()
+}
+
+func startE2EManagement(t *testing.T, signalAddr, storeSQL string) (string, *mgmt.DefaultAccountManager, store.Store) {
+	cfg := &config.Config{
+		Stuns:      []*config.Host{},
+		TURNConfig: &config.TURNConfig{},
+		Relay: &config.Relay{
+			Addresses:      []string{"127.0.0.1:1234"},
+			CredentialsTTL: util.Duration{Duration: time.Hour},
+			Secret:         "222222222222222222",
+		},
+		Signal:  &config.Host{Proto: "http", URI: signalAddr},
+		Datadir: t.TempDir(),
+	}
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := grpc.NewServer()
+	testStore, cleanUp, err := store.NewTestStoreFromSQL(context.Background(), storeSQL, cfg.Datadir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(cleanUp)
+	eventStore := &activity.InMemoryEventStore{}
+	permissionsManager := permissions.NewManager(testStore)
+	peersManager := peers.NewManager(testStore, permissionsManager)
+	jobManager := job.NewJobManager(nil, testStore, peersManager)
+	cacheStore, err := nbcache.NewStore(context.Background(), 100*time.Millisecond, 300*time.Millisecond, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	iv, err := validator.NewIntegratedValidator(context.Background(), peersManager, nil, eventStore, cacheStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metrics, err := telemetry.NewDefaultAppMetrics(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctrl := gomock.NewController(t)
+	t.Cleanup(ctrl.Finish)
+	settingsMock := settings.NewMockManager(ctrl)
+	settingsMock.EXPECT().GetSettings(gomock.Any(), gomock.Any(), gomock.Any()).Return(&types.Settings{}, nil).AnyTimes()
+	settingsMock.EXPECT().GetExtraSettings(gomock.Any(), gomock.Any()).Return(&types.ExtraSettings{}, nil).AnyTimes()
+	updateManager := update_channel.NewPeersUpdateManager(metrics)
+	requestBuffer := mgmt.NewAccountRequestBuffer(context.Background(), testStore)
+	networkMap := controller.NewController(context.Background(), testStore, metrics, updateManager, requestBuffer, mgmt.MockIntegratedValidator{}, settingsMock, "netbird.selfhosted", port_forwarding.NewControllerMock(), manager.NewEphemeralManager(testStore, peersManager), cfg, nil)
+	accounts, err := mgmt.BuildManager(context.Background(), cfg, testStore, networkMap, jobManager, nil, "", eventStore, nil, false, iv, metrics, port_forwarding.NewControllerMock(), settingsMock, permissionsManager, false, cacheStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secrets, err := nbgrpc.NewTimeBasedAuthSecretsManager(updateManager, cfg.TURNConfig, cfg.Relay, settingsMock, groups.NewManagerMock())
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := nbgrpc.NewServer(cfg, accounts, settingsMock, jobManager, secrets, nil, nil, &mgmt.MockIntegratedValidator{}, networkMap, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgmtProto.RegisterManagementServiceServer(s, server)
+	go func() { _ = s.Serve(lis) }()
+	t.Cleanup(s.Stop)
+	return lis.Addr().String(), accounts, testStore
+}
+
+// A one-time key, as Core mints one for a machine.
+func oneOffKey(t *testing.T, accounts *mgmt.DefaultAccountManager, name string) string {
+	key, err := accounts.CreateSetupKey(context.Background(), e2eAccount, name, types.SetupKeyOneOff, time.Hour, nil, 1, e2eAdmin, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return key.Key
+}
+
+func overlayPeers(t *testing.T, accounts *mgmt.DefaultAccountManager) map[string]string {
+	list, err := accounts.GetPeers(context.Background(), e2eAccount, e2eAdmin, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]string{}
+	for _, p := range list {
+		out[p.Key] = p.Name
+	}
+	return out
+}
+
+func publicOf(t *testing.T, dir string) string {
+	private, err := readIdentity(filepath.Join(dir, "config.json"))
+	if err != nil || private == "" {
+		t.Fatalf("identity present %t: %v", private != "", err)
+	}
+	key, err := wgtypes.ParseKey(private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return key.PublicKey().String()
+}
+
+func writeE2EJoin(t *testing.T, tn *tunnel, machine, url, key string) {
+	raw, _ := json.Marshal(map[string]any{"version": 1, "machine_id": machine, "management_url": url, "setup_key": key})
+	if err := os.WriteFile(tn.joinPath(), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Steps the loop as the service would, until the state is one of want or
+// the ceiling passes. Ceiling: NetBird's Login retries a refused key for
+// two minutes (client/internal/auth/auth.go, withRetry, MaxElapsedTime),
+// plus its last interval and the start itself.
+func driveUntil(t *testing.T, tn *tunnel, want ...int) (int, string) {
+	deadline := time.Now().Add(200 * time.Second)
+	stepped := false
+	for time.Now().Before(deadline) {
+		state, why := tn.snapshot()
+		for _, w := range want {
+			if stepped && state == w {
+				return state, why
+			}
+		}
+		tn.machineStep(time.Now())
+		stepped = true
+		time.Sleep(machinePoll)
+	}
+	state, why := tn.snapshot()
+	t.Fatalf("state %d after the ceiling: %s", state, why)
+	return state, why
+}
+
+func TestOnvMachineModeAgainstNetBird(t *testing.T) {
+	logs := &lockedBuffer{}
+	log.SetOutput(logs)
+	logrus.SetOutput(logs)
+	logrus.SetLevel(logrus.DebugLevel) // the noisiest the library gets: a key that leaks anywhere leaks here
+	storeSQL := os.Getenv("ONV_E2E_STORE_SQL")
+
+	signalAddr := startE2ESignal(t)
+	mgmtAddr, accounts, testStore := startE2EManagement(t, signalAddr, storeSQL)
+	mgmtURL := "http://" + mgmtAddr
+	all, err := testStore.GetGroupByName(context.Background(), store.LockingStrengthNone, e2eAccount, "All")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := accounts.SavePolicy(context.Background(), e2eAccount, e2eAdmin, &types.Policy{
+		Name: "all", Enabled: true,
+		Rules: []*types.PolicyRule{{Name: "all", Enabled: true, Action: types.PolicyTrafficActionAccept,
+			Sources: []string{all.ID}, Destinations: []string{all.ID}, Bidirectional: true, Protocol: types.PolicyRuleProtocolALL}},
+	}, true); err != nil {
+		t.Fatal(err)
+	}
+
+	base := t.TempDir()
+	if err := os.WriteFile(filepath.Join(base, modeFileName), []byte("machine\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	machine, err := readMode(base)
+	if err != nil || !machine {
+		t.Fatalf("mode: %v %v", machine, err)
+	}
+	tn := &tunnel{dir: base, machine: true}
+	setNATMapper(false)
+
+	// 1. The first boot: a one-time key on the drive, spent once.
+	key := oneOffKey(t, accounts, "machine-"+e2eMachine)
+	writeE2EJoin(t, tn, e2eMachine, mgmtURL, key)
+	if state, why := driveUntil(t, tn, stateRunning, stateFailed); state != stateRunning {
+		t.Fatalf("join: %s", why)
+	}
+	proof(t, "join: the machine is running on the overlay from its join file")
+	if _, err := os.Stat(tn.joinPath()); !os.IsNotExist(err) {
+		t.Fatalf("the join file is still on disk: %v", err)
+	}
+	proof(t, "join: the join file is gone once its key was spent")
+	machineDir := filepath.Join(base, machineDirName)
+	public := publicOf(t, machineDir)
+	peersNow := overlayPeers(t, accounts)
+	if len(peersNow) != 1 || peersNow[public] != "onv-m-"+e2eMachine {
+		t.Fatalf("overlay peers after the join: %v", peersNow)
+	}
+	proof(t, "join: the overlay holds exactly one peer, key %s…, named onv-m-%s", public[:8], e2eMachine)
+	if os.Getenv(natMapperEnv) != "true" {
+		t.Fatalf("%s=%q", natMapperEnv, os.Getenv(natMapperEnv))
+	}
+	proof(t, "join: %s=true, so no router was asked", natMapperEnv)
+	if _, err := os.Stat(filepath.Join(base, "owner")); !os.IsNotExist(err) {
+		t.Fatal("a machine got an owner")
+	}
+	admin := caller{id: "0", admin: true}
+	var view machineView
+	if err := json.Unmarshal([]byte(answerFor(tn, admin, "machine-v1")), &view); err != nil || view.MachineID != e2eMachine || view.Address == "" {
+		t.Fatalf("machine-v1: %v %+v", err, view)
+	}
+	proof(t, "machine-v1: machine %s, peer %s, address %s, state %d", view.MachineID, view.PeerName, view.Address, view.State)
+
+	// 2. A restart: the same identity, no key, no second peer.
+	if err := tn.stop(); err != nil {
+		t.Fatal(err)
+	}
+	tn = &tunnel{dir: base, machine: true}
+	if state, why := driveUntil(t, tn, stateRunning, stateFailed); state != stateRunning {
+		t.Fatalf("resume: %s", why)
+	}
+	if after := overlayPeers(t, accounts); len(after) != 1 || after[public] == "" {
+		t.Fatalf("overlay peers after a restart: %v", after)
+	}
+	proof(t, "restart: resumed with its own identity; still one peer, the same key")
+
+	// 3. The same key sent again: spent, removed, nothing offered.
+	writeE2EJoin(t, tn, e2eMachine, mgmtURL, key)
+	if got := tn.machineStep(time.Now()); got != "" {
+		t.Fatalf("a spent key started %q", got)
+	}
+	if _, err := os.Stat(tn.joinPath()); !os.IsNotExist(err) {
+		t.Fatal("a spent key was left on disk")
+	}
+	proof(t, "resend: the spent key is recognised by its hash and removed unoffered")
+
+	// 4. The spent key on another machine: the overlay refuses it, and it goes.
+	other := &tunnel{dir: t.TempDir(), machine: true}
+	writeE2EJoin(t, other, e2eOther, mgmtURL, key)
+	state, why := driveUntil(t, other, stateRunning, stateFailed)
+	if state != stateFailed || !strings.HasPrefix(why, "unauthorized:") {
+		t.Fatalf("a spent key on another machine: state %d, %s", state, why)
+	}
+	if _, err := os.Stat(other.joinPath()); !os.IsNotExist(err) {
+		t.Fatal("a refused key was left on disk")
+	}
+	if after := overlayPeers(t, accounts); len(after) != 1 {
+		t.Fatalf("a spent key made a peer: %v", after)
+	}
+	proof(t, "refused: a spent key on another machine is refused (%s), removed, and makes no peer", strings.SplitN(why, ":", 3)[0])
+
+	// 5. Another peer on the network (a buyer's device, userspace): peers-v1
+	// on the machine lists it by its overlay address.
+	device, err := netbird.New(netbird.Options{DeviceName: "onvt-device", SetupKey: oneOffKey(t, accounts, "device"), ManagementURL: mgmtURL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	if err := device.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = device.Stop(context.Background()) }()
+	status, err := device.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	deviceIP, _, _ := strings.Cut(status.LocalPeerState.IP, "/")
+	deadline := time.Now().Add(60 * time.Second)
+	var seen peersView
+	for time.Now().Before(deadline) {
+		raw := answerFor(tn, admin, "peers-v1 "+deviceIP)
+		if err := json.Unmarshal([]byte(raw), &seen); err == nil && len(seen.Peers) == 1 && seen.Peers[0].Status == "Connected" {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+	if len(seen.Peers) != 1 {
+		t.Fatalf("peers-v1 %s: %+v", deviceIP, seen)
+	}
+	p := seen.Peers[0]
+	proof(t, "peers-v1: the device %s, status %s, relayed %t, ice %s/%s", p.IP, p.Status, p.Relayed, p.LocalIceType, p.RemoteIceType)
+
+	// 6. Nothing said the key: not the daemon's log, not NetBird's at debug,
+	// not a file.
+	if strings.Contains(logs.String(), key) {
+		t.Fatal("the setup key reached the log")
+	}
+	proof(t, "secrecy: %d bytes of log, the key in none of them", len(logs.String()))
+	for _, dir := range []string{base, other.dir} {
+		_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+			if err == nil && !info.IsDir() {
+				raw, _ := os.ReadFile(path)
+				if bytes.Contains(raw, []byte(key)) {
+					t.Errorf("the key is in %s", path)
+				}
+			}
+			return nil
+		})
+	}
+	proof(t, "secrecy: no file under either machine's directory holds the key")
+	_ = tn.stop()
+	fmt.Fprintln(os.Stderr, "e2e: done")
+}

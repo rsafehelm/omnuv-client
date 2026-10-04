@@ -72,6 +72,18 @@ func main() {
 		log.SetOutput(os.Stderr)
 	}
 	t := &tunnel{state: stateStopped}
+	// A device, or a marketplace machine (machine.go): declared by the image,
+	// read once. A mode the daemon cannot read is a refusal to start, never
+	// a guess at which product this is.
+	machine, err := readMode(configDir())
+	if err != nil {
+		log.Printf("onv-tunnel: %v", err)
+		os.Exit(1)
+	}
+	t.machine = machine
+	if machine {
+		log.Printf("onv-tunnel: machine mode, by %s", filepath.Join(configDir(), modeFileName))
+	}
 	// NetBird's port mapper is read from its own log (portmap_observe.go),
 	// and is off until the owner turns it on (portmap.go). Set before anything
 	// can start an engine, so not even the first start runs it unasked.
