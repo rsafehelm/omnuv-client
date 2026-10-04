@@ -9,12 +9,23 @@
 <?define VCREDIST_ARM64_URL = "https://download.visualstudio.microsoft.com/download/pr/ddfd326a-05c1-4646-9cf7-9fbc5206a9e8/B70EF586669A620A0A30A1156969C05C6A3831DC8F8BC992DA75779D2A92F944/VC_redist.arm64.exe" ?>
 <?define VCREDIST_ARM64_UPGRADE_CODE = "DC9BAE42-810B-423A-9E25-E4073F1C7B00" ?>
 
+<!--
+  **Connect's own bundle identity, since 0.2.3.** Until 0.2.2 the bundle's
+  version was upstream's 6.1.0 under the upgrade code below as OLD, and Burn
+  refuses a lower version of the same bundle (exit 1638), so a machine with
+  that one installed could not take any Connect version. A new upgrade code
+  makes it a different bundle, and onv-replace-old removes the old one after
+  the MSI has upgraded its MSI away (ReplaceOld.cs says why in that order).
+-->
+<?define BundleUpgradeCode = "87dda41f-c12d-478e-8039-20f4fe11cb41" ?>
+<?define OldBundleUpgradeCode = "2e478f7b-3c4f-4145-90e3-536bedb5812d" ?>
+
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
 
   <Bundle Name="Omnuv Client"
           Version="!(bind.PackageVersion.Omnuv_x64)"
           Manufacturer="Omnuv"
-          UpgradeCode="2e478f7b-3c4f-4145-90e3-536bedb5812d"
+          UpgradeCode="$(var.BundleUpgradeCode)"
           HelpUrl="https://omnuv.com"
           UpdateUrl="https://omnuv.com"
           DisableModify="yes"
@@ -26,6 +37,7 @@
          nothing: see the note on the chain below. -->
     <bal:Condition Message="Omnuv Client does not support ARM64 Windows yet." Condition="NativeMachine &lt;&gt; 43620" />
 
+    <Variable Name="OnvReplaceOldPresent" Type="numeric" Value="0" />
     <Variable Name="InstallFolder" Type="formatted" Value="[ProgramFiles6432Folder]Omnuv" />
 
     <!-- Define "Add desktop shortcut" -checkbox's state by defining a variable
@@ -97,6 +109,20 @@
         <MsiProperty Name="INSTALLFOLDER" Value="[InstallFolder]" />
         <MsiProperty Name="ADDDESKTOPSHORTCUT" Value="[AddDesktopShortcutCheckbox]" />
       </MsiPackage>
+
+      <!-- Never detected as present, so every install runs it; it finds
+           nothing after the first. Permanent, so uninstalling this bundle
+           leaves it alone. Vital: an old bundle left registered is the second
+           entry in installed programs this exists to prevent. -->
+      <ExePackage Id="OnvReplaceOld"
+                  Cache="remove"
+                  PerMachine="yes"
+                  Permanent="yes"
+                  Vital="yes"
+                  DetectCondition="OnvReplaceOldPresent"
+                  InstallArguments="$(var.OldBundleUpgradeCode)">
+        <ExePackagePayload Name="onv-replace-old.exe" Compressed="yes" SourceFile="$(var.ReplaceOldExe)" />
+      </ExePackage>
     </Chain>
 
   </Bundle>

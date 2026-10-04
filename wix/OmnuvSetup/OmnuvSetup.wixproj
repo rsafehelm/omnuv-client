@@ -23,9 +23,20 @@
     <RedistFolder Condition=" '$(REDIST_FOLDER)' != '' ">$(REDIST_FOLDER)</RedistFolder>
     <RedistFolder Condition=" '$(RedistFolder)' == '' ">$(MSBuildThisFileDirectory)..\..\build\redist</RedistFolder>
   </PropertyGroup>
+  <!--
+    **onv-replace-old.exe** (ReplaceOld.cs): removes a bundle registered under
+    the upgrade code used until 0.2.2, chained after the MSI. Built here by the
+    .NET Framework's own compiler, which every Windows 10 and later carries,
+    so the bundle build needs nothing installed for it.
+  -->
   <PropertyGroup>
-    <DefineConstants>RedistDir=$(RedistFolder)</DefineConstants>
+    <ReplaceOldExe>$(IntermediateOutputPath)onv-replace-old.exe</ReplaceOldExe>
+    <DefineConstants>RedistDir=$(RedistFolder);ReplaceOldExe=$(ReplaceOldExe)</DefineConstants>
   </PropertyGroup>
+  <Target Name="BuildReplaceOld" BeforeTargets="BeforeBuild;CoreCompile">
+    <MakeDir Directories="$(IntermediateOutputPath)" />
+    <Exec Command="&quot;$(WINDIR)\Microsoft.NET\Framework64\v4.0.30319\csc.exe&quot; /nologo /target:exe /platform:anycpu /optimize+ /out:&quot;$(ReplaceOldExe)&quot; &quot;$(MSBuildThisFileDirectory)ReplaceOld.cs&quot;" />
+  </Target>
   <PropertyGroup Condition="$(SIGN)!=''">
     <SignOutput>true</SignOutput>
   </PropertyGroup>
