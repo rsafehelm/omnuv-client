@@ -467,6 +467,54 @@ int MachineModel::webPortAt(int row) const
     return (row >= 0 && row < m_machines.count()) ? m_machines.at(row).webPort : 0;
 }
 
+bool MachineModel::isInstanceId(const QString& s)
+{
+    static const QRegularExpression uuid(
+        QStringLiteral("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"));
+    return uuid.match(s.trimmed()).hasMatch();
+}
+
+QList<int> MachineModel::rowsFor(const QString& target) const
+{
+    const QString t = target.trimmed();
+    QList<int> rows;
+    if (t.isEmpty()) {
+        return rows;
+    }
+    if (isInstanceId(t)) {
+        for (int i = 0; i < m_machines.count(); ++i) {
+            if (m_machines.at(i).id.compare(t, Qt::CaseInsensitive) == 0) {
+                return {i};
+            }
+        }
+        return rows;
+    }
+    for (int i = 0; i < m_machines.count(); ++i) {
+        if (!m_machines.at(i).host.isEmpty() && m_machines.at(i).host.compare(t, Qt::CaseInsensitive) == 0) {
+            return {i};
+        }
+    }
+    // Core's older name, `<name>-<project8>.internal`: shared by a machine
+    // being deleted and the one made again under its name, so live rows only.
+    for (int i = 0; i < m_machines.count(); ++i) {
+        if (!m_machines.at(i).shortHost.isEmpty() && m_machines.at(i).shortHost.compare(t, Qt::CaseInsensitive) == 0
+            && m_machines.at(i).status != QLatin1String("Deleting")) {
+            rows.append(i);
+        }
+    }
+    if (!rows.isEmpty()) {
+        return rows;
+    }
+    const QString bare = t.section(QLatin1Char('.'), 0, 0);
+    for (int i = 0; i < m_machines.count(); ++i) {
+        if (m_machines.at(i).name.compare(bare, Qt::CaseInsensitive) == 0
+            && m_machines.at(i).status != QLatin1String("Deleting")) {
+            rows.append(i);
+        }
+    }
+    return rows;
+}
+
 QString MachineModel::hostAt(int row) const
 {
     return (row >= 0 && row < m_machines.count()) ? m_machines.at(row).host : QString();

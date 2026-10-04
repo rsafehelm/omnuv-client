@@ -256,6 +256,17 @@ public:
     // Whether Core's word means the machine is usable now: Running or Ready.
     static bool usable(const QString& word);
 
+    // **Which rows `target` names, by id first** (the assets-by-id audit, 3
+    // October 2026). A whole instance id names its row; a host equal to a
+    // row's host (Core's name by id, any case) names that row; Core's older
+    // private name names the live rows that carry it; otherwise a bare name
+    // (the label before the first dot) names every live row with that name,
+    // a machine being deleted excluded. The caller decides what more
+    // than one means: never "the first".
+    QList<int> rowsFor(const QString& target) const;
+    // A whole uuid, as Core writes an instance's id.
+    static bool isInstanceId(const QString& s);
+
     Q_INVOKABLE QString nameAt(int row) const;
     Q_INVOKABLE QString hostAt(int row) const;
     Q_INVOKABLE QString userAt(int row) const;

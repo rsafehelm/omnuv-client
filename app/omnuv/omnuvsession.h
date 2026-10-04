@@ -123,6 +123,9 @@ public:
     static QString projectSettingKey(const QString& coreUrl);
     // Whether a machine's name and user may be handed to ssh: the link
     // handlers' own rules, a DNS name and a login name. Pure, for tests.
+    // ssh's host key alias for the machine at `host`: `-oHostKeyAlias=omnuv-
+    // <machine id>`, or "" when the list holds no machine there (then no ssh).
+    static QString hostKeyAlias(const MachineModel* machines, const QString& host);
     static bool sshTargetIsSafe(const QString& host, const QString& user);
     explicit OmnuvSession(QObject* parent = nullptr);
 

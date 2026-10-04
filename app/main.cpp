@@ -1089,6 +1089,14 @@ int main(int argc, char *argv[])
                 streamParser.parse(app.arguments(), preferences);
                 host    = streamParser.getHost();
                 appName = streamParser.getAppName();
+                // Omnuv: a host naming one of this account's instances becomes
+                // that instance's own address (by id), never upstream's match
+                // of a saved host by name; several are refused with their ids.
+                QString why;
+                if (!OmnuvLinkCli::resolveLegacyHost(&host, &why)) {
+                    fprintf(stderr, "%s\n", qPrintable(why));
+                    return 1;
+                }
             }
             auto launcher   = new CliStartStream::Launcher(host, appName, preferences, &app);
             engine.rootContext()->setContextProperty("launcher", launcher);

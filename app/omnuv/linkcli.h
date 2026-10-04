@@ -17,6 +17,7 @@
 #include <QUrl>
 
 class QObject;
+class OmnuvSession;
 
 namespace OmnuvLinkCli
 {
@@ -47,5 +48,15 @@ void startOpen(const QStringList& args, QObject* parent);
 // instance answers and what it streams. Blocking, bounded; false with `why`
 // when it cannot say, and then nothing is drawn.
 bool resolveStream(const QStringList& args, QString* host, QString* app, QString* why);
+
+// The old `stream <host>` form: a host naming one of this account's
+// instances becomes that instance's own address; several are refused with
+// their ids; a host that is not ours is left as it was.
+bool resolveLegacyHost(QString* host, QString* why);
+
+// The one instance `target` names (an id, a host, or a bare live name only
+// when unique across the account's projects), with its address and project.
+bool locateMachine(OmnuvSession* session, const QString& target, QString* id, QString* host,
+                   QString* projectId, QString* why);
 
 } // namespace OmnuvLinkCli

@@ -33,51 +33,84 @@ const int kDeadlineMs = 30 * 1000;
 struct Found
 {
     bool ok = false;
-    QString name, host, app, project;
+    QString id, name, host, app, project, projectId;
     int webPort = 0;
 };
 
-// Looks for `id` in each of the account's projects in turn, by the session's
-// own reads, and calls `done` once: with the instance, or with nothing.
-void find(OmnuvSession* session, const QString& id, std::function<void(const Found&)> done)
+// **Every machine `target` names, in each of the account's projects in
+// turn** (the assets-by-id audit, 3 October 2026), by the session's own
+// reads: `MachineModel::rowsFor`, so an id, then a host, then a bare live
+// name. A whole id stops at its machine; anything else visits every project,
+// so a name shared across projects is seen as shared. Calls `done` once.
+void scan(OmnuvSession* session, const QString& target, std::function<void(const QList<Found>&)> done)
 {
+    const bool byId = MachineModel::isInstanceId(target);
     auto tried = std::make_shared<QSet<QString>>();
+    auto hits = std::make_shared<QList<Found>>();
     auto over = std::make_shared<bool>(false);
-    auto finish = [over, done](const Found& f) {
+    auto finish = [over, done, hits]() {
         if (*over) return;
         *over = true;
-        done(f);
+        done(*hits);
     };
     auto look = std::make_shared<std::function<void()>>();
-    *look = [session, id, tried, finish, over]() {
+    *look = [session, target, byId, tried, hits, finish, over]() {
         if (*over) return;
         MachineModel* machines = session->machines();
-        for (int row = 0; row < machines->rowCount(); ++row) {
-            if (machines->idAt(row) != id) continue;
+        const QString project = session->projectId();
+        if (!machines->loaded() || project.isEmpty() || tried->contains(project)) return;
+        tried->insert(project);
+        for (int row : machines->rowsFor(target)) {
             Found f;
             f.ok = true;
+            f.id = machines->idAt(row);
             f.name = machines->nameAt(row);
             f.host = machines->hostAt(row);
             f.app = machines->streamAppAt(row);
             f.webPort = machines->webPortAt(row);
             f.project = session->projectName();
-            finish(f);
+            f.projectId = project;
+            hits->append(f);
+        }
+        if (byId && !hits->isEmpty()) {
+            finish();
             return;
         }
-        if (!machines->loaded() || session->projectId().isEmpty()) return;
-        tried->insert(session->projectId());
         for (const QString& p : session->projectIds()) {
             if (!tried->contains(p)) {
                 session->selectProject(p);
                 return;
             }
         }
-        finish(Found());
+        finish();
     };
     QObject::connect(session->machines(), &MachineModel::countChanged, session, [look]() { (*look)(); });
     QObject::connect(session, &OmnuvSession::projectsChanged, session, [look]() { (*look)(); });
-    QTimer::singleShot(kDeadlineMs, session, [finish]() { finish(Found()); });
+    QTimer::singleShot(kDeadlineMs, session, [finish]() { finish(); });
     (*look)();
+}
+
+// The one machine `target` names, or why there is none: several are refused
+// with their ids, never resolved to the first.
+bool locate(OmnuvSession* session, const QString& target, Found* found, QString* why)
+{
+    QEventLoop loop;
+    QList<Found> hits;
+    scan(session, target, [&](const QList<Found>& h) { hits = h; loop.quit(); });
+    loop.exec();
+    if (hits.size() == 1) {
+        *found = hits.first();
+        return true;
+    }
+    if (hits.isEmpty()) {
+        *why = QStringLiteral("no instance of yours is %1").arg(target);
+        return false;
+    }
+    QStringList ids;
+    for (const Found& f : hits) ids << f.id;
+    *why = QStringLiteral("%1 instances answer to %2 (%3); name one by its id")
+               .arg(hits.size()).arg(target, ids.join(QStringLiteral(", ")));
+    return false;
 }
 
 } // namespace
@@ -134,11 +167,12 @@ void OmnuvLinkCli::startOpen(const QStringList& args, QObject* parent)
         emitLine(v.line);
         ::exit(v.code);
     }
-    find(session, id, [session](const Found& f) {
+    scan(session, id, [session](const QList<Found>& hits) {
+        const Found f = hits.value(0);
         bool onNetwork = false;
         if (f.ok) {
             // Asked now, of the daemon, for the project the instance is in:
-            // `find` selected it, which is the scope the membership is held to.
+            // `scan` selected it, which is the scope the membership is held to.
             session->tunnel()->check();
             session->tunnel()->readMembership();
             onNetwork = session->onProjectNetwork();
@@ -170,11 +204,8 @@ bool OmnuvLinkCli::resolveStream(const QStringList& args, QString* host, QString
         *why = QStringLiteral("sign in to Omnuv in the app, then press Play again");
         return false;
     }
-    QEventLoop loop;
     Found found;
-    find(&session, id, [&](const Found& f) { found = f; loop.quit(); });
-    loop.exec();
-    if (!found.ok) {
+    if (!locate(&session, id, &found, why)) {
         *why = QStringLiteral("no instance of yours has that id");
         return false;
     }
@@ -186,3 +217,47 @@ bool OmnuvLinkCli::resolveStream(const QStringList& args, QString* host, QString
     *app = found.app;
     return true;
 }
+
+bool OmnuvLinkCli::resolveLegacyHost(QString* host, QString* why)
+{
+    // The old `stream <host>` form (`omnuv-connect --stream`, `omnuv://stream?
+    // host=`): upstream's seeker matches a saved host by name, and a name is
+    // reused the moment its machine is deleted and made again. When the host
+    // names one of this account's instances it becomes that instance's own
+    // address, which only it answers to; when it names several, it is
+    // refused with their ids; when it names none, it is not ours and goes on
+    // as upstream's, untouched. Signed out, nothing can be asked.
+    OmnuvSession session;
+    if (!session.signedIn() || host->trimmed().isEmpty()) {
+        return true;
+    }
+    Found found;
+    QString whyNot;
+    if (locate(&session, *host, &found, &whyNot)) {
+        if (found.host.isEmpty()) {
+            *why = QStringLiteral("%1 has no address on your network yet").arg(found.name);
+            return false;
+        }
+        *host = found.host;
+        return true;
+    }
+    if (whyNot.startsWith(QStringLiteral("no instance"))) {
+        return true;
+    }
+    *why = whyNot;
+    return false;
+}
+
+bool OmnuvLinkCli::locateMachine(OmnuvSession* session, const QString& target, QString* id, QString* host,
+                                 QString* projectId, QString* why)
+{
+    Found found;
+    if (!locate(session, target, &found, why)) {
+        return false;
+    }
+    *id = found.id;
+    *host = found.host;
+    *projectId = found.projectId;
+    return true;
+}
+

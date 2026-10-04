@@ -1,4 +1,5 @@
 #include "paircli.h"
+#include "linkcli.h"
 #include "machinemodel.h"
 #include "omnuvsession.h"
 
@@ -92,7 +93,7 @@ void OmnuvPairCli::start(const QStringList& args, QObject* parent)
         emitLine(QStringLiteral("state=failed  reason=name the machine to pair with"));
         ::exit(1);
     }
-    const QString host = positional.at(1);
+    QString host = positional.at(1);
     if (parser.isSet(coreUrlOption)) {
         OmnuvSession::setCoreUrlOverride(parser.value(coreUrlOption));
     }
@@ -116,31 +117,30 @@ void OmnuvPairCli::start(const QStringList& args, QObject* parent)
     // One argument: upstream's constructor takes only the preferences, and
     // `main.cpp` leaks the same object for the `list` action. Parented to
     // `parent` afterwards so this one does not.
-    // **The machine's name says which project it is in, so use it.** A
-    // marketplace private name is `<machine>-<project8>.internal`, and a
-    // device signed in to an account with several projects otherwise picks one
-    // by an order that has nothing to do with the machine being asked for.
-    // Measured on 16 September: the account held five live projects, the
-    // client took the oldest, and it reported `0 machine(s)` while the machine
-    // sat in the newest — so no row ever matched and no PIN was ever
-    // delivered, for two minutes, silently.
-    //
-    // Selecting it here rather than fixing the order elsewhere, because the
-    // order is a fair default for a person opening a window and is simply not
-    // an answer to *this* question: the caller named a machine.
-    const QString label = host.section(QLatin1Char('.'), 0, 0);
-    const QString suffix = label.section(QLatin1Char('-'), -1);
-    QObject::connect(session, &OmnuvSession::projectsChanged, session, [session, suffix]() {
-        if (suffix.length() != 8) {
-            return;
+    // **The machine by id, in whichever project holds it** (the assets-by-id
+    // audit, 3 October 2026). The target is an instance id, Core's host for
+    // it, or a bare name only when exactly one live machine across the
+    // account's projects has it; several are refused with their ids. This
+    // replaces reading the project from the eight hex digits of a
+    // `<name>-<project8>.internal` label, which are not an id, and matching
+    // the delivery's row by host *or* name, which a machine made again under
+    // a deleted one's name shares.
+    QString machineId, projectId, why;
+    {
+        QString found;
+        if (!OmnuvLinkCli::locateMachine(session, host, &machineId, &found, &projectId, &why)) {
+            emitLine(QStringLiteral("state=failed  reason=%1").arg(why));
+            ::exit(1);
         }
-        for (const QString& id : session->projectIds()) {
-            if (id.startsWith(suffix, Qt::CaseInsensitive) && id != session->projectId()) {
-                session->selectProject(id);
-                return;
-            }
+        if (found.isEmpty()) {
+            emitLine(QStringLiteral("state=failed  reason=that machine has no address on your network yet"));
+            ::exit(1);
         }
-    });
+        host = found;
+    }
+    if (session->projectId() != projectId) {
+        session->selectProject(projectId);
+    }
 
     auto* computers = new ComputerManager(StreamingPreferences::get());
     computers->setParent(parent);
@@ -165,22 +165,18 @@ void OmnuvPairCli::start(const QStringList& args, QObject* parent)
     // machine and was a fetch that had not landed. Retried on every change to
     // the model, bounded by the run's own deadline.
     //
-    // Matched on the host *or* the name, because the launcher reports what
-    // Sunshine advertises — `gamerig-e2e` — while the harness asks for
-    // `gamerig-e2e-<project8>.internal`, and either is a fair way to say which
-    // machine this is.
+    // Matched on the machine's id, located above: the launcher reports what
+    // Sunshine advertises (`gamerig-e2e`), which a namesake shares.
     auto deliver = std::make_shared<std::function<void()>>();
     auto delivered = std::make_shared<bool>(false);
     auto started = std::make_shared<bool>(false);
-    *deliver = [session, host, pin, delivered, started]() {
+    *deliver = [session, machineId, pin, delivered, started]() {
         if (*delivered || !*started) {
             return;
         }
         MachineModel* machines = session->machines();
-        const QString bare = host.section(QLatin1Char('.'), 0, 0);
         for (int i = 0; i < machines->rowCount(); ++i) {
-            if (machines->hostAt(i).compare(host, Qt::CaseInsensitive) == 0
-                || machines->nameAt(i).compare(bare, Qt::CaseInsensitive) == 0) {
+            if (machines->idAt(i) == machineId) {
                 *delivered = true;
                 session->deliverPin(session->connectionTarget(i), pin);
                 return;

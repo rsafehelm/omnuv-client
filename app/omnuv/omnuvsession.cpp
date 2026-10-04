@@ -1036,6 +1036,16 @@ bool OmnuvSession::sshTargetIsSafe(const QString& host, const QString& user)
     return user.isEmpty() || login.match(user).hasMatch();
 }
 
+QString OmnuvSession::hostKeyAlias(const MachineModel* machines, const QString& host)
+{
+    for (int row = 0; row < machines->rowCount(); row++) {
+        if (machines->hostAt(row) == host && MachineModel::isInstanceId(machines->idAt(row))) {
+            return QStringLiteral("-oHostKeyAlias=omnuv-%1").arg(machines->idAt(row));
+        }
+    }
+    return QString();
+}
+
 bool OmnuvSession::openTerminal(const QString& host, const QString& user)
 {
     if (!sshTargetIsSafe(host, user)) {
@@ -1050,13 +1060,15 @@ bool OmnuvSession::openTerminal(const QString& host, const QString& user)
     // so a new machine starts a fresh entry and a changed key on the *same*
     // machine still warns, as it should. The id is a uuid, so it is safe on a
     // command line.
-    QString machineId;
-    for (int row = 0; row < m_machines->rowCount(); row++) {
-        if (m_machines->hostAt(row) == host) { machineId = m_machines->idAt(row); break; }
+    // **No alias, no ssh** (the assets-by-id audit, 3 October 2026): without
+    // the machine's id the key fell back to being remembered by the name,
+    // which the next machine made under it inherits. Every caller opens a
+    // machine from this list, so a host it does not hold is refused.
+    const QString alias = hostKeyAlias(m_machines, host);
+    if (alias.isEmpty()) {
+        qWarning().noquote() << "omnuv: not opening ssh to a host this list does not hold:" << host;
+        return false;
     }
-    static const QRegularExpression uuid(QStringLiteral("^[0-9a-fA-F-]{36}$"));
-    const QString alias = uuid.match(machineId).hasMatch()
-        ? QStringLiteral("-oHostKeyAlias=omnuv-%1").arg(machineId) : QString();
 
 #if defined(Q_OS_WIN)
     // Windows has had OpenSSH since 2018, and `start` gives it its own window.

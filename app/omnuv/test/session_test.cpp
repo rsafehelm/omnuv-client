@@ -1256,6 +1256,47 @@ private slots:
     // The card's word and its app, as Core sends them (section 7): `app`'s
     // word, its step and its deployment; Core's mark over the image's guess;
     // Ready is as usable as Running, and Installing is under way, not a fault.
+    // **A machine is named by id, by Core's names, and by a bare name only
+    // with every live namesake returned** (the assets-by-id audit, 3 October
+    // 2026): pairing matched a row by host *or* name and took the first, and
+    // the command-line stream path let upstream match a saved host by name.
+    void aMachineIsFoundByIdAndANameIsNeverResolvedToTheFirst() {
+        const QString a="6f1c2d4e-0000-4000-8000-00000000000a", b="6f1c2d4e-0000-4000-8000-00000000000b",
+                      c="6f1c2d4e-0000-4000-8000-00000000000c", proj="7a1b2c3d-4e5f-4a6b-8c7d-000000000002";
+        MachineModel m;
+        m.replace(QJsonArray{
+            QJsonObject{{"id",a},{"name","rig"},{"status","Deleting"},{"private_name","rig-7a1b2c3d.internal"},
+                        {"private_host",a+"."+proj+".cloud.omnuv.com"}},
+            QJsonObject{{"id",b},{"name","rig"},{"status","Running"},{"private_name","rig-7a1b2c3d.internal"},
+                        {"private_host",b+"."+proj+".cloud.omnuv.com"}},
+            QJsonObject{{"id",c},{"name","chat"},{"status","Running"},{"private_name","chat-7a1b2c3d.internal"}}});
+        QCOMPARE(m.rowsFor(a), QList<int>{0});                                   // an id finds even the one going
+        QCOMPARE(m.rowsFor(b.toUpper()), QList<int>{1});
+        QCOMPARE(m.rowsFor(a+"."+proj+".cloud.omnuv.com"), QList<int>{0});        // Core's name by id
+        QCOMPARE(m.rowsFor("rig-7a1b2c3d.internal"), QList<int>{1});              // the older name: live rows only
+        QCOMPARE(m.rowsFor("rig"), QList<int>{1});                                 // the deleting namesake excluded
+        QCOMPARE(m.rowsFor("chat-7a1b2c3d.internal"), QList<int>{2});
+        QVERIFY(m.rowsFor("6f1c2d4e-0000-4000-8000-0000000000ff").isEmpty());     // an unknown id is not a name
+        QVERIFY(m.rowsFor("ghost").isEmpty());
+        m.replace(QJsonArray{
+            QJsonObject{{"id",a},{"name","rig"},{"status","Running"}},
+            QJsonObject{{"id",b},{"name","rig"},{"status","Stopped"}}});
+        QCOMPARE(m.rowsFor("rig"), (QList<int>{0,1}));                             // both, for the caller to refuse
+        QVERIFY(MachineModel::isInstanceId(a) && !MachineModel::isInstanceId("rig") && !MachineModel::isInstanceId(a.left(8)));
+    }
+
+    // ssh to a host the list does not hold is refused: its key would be
+    // remembered by the name, which the next machine made under it inherits.
+    void sshIsRefusedWithoutTheMachinesId() {
+        const QString a="6f1c2d4e-0000-4000-8000-00000000000a";
+        MachineModel m;
+        m.replace(QJsonArray{QJsonObject{{"id",a},{"name","rig"},{"status","Running"},{"private_name","rig-7a1b2c3d.internal"}}});
+        QCOMPARE(OmnuvSession::hostKeyAlias(&m, "rig-7a1b2c3d.internal"), QString("-oHostKeyAlias=omnuv-%1").arg(a));
+        QCOMPARE(OmnuvSession::hostKeyAlias(&m, "ghost-7a1b2c3d.internal"), QString());   // not in the list: no ssh
+        HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s;
+        QVERIFY(!s.openTerminal("ghost-7a1b2c3d.internal", "ubuntu"));
+    }
+
     void theModelReadsCoresWordAndApp() {
         MachineModel m;
         m.replace(QJsonArray{
