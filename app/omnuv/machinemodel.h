@@ -265,7 +265,9 @@ public:
 
     // **Which rows `target` names, by id first** (the assets-by-id audit, 3
     // October 2026). A whole instance id names its row; a host equal to a
-    // row's host (Core's name by id, any case) names that row; Core's older
+    // row's host (Core's name by id, any case) names that row, and so does
+    // a name by id under another domain (`<machine uuid>.<project uuid>.<any>`,
+    // a domain Core has moved from), by the machine id it carries; Core's older
     // private name names the live rows that carry it; otherwise a bare name
     // (the label before the first dot) names every live row with that name,
     // a machine being deleted excluded. The caller decides what more
