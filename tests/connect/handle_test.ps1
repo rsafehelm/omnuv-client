@@ -61,13 +61,16 @@ $global:fakeOpen = 0
 Opens   'omnuv://stream?host=gpu-1-ab12cd34.internal&app=Desktop'  'OmnuvClient.exe [stream] [gpu-1-ab12cd34.internal] [Desktop]'
 Opens   'omnuv://stream?host=rig.internal'                          'OmnuvClient.exe [stream] [rig.internal]'
 Opens   'omnuv://stream?host=rig.internal&app=Steam%20Big%20Picture' 'OmnuvClient.exe [stream] [rig.internal] [Steam Big Picture]'
-Opens   'omnuv://ssh?host=web-1.internal&user=omnuv'                 'cmd.exe [/k] [ssh] [omnuv@web-1.internal]'
-Opens   'omnuv://ssh?host=web-1.internal'                            'cmd.exe [/k] [ssh] [web-1.internal]'
+Opens   "omnuv://ssh?instance=$id&host=web-1.internal&user=omnuv"   "cmd.exe [/k] [ssh] [-oHostKeyAlias=omnuv-$id] [omnuv@web-1.internal]"
+Opens   "omnuv://ssh?instance=$id&host=web-1.internal"              "cmd.exe [/k] [ssh] [-oHostKeyAlias=omnuv-$id] [web-1.internal]"
+# The host key is the machine's by id, never the name's: no id, no ssh.
+Refuses 'omnuv://ssh?host=web-1.internal&user=omnuv'                 'names no instance'
+Refuses "omnuv://ssh?instance=$id-x&host=web-1.internal"             'will not open'
 
 # What any other page could send.
-Refuses 'omnuv://ssh?host=-oProxyCommand=calc'         'will not open'
-Refuses 'omnuv://ssh?host=x%26calc'                     'will not open'
-Refuses 'omnuv://ssh?host=web.internal&user=-oProxy'    'will not open'
+Refuses "omnuv://ssh?instance=$id&host=-oProxyCommand=calc"         'will not open'
+Refuses "omnuv://ssh?instance=$id&host=x%26calc"                     'will not open'
+Refuses "omnuv://ssh?instance=$id&host=web.internal&user=-oProxy"    'will not open'
 Refuses 'omnuv://stream?host=rig.internal&app=-x'       'will not open'
 Refuses 'omnuv://stream?host=rig.internal&app=a%22b'    'will not open'
 Refuses 'omnuv://stream'                                'no machine'

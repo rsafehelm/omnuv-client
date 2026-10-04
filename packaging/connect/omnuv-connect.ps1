@@ -69,12 +69,16 @@ function Start-Stream($HostName, $App) {
     else      { Start-Process -FilePath $exe -ArgumentList @('stream', $HostName) }
 }
 
-function Start-Ssh($HostName, $User) {
+function Start-Ssh($HostName, $User, $Instance) {
     $target = if ($User) { "$User@$HostName" } else { $HostName }
     # Windows ships OpenSSH, so this needs nothing installed. `cmd.exe` keeps
     # the window open after ssh exits, and it parses its command line, which is
     # why nothing reaches it that `Assert-Link*` has not already checked.
-    Start-Process -FilePath 'cmd.exe' -ArgumentList @('/k', 'ssh', $target)
+    # **The host key is the machine's, by its id** (the assets-by-id audit,
+    # 4 October 2026; the desktop's form since omnuv-client 6721f714): keyed
+    # by the host, a machine made again under a deleted one's name met the
+    # old key.
+    Start-Process -FilePath 'cmd.exe' -ArgumentList @('/k', 'ssh', "-oHostKeyAlias=omnuv-$Instance", $target)
 }
 
 # **A link is input from any web page, not from the console.** Anything can
@@ -212,7 +216,10 @@ function Invoke-Link($Url) {
             if (-not $q['host']) { Die 'that link names no machine' }
             Assert-LinkHost $q['host']
             Assert-LinkUser $q['user']
-            Start-Ssh $q['host'] $q['user']
+            # No id, no ssh: without it the host key could only be the name's.
+            if (-not $q['instance']) { Die "that link names no instance, and ssh needs the machine's id for its host key" }
+            Assert-LinkInstance $q['instance']
+            Start-Ssh $q['host'] $q['user'] $q['instance']
         }
         default { Die "unknown link: omnuv://$action" }
     }

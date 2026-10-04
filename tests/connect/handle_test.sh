@@ -76,13 +76,16 @@ opens   'omnuv://stream?host=rig.internal'                          'moonlight [
 opens   'omnuv://stream?host=rig.internal&app=Steam%20Big%20Picture' 'moonlight [stream] [rig.internal] [Steam Big Picture]'
 refuses "omnuv://open?instance=$id"                                 'needs the Omnuv app'
 OMNUV_CONNECT_CLIENT="$work/bin/OmnuvClient"; export OMNUV_CONNECT_CLIENT
-opens   'omnuv://ssh?host=web-1.internal&user=omnuv'                 'x-terminal-emulator [-e] [ssh] [omnuv@web-1.internal]'
-opens   'omnuv://ssh?host=web-1.internal'                            'x-terminal-emulator [-e] [ssh] [web-1.internal]'
+opens   "omnuv://ssh?instance=$id&host=web-1.internal&user=omnuv"   "x-terminal-emulator [-e] [ssh] [-oHostKeyAlias=omnuv-$id] [omnuv@web-1.internal]"
+opens   "omnuv://ssh?instance=$id&host=web-1.internal"              "x-terminal-emulator [-e] [ssh] [-oHostKeyAlias=omnuv-$id] [web-1.internal]"
+# The host key is the machine's by id, never the name's: no id, no ssh.
+refuses 'omnuv://ssh?host=web-1.internal&user=omnuv'                 'names no instance'
+refuses "omnuv://ssh?instance=$id-x&host=web-1.internal"             'will not open'
 
 # What any other page could send.
-refuses 'omnuv://ssh?host=-oProxyCommand=touch%20/tmp/x'   'will not open'
-refuses 'omnuv://ssh?host=a%0Ab.internal'                   'will not open'
-refuses 'omnuv://ssh?host=web.internal&user=-oProxy'        'will not open'
+refuses "omnuv://ssh?instance=$id&host=-oProxyCommand=touch%20/tmp/x"   'will not open'
+refuses "omnuv://ssh?instance=$id&host=a%0Ab.internal"                   'will not open'
+refuses "omnuv://ssh?instance=$id&host=web.internal&user=-oProxy"        'will not open'
 refuses 'omnuv://stream?host=rig.internal&app=-x'           'will not open'
 refuses 'omnuv://stream?host=rig.internal&app=a%22b'        'will not open'
 refuses 'omnuv://stream'                                    'no machine'

@@ -125,7 +125,7 @@ install_gaming() {
 #   omnuv://open?instance=<uuid>          a web app's page, if this device is on
 #                                         its network; the app's Join otherwise
 #   omnuv://stream?host=<name>.internal&app=<application>   (older links)
-#   omnuv://ssh?host=<name>.internal&user=<user>
+#   omnuv://ssh?instance=<uuid>&host=<address>&user=<user>
 #
 # **By id, never by name** (COMMON_RULES, "Assets are referred to by id"): the
 # app asks Core where the instance answers now, so a link to a deleted
@@ -253,15 +253,21 @@ valid_app() {
 }
 
 launch_ssh() {
-    host="$1"; user="${2:-}"
+    host="$1"; user="${2:-}"; instance="$3"
     target="$host"
     [ -n "$user" ] && target="$user@$host"
+    # **The host key is the machine's, by its id** (the assets-by-id audit,
+    # 4 October 2026; the desktop's form since omnuv-client 6721f714). Keyed
+    # by the host, a machine made again under a deleted one's name met the
+    # old key; every value here has been checked, so the terminals that
+    # re-parse their command line see nothing they could split.
+    alias="-oHostKeyAlias=omnuv-$instance"
     # A terminal, because a link click has no terminal of its own.
     for t in x-terminal-emulator gnome-terminal konsole xterm; do
-        have "$t" && exec "$t" -e ssh "$target"
+        have "$t" && exec "$t" -e ssh "$alias" "$target"
     done
-    [ "$(os)" = macos ] && exec open -a Terminal "ssh://$target"
-    die "no terminal found. Run: ssh $target"
+    [ "$(os)" = macos ] && exec osascript -e "tell application \"Terminal\" to do script \"ssh $alias $target\""
+    die "no terminal found. Run: ssh $alias $target"
 }
 
 handle() {
@@ -319,7 +325,11 @@ handle() {
             valid_host "$host" || die "that link names a machine this will not open: $host"
             user="$(param user "$query")"
             valid_user "$user" || die "that link names a user this will not open: $user"
-            launch_ssh "$host" "$user"
+            # No id, no ssh: without it the host key could only be the name's.
+            instance="$(param instance "$query")"
+            [ -n "$instance" ] || die "that link names no instance, and ssh needs the machine's id for its host key"
+            valid_instance "$instance" || die "that link names an instance this will not open: $instance"
+            launch_ssh "$host" "$user" "$instance"
             ;;
         *) die "unknown link: omnuv://$action" ;;
     esac

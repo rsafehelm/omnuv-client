@@ -44,7 +44,8 @@ platform does it its own way:
 ```
 omnuv://join                                  join this device, as the account signed in to the app
 omnuv://stream?host=<name>.internal&app=<app> open the stream
-omnuv://ssh?host=<name>.internal&user=<user>  open a terminal
+omnuv://ssh?instance=<uuid>&host=<address>&user=<user>
+                                              open a terminal; the host key is the instance's
 ```
 
 Any web page can open an `omnuv://` link, so a link carries nothing a page
