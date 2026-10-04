@@ -217,6 +217,25 @@ QString MachineModel::workloadOf(const QString& image, const QString& osFamily,
     return QStringLiteral("linux");
 }
 
+QString MachineModel::markFor(const QString& mark, const QString& osFamily)
+{
+    if (osFamily == QLatin1String("windows")) {
+        return QStringLiteral("windows");
+    }
+    static const QStringList forAPurpose{QStringLiteral("chat"), QStringLiteral("web"),
+                                         QStringLiteral("game"), QStringLiteral("gpu")};
+    if (forAPurpose.contains(mark)) {
+        return mark;
+    }
+    // An older Core's view, or a tile, with no OS: an OS-like mark stands in.
+    const QString family = !osFamily.isEmpty() ? osFamily
+        : (mark == QLatin1String("linux") || mark == QLatin1String("windows")) ? mark : QString();
+    if (family == QLatin1String("linux") || family == QLatin1String("windows")) {
+        return family;
+    }
+    return QStringLiteral("machine");
+}
+
 void MachineModel::replace(const QJsonArray& machines)
 {
     // Remember what each machine was, so a *transition* can be told from a
@@ -296,10 +315,11 @@ void MachineModel::replace(const QJsonArray& machines)
         parts << QStringLiteral("%1 GiB").arg(o["memory_mib"].toInt() / 1024);
         const QJsonObject gpu = o["gpu"].toObject();
         m.hasGpu = !gpu.isEmpty();
-        // Core's mark when it sends one; the image's guess only for an older Core.
-        m.workload = o["mark"].toString().isEmpty()
+        // Core's mark when it sends one; the image's guess only for an older
+        // Core. Then the OS: a Windows machine says so whatever it is for.
+        m.workload = markFor(o["mark"].toString().isEmpty()
             ? workloadOf(o["image"].toString(), o["os_family"].toString(), !m.streamApp.isEmpty(), m.webPort, m.hasGpu)
-            : o["mark"].toString();
+            : o["mark"].toString(), o["os_family"].toString());
         if (!gpu.isEmpty()) {
             const int count = gpu["count"].toInt(1);
             m.gpuModel = gpu["model"].toString();

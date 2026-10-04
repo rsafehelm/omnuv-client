@@ -170,6 +170,13 @@ public:
     static QString workloadOf(const QString& image, const QString& osFamily,
                               bool streamed, int webPort, bool hasGpu);
 
+    // **Which mark the tile draws** (the operator, 4 October 2026: a Windows
+    // machine is marked as Windows): Core's mark and the image's OS, the OS
+    // first only when it is Windows; Linux as before; a plain display when
+    // neither says. The web's `markFor` (console-shared/src/marks.ts), row
+    // for row. The deploy dialog's tiles go through it too.
+    static QString markFor(const QString& mark, const QString& osFamily);
+
     enum Role {
         NameRole = Qt::UserRole + 1,
         RegionRole,

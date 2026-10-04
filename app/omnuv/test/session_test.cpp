@@ -936,6 +936,29 @@ private slots:
         QCOMPARE(m.data(m.index(1),g),QVariant(false));
         QCOMPARE(m.data(m.index(2),g),QVariant(true));
     }
+    // **A Windows machine says so** (the operator, 4 October 2026): the OS
+    // outranks Core's mark only for Windows, Linux reads as before, and a
+    // machine nothing describes is a plain display, never Tux. The web's
+    // markFor (console-shared/src/marks.ts) holds the same table.
+    void theTileSaysWindows() {
+        const QList<std::tuple<QString,QString,QString>> table{
+            {"game","windows","windows"}, {"chat","windows","windows"}, {"gpu","windows","windows"}, {"","windows","windows"},
+            {"game","linux","game"}, {"chat","linux","chat"}, {"web","linux","web"}, {"gpu","linux","gpu"},
+            {"linux","linux","linux"}, {"toaster","linux","linux"}, {"windows","linux","linux"},
+            {"linux","","linux"}, {"windows","","windows"}, {"game","","game"},
+            {"","","machine"}, {"toaster","","machine"}, {"linux","freebsd","machine"}, {"chat","freebsd","chat"}};
+        for (const auto& [mark, os, want] : table)
+            QVERIFY2(MachineModel::markFor(mark, os) == want, qPrintable(mark + "/" + os));
+        // Core's mark for a Windows gaming rig is its app's, `game`; the card draws Windows.
+        MachineModel m;
+        m.replace(QJsonArray{
+            QJsonObject{{"id","w"},{"name","win-rig"},{"mark","game"},{"os_family","windows"},{"stream_app","Desktop"},{"gpu",QJsonObject{{"model","RTX 3090"}}}},
+            QJsonObject{{"id","l"},{"name","rig"},{"mark","game"},{"os_family","linux"},{"stream_app","Desktop"}}});
+        const int w=m.roleNames().key("workload",-1), g=m.roleNames().key("hasGpu",-1);
+        QCOMPARE(m.data(m.index(0),w).toString(),QString("windows"));
+        QCOMPARE(m.data(m.index(0),g),QVariant(true));
+        QCOMPARE(m.data(m.index(1),w).toString(),QString("game"));
+    }
     // Core's `protected` (0195, D26) reaches the card as `protected`. An older
     // Core sends nothing, which is not protected.
     void theCardReadsProtectionFromTheView() {

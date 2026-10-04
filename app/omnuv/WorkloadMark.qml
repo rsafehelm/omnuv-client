@@ -9,9 +9,15 @@ import Omnuv 1.0
 //   chat      a speech bubble in the accent's gradient (Ollama + Open WebUI)
 //   web       a globe, for any other web recipe
 //   game      a game pad (a streamed machine)
-//   windows   the four panes, in Microsoft's blue
+//   windows   the word Windows over a generic window
 //   gpu       NVIDIA's eye (a GPU machine with nothing more specific)
 //   linux     Tux
+//   machine   a plain display, when nothing says what it is
+//
+// Which one is MachineModel::markFor's: Core's mark and the image's OS,
+// Windows first (the operator, 4 October 2026). Not Microsoft's logo: its
+// trademark guidelines allow none of its logos without a licence and allow
+// the word (omnuv src/console-shared/src/logos/ATTRIBUTION.md).
 //
 // and NVIDIA's eye as a small badge on the tile's corner when the machine has
 // a card and the main mark is not already the eye. The two logos are files in
@@ -60,16 +66,53 @@ Item {
         smooth: true
     }
 
-    // Four panes, the second-generation shape, in Microsoft's blue.
-    Grid {
+    // The word over a generic window: the word is what says Windows, so it
+    // is on top, clear of the card's badge in the bottom corner. The tile is
+    // always near-white, so the ink is a fixed dark one.
+    Column {
         visible: mark.workload === "windows"
         anchors.centerIn: tile
-        columns: 2
         spacing: 2
-        Repeater {
-            model: 4
-            Rectangle { width: 11; height: 11; color: "#0078D4" }
+        Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            text: "Windows"
+            color: "#1F2937"
+            font.pixelSize: 8
+            font.weight: Font.DemiBold
         }
+        Rectangle {
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: 22
+            height: 17
+            radius: 2.5
+            color: "transparent"
+            border.width: 2
+            border.color: "#1F2937"
+            Rectangle {
+                width: parent.width
+                height: 5
+                radius: 2.5
+                color: "#1F2937"
+            }
+        }
+    }
+
+    // A plain display: an OS nobody names, and no purpose either.
+    Item {
+        visible: mark.workload === "machine"
+        anchors.centerIn: tile
+        width: 28
+        height: 24
+        Rectangle {
+            width: 28
+            height: 18
+            radius: 2.5
+            color: "transparent"
+            border.width: 2
+            border.color: "#6B7280"
+        }
+        Rectangle { x: 13; y: 18; width: 2; height: 4; color: "#6B7280" }
+        Rectangle { x: 8; y: 22; width: 12; height: 2; radius: 1; color: "#6B7280" }
     }
 
     // The game pad and the globe are drawn, not taken from the icon font:
