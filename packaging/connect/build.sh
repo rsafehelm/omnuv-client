@@ -152,6 +152,15 @@ build_deb() {
         echo "  deb    FAILED: no staged client at OMNUV_CLIENT_LINUX_DIR=$OMNUV_CLIENT_LINUX_DIR" >&2; return 1; }
     [ -x "$ROOT/tunnel/dist/onvtunneld" ] || {
         echo "  deb    FAILED: no tunnel/dist/onvtunneld; run tunnel/build.sh linux" >&2; return 1; }
+    # **And built from this tree's tunnel source** (4 October 2026): the
+    # daemon's BUILT_FROM, written by tunnel/build.sh, names the source digest
+    # and the bytes; a daemon from older source is not packaged.
+    local tunnel_source tunnel_rec
+    tunnel_source="$("$ROOT/tunnel/source-digest.sh")" || return 1
+    tunnel_rec="$ROOT/tunnel/dist/onvtunneld.BUILT_FROM"
+    [ "$(sed -n 's/^source=//p' "$tunnel_rec" 2>/dev/null)" = "$tunnel_source" ] &&
+        [ "$(sed -n 's/^sha256=//p' "$tunnel_rec")" = "$(sha256sum "$ROOT/tunnel/dist/onvtunneld" | cut -d' ' -f1)" ] || {
+        echo "  deb    FAILED: tunnel/dist/onvtunneld was not built from this tree's tunnel source ($tunnel_source); run tunnel/build.sh linux" >&2; return 1; }
     # The staged client names its commit (stage-client.sh, OMNUV_CLIENT_COMMIT).
     local staged_from
     staged_from="$(sed -n 's/^commit=//p' "$OMNUV_CLIENT_LINUX_DIR/BUILT_FROM" 2>/dev/null)"
