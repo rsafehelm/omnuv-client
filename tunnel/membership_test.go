@@ -42,6 +42,7 @@ func (f *fakeClient) Address() (string, string) {
 }
 func (f *fakeClient) Identity() (string, error) { return f.identity, nil }
 func (f *fakeClient) Peers() map[string]string  { return nil }
+func (f *fakeClient) PeerPaths() []peerPath     { return nil }
 
 func testTunnel(t *testing.T) *tunnel {
 	t.Helper()

@@ -22,6 +22,7 @@ import (
 //	stop                   → ok | err <sentence>
 //	state                  → state <0-3> <address|-> <name|-> <sentence, possibly empty>
 //	membership-v1 [origin] → JSON public scope, identity presence and CAS revision
+//	peers-v1 [address]     → JSON {state, peers}: each peer's path (paths.go)
 //	resume-v1 <payload>    → ok | err <sentence> (exact verified membership)
 //	enrol-v1 <payload>     → ok | err <sentence> (confirmed revision replacement)
 //	stop-v1 <payload>      → ok | err <sentence> (matching membership + revision)
@@ -90,7 +91,7 @@ func answerFor(t *tunnel, who caller, line string) string {
 			return "err " + err.Error()
 		}
 		reply := answer(t, line)
-		if strings.HasPrefix(reply, "ok") && fields[0] != "membership-v1" {
+		if strings.HasPrefix(reply, "ok") && fields[0] != "membership-v1" && fields[0] != "peers-v1" {
 			if err := t.claim(who); err != nil {
 				log.Printf("onv-tunnel: could not record the tunnel's owner: %v", err)
 			}
@@ -129,6 +130,21 @@ func answer(t *tunnel, line string) string {
 			return "err membership observation unavailable"
 		}
 		return string(raw)
+
+	case "peers-v1":
+		// A read, by address: the peer's id on the overlay. Never by name.
+		if len(fields) > 2 {
+			return "err peers-v1 takes at most an overlay address"
+		}
+		address := ""
+		if len(fields) == 2 {
+			address = fields[1]
+		}
+		raw, err := t.peerPaths(address)
+		if err != nil {
+			return "err " + err.Error()
+		}
+		return raw
 
 	case "resume-v1", "enrol-v1", "stop-v1":
 		if len(fields) != 2 {

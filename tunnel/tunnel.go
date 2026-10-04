@@ -64,6 +64,8 @@ type tunnelClient interface {
 	Identity() (string, error)
 	// The overlay's map, FQDN to address (dnscheck.go).
 	Peers() map[string]string
+	// The path to each peer, from the status recorder (paths.go).
+	PeerPaths() []peerPath
 }
 
 type embeddedClient struct {
