@@ -1,0 +1,342 @@
+package portforward
+
+// NetBird's own port mapper (this file is laid into its package by run.sh,
+// with `go test -overlay`, so it calls the real Manager, the real go-nat and
+// the tunnel's observer and release code), against a router run.sh started:
+// miniupnpd in a container, on a network made for the run. What is on the
+// router is read from the router's own files under /state, never from the
+// client library's account of itself.
+//
+//	ONV_E2E_MODE=upnp      discovery held to UPnP-IGD
+//	ONV_E2E_MODE=natpmp    discovery held to NAT-PMP
+//	ONV_E2E_MODE=pcp       NetBird's own discovery, which prefers PCP
+//	ONV_E2E_MODE=none      the router runs no mapping service
+//	ONV_E2E_MODE=disabled  NB_DISABLE_NAT_MAPPER=true: the tunnel's default
+
+import (
+	"bufio"
+	"context"
+	"fmt"
+	"io"
+	"net"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/huin/goupnp/dcps/internetgateway2"
+	"github.com/netbirdio/go-nat"
+	"github.com/sirupsen/logrus"
+)
+
+const onvWGPort = 51820
+
+type onvLease struct {
+	proto    string
+	external int
+	client   string
+	internal int
+	expires  int64
+	desc     string
+}
+
+// miniupnpd's lease file: PROTO:EXTPORT:IADDR:IPORT:TIMESTAMP:DESC.
+func onvLeases(t *testing.T) []onvLease {
+	t.Helper()
+	f, err := os.Open("/state/upnp.leases")
+	if os.IsNotExist(err) {
+		// miniupnpd 2.3.9 removes the file when it holds no lease; that it
+		// is running at all is /state/ready, which run.sh waits for.
+		return nil
+	}
+	if err != nil {
+		t.Fatalf("the router's lease file: %v", err)
+	}
+	defer f.Close()
+	var out []onvLease
+	s := bufio.NewScanner(f)
+	for s.Scan() {
+		parts := strings.SplitN(s.Text(), ":", 6)
+		if len(parts) != 6 {
+			continue
+		}
+		ext, _ := strconv.Atoi(parts[1])
+		in, _ := strconv.Atoi(parts[3])
+		exp, _ := strconv.ParseInt(parts[4], 10, 64)
+		out = append(out, onvLease{parts[0], ext, parts[2], in, exp, parts[5]})
+	}
+	return out
+}
+
+// The redirects in miniupnpd's nftables table, as the router dumped it:
+// `iif "eth0" @nh,72,8 0x11 th dport 48712 dnat ip to 10.238.7.10:51820`
+// (measured 4 October 2026, miniupnpd 2.3.9).
+func onvRules(t *testing.T) []string {
+	t.Helper()
+	raw, err := os.ReadFile("/state/nat.rules")
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, l := range strings.Split(string(raw), "\n") {
+		if strings.Contains(l, " dnat ip to ") {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// Polled: the router writes its files on its own clock.
+func onvEventually(t *testing.T, what string, within time.Duration, ok func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	for !ok() {
+		if time.Now().After(deadline) {
+			t.Fatalf("%s: not within %s; leases %+v, rules %q", what, within, onvLeases(t), onvRules(t))
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// Exactly one mapping on the router, UDP, to this machine's WireGuard port,
+// on external port ext — and nothing else.
+func onvHoldsOnly(t *testing.T, ext int) func() bool {
+	return func() bool {
+		leases, rules := onvLeases(t), onvRules(t)
+		if len(leases) != 1 || len(rules) != 1 {
+			return false
+		}
+		l := leases[0]
+		r := rules[0]
+		return l.proto == "UDP" && l.external == ext && l.internal == onvWGPort &&
+			// 0x11 is IP protocol 17, UDP: miniupnpd matches the header byte.
+			strings.Contains(r, fmt.Sprintf("@nh,72,8 0x11 th dport %d ", ext)) &&
+			strings.HasSuffix(strings.TrimSpace(r), fmt.Sprintf(":%d", onvWGPort))
+	}
+}
+
+func onvHoldsNothing(t *testing.T) func() bool {
+	return func() bool { return len(onvLeases(t)) == 0 && len(onvRules(t)) == 0 }
+}
+
+func onvSteer(t *testing.T, want func(string) bool) {
+	t.Helper()
+	original := discoverNATGateway
+	discoverNATGateway = func(ctx context.Context) (nat.NAT, error) {
+		for n := range nat.DiscoverNATs(ctx) {
+			if want(n.Type()) {
+				return n, nil
+			}
+		}
+		return nil, nat.ErrNoNATFound
+	}
+	t.Cleanup(func() { discoverNATGateway = original })
+}
+
+func TestOnvRouterEmulator(t *testing.T) {
+	mode := os.Getenv("ONV_E2E_MODE")
+	record := filepath.Join(t.TempDir(), "portmap-lease.json")
+	observer := newPortmapObserver(record)
+	logrus.SetOutput(io.MultiWriter(os.Stderr))
+	logrus.SetLevel(logrus.InfoLevel)
+	logrus.AddHook(observer)
+
+	var gateway nat.NAT
+	original := discoverGateway
+	discoverGateway = func(ctx context.Context) (nat.NAT, error) {
+		g, err := original(ctx)
+		gateway = g
+		return g, err
+	}
+	t.Cleanup(func() { discoverGateway = original })
+
+	switch mode {
+	case "upnp":
+		onvSteer(t, func(typ string) bool { return strings.HasPrefix(typ, "UPNP") })
+	case "natpmp":
+		onvSteer(t, func(typ string) bool { return typ == "NAT-PMP" })
+	case "disabled":
+		t.Setenv(envDisableNATMapper, "true")
+	case "pcp", "none":
+	default:
+		t.Fatalf("ONV_E2E_MODE=%q", mode)
+	}
+
+	m := NewManager()
+	done := make(chan struct{})
+	go func() { m.Start(context.Background(), onvWGPort); close(done) }()
+
+	switch mode {
+	case "disabled":
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("a disabled mapper did not return")
+		}
+		if s := observer.snapshot(); s.State != portmapDisabled {
+			t.Fatalf("observer: %+v", s)
+		}
+		time.Sleep(3 * time.Second) // wait: a mapping that should never appear has nothing to poll for
+		if !onvHoldsNothing(t)() {
+			t.Fatalf("the router holds a mapping the switch forbade: %+v", onvLeases(t))
+		}
+		t.Logf("PROOF disabled: NetBird said %q, the router holds nothing", observer.snapshot().State)
+
+		// The control: the same router, the switch cleared, maps. Without
+		// it "holds nothing" could be a router that answers nobody.
+		t.Setenv(envDisableNATMapper, "false")
+		control := NewManager()
+		go control.Start(context.Background(), onvWGPort)
+		var made *Mapping
+		onvEventually(t, "the control mapping", 30*time.Second, func() bool { made = control.GetMapping(); return made != nil })
+		onvEventually(t, "the router holds the control mapping", 5*time.Second, onvHoldsOnly(t, int(made.ExternalPort)))
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := control.GracefullyStop(ctx); err != nil {
+			t.Fatal(err)
+		}
+		observer.stopped()
+		observer.settle(ctx, time.Now().UTC())
+		onvEventually(t, "the control mapping is gone", 5*time.Second, onvHoldsNothing(t))
+		t.Logf("PROOF disabled-control: with the switch cleared the same router mapped udp %d via %s", made.ExternalPort, made.NATType)
+		return
+	case "none":
+		select {
+		case <-done:
+		case <-time.After(30 * time.Second): // ceiling: discovery is 10 s (manager.go:20), with margin
+			t.Fatal("with no mapping service, Start did not give up")
+		}
+		if m.GetMapping() != nil {
+			t.Fatal("a mapping with no router to make it")
+		}
+		s := observer.snapshot()
+		if s.State != portmapNone || !strings.Contains(s.Reason, "discover gateway") {
+			t.Fatalf("observer: %+v", s)
+		}
+		t.Logf("PROOF none: refused cleanly: %q", s.Reason)
+		return
+	}
+
+	var mapping *Mapping
+	onvEventually(t, "NetBird made a mapping", 30*time.Second, func() bool { mapping = m.GetMapping(); return mapping != nil })
+	onvEventually(t, "the router holds exactly that mapping", 5*time.Second, onvHoldsOnly(t, int(mapping.ExternalPort)))
+	s := observer.snapshot()
+	if s.State != portmapMapped || s.ExternalPort != int(mapping.ExternalPort) || s.Gateway != mapping.NATType || s.InternalPort != onvWGPort {
+		t.Fatalf("observer %+v; mapping %+v", s, mapping)
+	}
+	first := onvLeases(t)[0]
+	t.Logf("PROOF made: %s udp %d -> %s:%d, expires %d, desc %q (observer: %s, external %s:%d)",
+		mapping.NATType, first.external, first.client, first.internal, first.expires, first.desc, s.State, s.ExternalIP, s.ExternalPort)
+	if mode == "upnp" && first.desc != "NetBird" {
+		t.Fatalf("description %q", first.desc)
+	}
+	if mode == "pcp" && !strings.HasPrefix(mapping.NATType, "PCP") {
+		t.Fatalf("NetBird's own discovery chose %q over PCP", mapping.NATType)
+	}
+
+	// Renewed: the call renewLoop makes at half the lease (manager.go:232),
+	// on the gateway it made the mapping with.
+	time.Sleep(2100 * time.Millisecond) // wait: the lease clock has one-second resolution
+	if err := m.renewMapping(context.Background(), gateway); err != nil {
+		t.Fatalf("renew: %v", err)
+	}
+	onvEventually(t, "the router extended the lease", 5*time.Second, func() bool {
+		l := onvLeases(t)
+		return len(l) == 1 && l[0].external == first.external && l[0].expires >= first.expires+2
+	})
+	t.Logf("PROOF renewed: expiry %d -> %d, external port unchanged", first.expires, onvLeases(t)[0].expires)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := m.GracefullyStop(ctx); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	if mode == "natpmp" {
+		// go-nat's NAT-PMP delete sends nothing (natpmp.go:125): the router
+		// still holds it, though NetBird logged "deleted".
+		time.Sleep(2 * time.Second) // wait: proving an absence of change
+		if !onvHoldsOnly(t, int(mapping.ExternalPort))() {
+			t.Fatalf("NetBird's NAT-PMP delete removed the mapping after all; portmap_release.go's workaround is redundant")
+		}
+		t.Logf("PROOF natpmp-bug: after NetBird's stop the router still holds udp %d", mapping.ExternalPort)
+	}
+	// What the tunnel's stopLocked does after the engine stops.
+	observer.stopped()
+	if said := observer.settle(ctx, time.Now().UTC()); said != "" {
+		t.Logf("PROOF settled: %s", said)
+	}
+	if s := observer.snapshot(); s.State != portmapDeleted {
+		t.Fatalf("observer after the stop: %+v", s)
+	}
+	onvEventually(t, "the router holds nothing after the stop", 5*time.Second, onvHoldsNothing(t))
+	if rec, _ := readLeaseRecord(record); rec != nil {
+		t.Fatalf("the record outlived the mapping: %+v", rec)
+	}
+	t.Logf("PROOF deleted: the router's lease file and nat chain are empty; observer %q", observer.snapshot().State)
+
+	if mode != "upnp" {
+		return
+	}
+
+	// A crash: a mapping whose process is gone, removed at the next start by
+	// the record alone — a new gateway object, with no memory of the port.
+	m2 := NewManager()
+	go m2.Start(context.Background(), onvWGPort)
+	var second *Mapping
+	onvEventually(t, "a second mapping", 30*time.Second, func() bool { second = m2.GetMapping(); return second != nil })
+	onvEventually(t, "the router holds it", 5*time.Second, onvHoldsOnly(t, int(second.ExternalPort)))
+	said := observer.settle(ctx, time.Now().UTC())
+	if s := observer.snapshot(); s.State != portmapDeleted {
+		t.Fatalf("crash release: %s (%+v)", said, s)
+	}
+	onvEventually(t, "the leftover is gone", 5*time.Second, onvHoldsNothing(t))
+	t.Logf("PROOF crash-release: %s", said)
+	_ = m2.GracefullyStop(ctx)
+
+	// And a mapping that is not ours is left alone, even when a record names
+	// its port.
+	clients, _, err := internetgateway2.NewWANIPConnection2ClientsCtx(ctx)
+	if err != nil || len(clients) == 0 {
+		t1, _, err1 := internetgateway2.NewWANIPConnection1ClientsCtx(ctx)
+		if err1 != nil || len(t1) == 0 {
+			t.Fatalf("no IGD to place a foreign mapping on: %v %v", err, err1)
+		}
+		if err := t1[0].AddPortMappingCtx(ctx, "", 45000, "UDP", 45001, onvLocalIP(t), true, "Steam", 600); err != nil {
+			t.Fatal(err)
+		}
+	} else if err := clients[0].AddPortMappingCtx(ctx, "", 45000, "UDP", 45001, onvLocalIP(t), true, "Steam", 600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeLeaseRecord(record, leaseRecord{Gateway: "UPNP (IG2-IP2)", Protocol: "udp", InternalPort: onvWGPort, ExternalPort: 45000, Created: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	said = observer.settle(ctx, time.Now().UTC())
+	if s := observer.snapshot(); s.State != portmapDeleteFailed || !strings.Contains(said, "left alone") {
+		t.Fatalf("a foreign mapping: %s (%+v)", said, s)
+	}
+	onvEventually(t, "the foreign mapping is still there", 3*time.Second, func() bool {
+		l := onvLeases(t)
+		return len(l) == 1 && l[0].external == 45000 && l[0].desc == "Steam"
+	})
+	t.Logf("PROOF not-ours: %s", said)
+}
+
+func onvLocalIP(t *testing.T) string {
+	t.Helper()
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range addrs {
+		if n, ok := a.(*net.IPNet); ok && n.IP.To4() != nil && !n.IP.IsLoopback() {
+			return n.IP.String()
+		}
+	}
+	t.Fatal("no address")
+	return ""
+}

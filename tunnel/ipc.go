@@ -23,6 +23,8 @@ import (
 //	state                  → state <0-3> <address|-> <name|-> <sentence, possibly empty>
 //	membership-v1 [origin] → JSON public scope, identity presence and CAS revision
 //	peers-v1 [address]     → JSON {state, peers}: each peer's path (paths.go)
+//	portmap-v1             → JSON: the owner's choice and the router mapping (portmap.go)
+//	portmap-v1 on|off      → ok | err <sentence> (the owner's choice; restarts a running tunnel)
 //	resume-v1 <payload>    → ok | err <sentence> (exact verified membership)
 //	enrol-v1 <payload>     → ok | err <sentence> (confirmed revision replacement)
 //	stop-v1 <payload>      → ok | err <sentence> (matching membership + revision)
@@ -91,7 +93,8 @@ func answerFor(t *tunnel, who caller, line string) string {
 			return "err " + err.Error()
 		}
 		reply := answer(t, line)
-		if strings.HasPrefix(reply, "ok") && fields[0] != "membership-v1" && fields[0] != "peers-v1" {
+		read := fields[0] == "membership-v1" || fields[0] == "peers-v1" || (fields[0] == "portmap-v1" && len(fields) == 1)
+		if strings.HasPrefix(reply, "ok") && !read {
 			if err := t.claim(who); err != nil {
 				log.Printf("onv-tunnel: could not record the tunnel's owner: %v", err)
 			}
@@ -145,6 +148,24 @@ func answer(t *tunnel, line string) string {
 			return "err " + err.Error()
 		}
 		return raw
+
+	case "portmap-v1":
+		// A read with no argument; the owner's choice with one. Underlay
+		// facts of this machine's network, so the owner's, like peers-v1.
+		switch {
+		case len(fields) == 1:
+			raw, err := t.portmapView()
+			if err != nil {
+				return "err " + err.Error()
+			}
+			return raw
+		case len(fields) == 2 && (fields[1] == "on" || fields[1] == "off"):
+			if err := t.setPortMapping(fields[1] == "on"); err != nil {
+				return "err " + err.Error()
+			}
+			return "ok"
+		}
+		return "err portmap-v1 takes nothing, or on or off"
 
 	case "resume-v1", "enrol-v1", "stop-v1":
 		if len(fields) != 2 {

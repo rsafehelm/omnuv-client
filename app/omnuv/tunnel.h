@@ -49,6 +49,17 @@ class OmnuvTunnel : public QObject
     // This device's address on the project network, when it has one.
     Q_PROPERTY(QString address READ address NOTIFY changed)
 
+    // **Whether this device may ask its router to open a port** for the
+    // private network (the service's `portmap-v1`, 4 October 2026). A direct
+    // path needs only one reachable end; when neither is, the stream goes
+    // through a relay. The service keeps the choice, off until the owner
+    // turns it on. Known is false when the service cannot be asked — an
+    // older one, or none — and the switch is then not offered.
+    Q_PROPERTY(bool portMappingKnown READ portMappingKnown NOTIFY portMappingChanged)
+    Q_PROPERTY(bool portMappingAllowed READ portMappingAllowed NOTIFY portMappingChanged)
+    // What the router did, in a person's words.
+    Q_PROPERTY(QString portMappingState READ portMappingState NOTIFY portMappingChanged)
+
 public:
     // Whether the process at the other end of the tunnel socket is the one
     // this device installed: root on Unix, or, only on a development socket
@@ -87,6 +98,17 @@ public:
     bool stopMembership(const QJsonObject& membership);
 
     QString address() const { return m_address; }
+
+    bool portMappingKnown() const { return m_portMappingKnown; }
+    bool portMappingAllowed() const { return m_portMappingAllowed; }
+    QString portMappingState() const { return m_portMappingState; }
+    // Ask the service for the choice and the router's answer.
+    Q_INVOKABLE void readPortMapping();
+    // The owner's choice. The service restarts a running tunnel when it
+    // changes what the tunnel runs with, so a "no" closes the port now.
+    Q_INVOKABLE void setPortMappingAllowed(bool allowed);
+    // The service's view, as a sentence. Pure, so it can be tested.
+    static QString describePortMapping(const QJsonObject& view);
 
     // The same fact as `connected()`, with the third answer this class used to
     // throw away.
@@ -142,6 +164,7 @@ signals:
     // This device has never enrolled and needs a one-time key.
     void needsKey();
     void observationExpired();
+    void portMappingChanged();
 
 private:
     // **The poll's I/O, apart from what it means (24 September 2026).** The
@@ -202,4 +225,6 @@ private:
     QString m_operationError;
     QString m_address;
     QDateTime m_takenAt;
+    bool m_portMappingKnown = false, m_portMappingAllowed = false;
+    QString m_portMappingState;
 };

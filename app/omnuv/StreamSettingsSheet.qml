@@ -33,6 +33,13 @@
 //                          what it beat, and a headset is what a gaming buyer
 //                          is wearing.
 //
+// And a seventh, which is not a stream preference at all (4 October 2026):
+//
+//   7  Direct connection   whether this device may ask its router to open a
+//                          port for its private network. A relayed stream is
+//                          felt here, so the choice is offered here; it is
+//                          the network service's to keep, not upstream's.
+//
 // What lost, and why, so the next person does not re-argue it:
 //
 //   HDR                    silently does nothing without host *and* display
@@ -128,6 +135,9 @@ Dialog {
     // Written once, when the sheet is dismissed, rather than on every drag of
     // the bitrate slider: `save()` writes the whole QSettings file.
     onClosed: StreamingPreferences.save()
+    // The router port is the network service's, asked each time the sheet
+    // opens rather than polled.
+    onOpened: Omnuv.tunnel.readPortMapping()
 
     // ---- The one derived value everything else feeds ---------------------
     //
@@ -581,6 +591,63 @@ Dialog {
                 Component.onCompleted: syncFromPreferences()
 
                 onActivated: StreamingPreferences.audioConfig = model.get(currentIndex).config
+            }
+        }
+
+        // ---- 7 · Direct connection -----------------------------------------
+        //
+        // Not a stream preference, and not stored in upstream's: the
+        // network service keeps it, for this device's identity, off until
+        // the owner turns it on (tunnel/portmap.go, 4 October 2026). It is
+        // here because the relay it avoids is felt in the stream. Hidden
+        // when the service cannot be asked, rather than shown doing nothing.
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.topMargin: Theme.spacing
+            spacing: Theme.spacing
+            visible: Omnuv.tunnel.portMappingKnown
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 0
+
+                Label {
+                    text: qsTr("Direct connection through your router")
+                    font.family: Theme.textFamily
+                    font.pixelSize: Theme.bodySize
+                    font.weight: Theme.strongWeight
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    text: qsTr("Lets this device ask your router to open one port, for its private network only, so a stream can connect directly instead of through a relay. The port is closed again when the network stops.")
+                    font.family: Theme.textFamily
+                    font.pixelSize: Theme.captionSize
+                    opacity: 0.6
+                    wrapMode: Text.WordWrap
+                }
+
+                Label {
+                    objectName: "portMappingState"
+                    Layout.fillWidth: true
+                    text: Omnuv.tunnel.portMappingState
+                    font.family: Theme.textFamily
+                    font.pixelSize: Theme.captionSize
+                    wrapMode: Text.WordWrap
+                }
+            }
+
+            Switch {
+                Accessible.role: Accessible.CheckBox
+                id: portMapping
+                objectName: "portMapping"
+                Accessible.name: qsTr("Direct connection through your router")
+                checked: Omnuv.tunnel.portMappingAllowed
+                // The service's answer, not the click, is what the switch
+                // shows: a click leaves this binding standing (Qt 6.11,
+                // measured by the session test's real mouse clicks), so a
+                // refused change springs back when the answer is read.
+                onToggled: Omnuv.tunnel.setPortMappingAllowed(checked)
             }
         }
 

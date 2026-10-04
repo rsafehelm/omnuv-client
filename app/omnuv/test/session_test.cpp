@@ -1442,6 +1442,101 @@ private slots:
         if (!fixture.isEmpty()) qputenv("OMNUV_FIXTURE_URL", fixture);
     }
 
+    // The router port (4 October 2026): asked of the service, off until the
+    // owner says yes, and not offered by a service that cannot be asked.
+    void theRouterPortSwitchAsksTheServiceAndSaysWhatTheRouterDid() {
+        OmnuvTunnel tunnel; QStringList commands;
+        QString allowed = "false", state = "disabled";
+        tunnel.m_request = [&](const QString& line) {
+            commands << line;
+            if (line == "portmap-v1")
+                return QString(R"J({"allowed":%1,"mapper":"on","state":"%2","gateway":"UPNP (IG2-IP1)","internal_port":51820,"external_port":40123,"since":"2026-10-04T12:00:00Z"})J").arg(allowed, state);
+            if (line == "portmap-v1 on") { allowed = "true"; state = "mapped"; return QString("ok"); }
+            return QString("err unknown request");
+        };
+        tunnel.readPortMapping();
+        QVERIFY(tunnel.portMappingKnown());
+        QVERIFY(!tunnel.portMappingAllowed());
+        QVERIFY(tunnel.portMappingState().startsWith("Off"));
+        QVERIFY(!commands.contains("portmap-v1 on")); // reading never turns it on
+        tunnel.setPortMappingAllowed(true);
+        QVERIFY(commands.contains("portmap-v1 on"));
+        QVERIFY(tunnel.portMappingAllowed());
+        QVERIFY(tunnel.portMappingState().contains("40123"));
+        QVERIFY(OmnuvTunnel::describePortMapping(QJsonObject{{"allowed", true}, {"mapper", "on"}, {"state", "none"},
+            {"reason", "discover gateway: no NAT found"}}).startsWith("No router answered"));
+        // A refusal is said, and the switch shows the service's answer.
+        tunnel.m_request = [](const QString& line) {
+            return line == "portmap-v1" ? QString(R"({"allowed":false,"mapper":"","state":"stopped"})")
+                                        : QString("err join this device to a network first");
+        };
+        tunnel.setPortMappingAllowed(true);
+        QVERIFY(!tunnel.portMappingAllowed());
+        QVERIFY(tunnel.operationError().contains("join this device"));
+        // An older service: no switch.
+        tunnel.m_request = [](const QString&) { return QString("err unknown request: portmap-v1"); };
+        tunnel.readPortMapping();
+        QVERIFY(!tunnel.portMappingKnown());
+    }
+
+    // The sheet's seventh row, rendered on its own (the sheet needs the
+    // stream preferences; this row needs only the tunnel): the switch shows
+    // the service's answer, a click asks the service, and a refused click
+    // springs back. The picture is for a person to look at.
+    void theRouterPortRowShowsTheServicesAnswer() {
+        OmnuvTunnel tunnel; QStringList commands; bool refuse = false; QString allowed = "false", state = "disabled";
+        tunnel.m_request = [&](const QString& line) {
+            commands << line;
+            if (line == "portmap-v1")
+                return QString(R"J({"allowed":%1,"mapper":"on","state":"%2","external_port":40123})J").arg(allowed, state);
+            if (line == "portmap-v1 on") {
+                if (refuse) return QString("err join this device to a network first");
+                allowed = "true"; state = "mapped"; return QString("ok");
+            }
+            if (line == "portmap-v1 off") { allowed = "false"; state = "disabled"; return QString("ok"); }
+            return QString("err unknown request");
+        };
+        tunnel.readPortMapping();
+        QFile source("/src/app/omnuv/StreamSettingsSheet.qml"); QVERIFY(source.open(QIODevice::ReadOnly));
+        const auto text = QString::fromUtf8(source.readAll());
+        const auto begin = text.indexOf("        RowLayout {", text.indexOf("// ---- 7 · Direct connection"));
+        const auto end = text.indexOf("        // ---- The other nine hundred lines");
+        QVERIFY(begin >= 0 && end > begin);
+        auto row = text.mid(begin, end - begin).replace("Omnuv.tunnel.", "tunnel.")
+            .replace("Theme.textFamily", "\"sans-serif\"").replace("Theme.bodySize", "14")
+            .replace("Theme.captionSize", "12").replace("Theme.strongWeight", "Font.DemiBold")
+            .replace("Theme.spacing", "8");
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::Software); QQuickView view;
+        view.engine()->rootContext()->setContextProperty("tunnel", &tunnel); QQmlComponent component(view.engine());
+        component.setData(("import QtQuick\nimport QtQuick.Controls\nimport QtQuick.Layouts\nRectangle { width: 460; height: 170; color: \"white\"\nColumnLayout { x: 16; y: 8; width: 428\n"
+                           + row + "\n}\n}").toUtf8(), QUrl("qrc:/omnuv/PortRowTest.qml"));
+        QTRY_VERIFY_WITH_TIMEOUT(!component.isLoading(), 2000); QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        auto object = component.create(); QVERIFY2(object, qPrintable(component.errorString()));
+        view.setContent(QUrl("qrc:/omnuv/PortRowTest.qml"), &component, object); view.show();
+        auto toggle = object->findChild<QObject*>("portMapping"); QVERIFY(toggle);
+        QVERIFY(QTest::qWaitForWindowExposed(&view));
+        // A person's click, not a call: a click is what could break the binding.
+        auto click = [&]() {
+            auto item = qobject_cast<QQuickItem*>(toggle);
+            const auto centre = item->mapToScene(QPointF(item->width() / 2, item->height() / 2)).toPoint();
+            QTest::mouseClick(&view, Qt::LeftButton, Qt::NoModifier, centre);
+        };
+        QVERIFY(!toggle->property("checked").toBool());
+        click();
+        QVERIFY(commands.contains("portmap-v1 on"));
+        QTRY_VERIFY(toggle->property("checked").toBool());
+        QTest::qWait(50);
+        auto shot = view.grabWindow(); QVERIFY(!shot.isNull());
+        QVERIFY(shot.save(qEnvironmentVariable("OMNUV_TEST_ARTIFACT_DIR", QDir::tempPath()) + "/router-port-on.png"));
+        // Off, then a refused on: the switch stays where the service says.
+        click();
+        QTRY_VERIFY(!toggle->property("checked").toBool());
+        refuse = true;
+        click();
+        QTRY_VERIFY(!toggle->property("checked").toBool());
+        shot = view.grabWindow(); QVERIFY(shot.save(qEnvironmentVariable("OMNUV_TEST_ARTIFACT_DIR", QDir::tempPath()) + "/router-port-off.png"));
+    }
+
     // 1227: a setup key goes only to the installed service. Root always;
     // this same user only on a development socket; nobody the kernel would
     // not name.

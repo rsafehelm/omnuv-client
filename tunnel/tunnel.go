@@ -124,6 +124,12 @@ type tunnel struct {
 	// <base>/active and migrated on first use; see deployments.go.
 	active       string
 	activeLoaded bool
+	// The router port mapping (portmap.go): what NetBird said about it, the
+	// switch the running tunnel was started with, and the last attempt to
+	// remove what a stopped one left behind.
+	portmap         *portmapObserver
+	mapperOn        bool
+	portmapLeftover string
 }
 
 func (t *tunnel) setFailed(err error) {
@@ -157,6 +163,11 @@ func (t *tunnel) address() (string, string) {
 func (t *tunnel) start(mgmt, key string) error {
 	t.operations.Lock()
 	defer t.operations.Unlock()
+	return t.resumeLocked(mgmt, key)
+}
+
+// Caller holds operations.
+func (t *tunnel) resumeLocked(mgmt, key string) error {
 	if key != "" && !origin(mgmt) {
 		return errors.New("enrollment requires a management HTTPS origin")
 	}
@@ -250,6 +261,9 @@ func (t *tunnel) startLocked(mgmt, key string, record *membershipRecord) error {
 			return err
 		}
 	}
+	// NetBird reads its port mapper's switch when the engine starts, so it is
+	// set here, for this identity, before anything can start one.
+	t.preparePortmapLocked(dir, opts.PrivateKey, keyed)
 	factory := t.factory
 	if factory == nil {
 		factory = func(options netbird.Options) (tunnelClient, error) {
@@ -402,9 +416,13 @@ func (t *tunnel) stopLocked() error {
 	if client != nil {
 		if err := client.Stop(ctx); err != nil {
 			t.setFailed(err)
+			t.settlePortmapLocked()
 			return err
 		}
 	}
+	// NetBird deleted its mapping as the engine stopped; what it could not,
+	// or only said it did, goes now (portmap_release.go).
+	t.settlePortmapLocked()
 	t.mu.Lock()
 	t.client, t.cancel, t.done = nil, nil, nil
 	t.state, t.lastError = stateStopped, ""

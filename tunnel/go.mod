@@ -4,6 +4,9 @@ go 1.26.0
 
 require (
 	github.com/Microsoft/go-winio v0.6.2
+	github.com/huin/goupnp v1.2.0
+	github.com/jackpal/go-nat-pmp v1.0.2
+	github.com/libp2p/go-netroute v0.4.0
 	github.com/netbirdio/netbird v0.78.1
 	github.com/sirupsen/logrus v1.9.4
 	golang.org/x/sys v0.47.0
@@ -54,8 +57,6 @@ require (
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/go-version v1.7.0 // indirect
-	github.com/huin/goupnp v1.2.0 // indirect
-	github.com/jackpal/go-nat-pmp v1.0.2 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/klauspost/compress v1.18.3 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
@@ -63,7 +64,6 @@ require (
 	github.com/kr/fs v0.1.0 // indirect
 	github.com/libdns/libdns v0.2.2 // indirect
 	github.com/libdns/route53 v1.5.0 // indirect
-	github.com/libp2p/go-netroute v0.4.0 // indirect
 	github.com/lrh3321/ipset-go v0.0.0-20250619021614-54a0a98ace81 // indirect
 	github.com/lufia/plan9stats v0.0.0-20240513124658-fba389f38bae // indirect
 	github.com/mdlayher/genetlink v1.3.2 // indirect

@@ -6,7 +6,9 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/signal"
 	"runtime"
+	"syscall"
 )
 
 // The Unix half, which exists for the development loop rather than for a
@@ -61,6 +63,21 @@ func listen() (net.Listener, error) {
 }
 
 func run(t *tunnel) error {
+	// **A stopped service is a stopped tunnel** (4 October 2026). The process
+	// used to end on SIGTERM without stopping NetBird, which then never
+	// deleted the mapping it held on the router; the Windows service stops
+	// the tunnel on the SCM's Stop (main_windows.go), and this is the same
+	// for systemd and launchd. Bounded by stopLocked's own 30 s.
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGTERM, os.Interrupt)
+	go func() {
+		got := <-signals
+		log.Printf("onv-tunnel: %v: stopping the tunnel", got)
+		if err := t.stop(); err != nil {
+			log.Printf("onv-tunnel: stop on %v: %v", got, err)
+		}
+		os.Exit(0)
+	}()
 	go func() {
 		if err := t.start("", ""); err != nil {
 			log.Printf("onv-tunnel: nothing to resume: %v", err)

@@ -72,6 +72,11 @@ func main() {
 		log.SetOutput(os.Stderr)
 	}
 	t := &tunnel{state: stateStopped}
+	// NetBird's port mapper is read from its own log (portmap_observe.go),
+	// and is off until the owner turns it on (portmap.go). Set before anything
+	// can start an engine, so not even the first start runs it unasked.
+	setNATMapper(false)
+	logrus.AddHook(t.portmapObs())
 	// Stale private names, found and flushed without the buyer (dnscheck.go).
 	go watchNames(context.Background(), systemDNSWorld(t))
 	if err := run(t); err != nil {

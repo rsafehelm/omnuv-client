@@ -108,7 +108,8 @@ bool serverIsTheService(QLocalSocket& socket)
 QString request(const QString& line)
 {
     if (qEnvironmentVariableIsSet("OMNUV_FIXTURE_URL")
-        && line != QLatin1String("state") && !line.startsWith(QLatin1String("membership-v1")))
+        && line != QLatin1String("state") && !line.startsWith(QLatin1String("membership-v1"))
+        && line != QLatin1String("portmap-v1"))
         return QStringLiteral("err Fixture sessions cannot change this device's network membership.");
     QLocalSocket socket;
     socket.connectToServer(serverName());
@@ -591,4 +592,58 @@ void OmnuvTunnel::watch(bool on)
         check();
     }
     updatePolling();
+}
+
+// **The router port, asked of the service.** The service keeps the owner's
+// choice beside this device's identity and reads what the router did from
+// NetBird's own mapper (tunnel/portmap.go); this only asks and says it.
+void OmnuvTunnel::readPortMapping()
+{
+    const QString reply = m_request(QStringLiteral("portmap-v1"));
+    const QJsonDocument doc = QJsonDocument::fromJson(reply.toUtf8());
+    if (!doc.isObject()) {
+        // An older service answers "unknown request", and none answers
+        // nothing: either way there is no switch to offer.
+        m_portMappingKnown = false;
+        m_portMappingAllowed = false;
+        m_portMappingState = reply.startsWith(QLatin1String("err ")) ? reply.mid(4) : QString();
+        emit portMappingChanged();
+        return;
+    }
+    const QJsonObject view = doc.object();
+    m_portMappingKnown = true;
+    m_portMappingAllowed = view.value(QStringLiteral("allowed")).toBool();
+    m_portMappingState = describePortMapping(view);
+    emit portMappingChanged();
+}
+
+void OmnuvTunnel::setPortMappingAllowed(bool allowed)
+{
+    const QString reply = m_request(allowed ? QStringLiteral("portmap-v1 on") : QStringLiteral("portmap-v1 off"));
+    if (reply != QLatin1String("ok")) {
+        setOperationError(reply.startsWith(QLatin1String("err ")) ? reply.mid(4)
+                                                                  : tr("The network service did not answer."));
+    }
+    readPortMapping();
+    check();
+}
+
+QString OmnuvTunnel::describePortMapping(const QJsonObject& view)
+{
+    if (!view.value(QStringLiteral("allowed")).toBool())
+        return tr("Off. When no direct path can be found, streams go through a relay.");
+    const QString state = view.value(QStringLiteral("state")).toString();
+    const QString reason = view.value(QStringLiteral("reason")).toString();
+    const bool running = !view.value(QStringLiteral("mapper")).toString().isEmpty();
+    if (state == QLatin1String("mapped"))
+        return tr("Your router opened port %1 for this device.").arg(view.value(QStringLiteral("external_port")).toInt());
+    if (state == QLatin1String("none"))
+        return reason.contains(QLatin1String("no NAT found"))
+            ? tr("No router answered, so nothing is open. Streams use a relay when no direct path can be found.")
+            : tr("Your router did not open a port (%1). Streams use a relay when no direct path can be found.").arg(reason);
+    if (state == QLatin1String("delete-failed"))
+        return tr("Your router may still hold the port this device opened: %1").arg(reason);
+    if (!running)
+        return tr("On. Your router is asked when this device is on its network.");
+    return tr("On. Asking your router…");
 }
