@@ -36,7 +36,8 @@ struct OpenVerdict
     QUrl url;
 };
 OpenVerdict openVerdict(bool signedIn, bool found, bool onNetwork, const QString& name,
-                        const QString& host, int webPort, const QString& project);
+                        const QString& host, int webPort, const QString& project,
+                        const QString& webUrl = {});
 
 // Exit codes, named once.
 enum { Opened = 0, Refused = 1, OffNetwork = 3 };

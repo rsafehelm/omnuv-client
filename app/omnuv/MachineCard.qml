@@ -171,6 +171,9 @@ ItemDelegate {
     // The site's name for it (`<machine id>.<project id>.omnuv.net`, Core's
     // `private_host`), shown above the short one (the operator, 5 October
     // 2026). Empty when Core sent none, so the card never shows one name twice.
+    // The page over HTTPS, Core's `web_url`, once the machine holds its
+    // certificate: the first address a web machine shows.
+    readonly property string webUrl: model.webUrl !== undefined ? model.webUrl : ""
     readonly property string siteAddress: model.host !== "" && model.host !== model.shortHost
         ? model.host + (web && model.webPort > 0 ? ":" + model.webPort : "") : ""
 
@@ -463,7 +466,8 @@ ItemDelegate {
                     // copy icon. The site's name first, then the short one.
                     Repeater {
                         model: card.usable && card.address !== ""
-                            ? (card.siteAddress !== "" ? [card.siteAddress, card.address] : [card.address]) : []
+                            ? (card.webUrl !== "" ? [card.webUrl, card.address]
+                               : card.siteAddress !== "" ? [card.siteAddress, card.address] : [card.address]) : []
                         delegate: RowLayout {
                             required property string modelData
                             Layout.fillWidth: true

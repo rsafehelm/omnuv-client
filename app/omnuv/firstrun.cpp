@@ -26,10 +26,23 @@ static void omnuvApplyFirstRunVsync(QSettings& settings)
     qInfo().noquote() << "omnuv: first run: V-Sync off";
 }
 
+// **Connection quality warnings off unless somebody chose them** (the
+// operator, 5 October 2026). Upstream's `connectionWarnings` gates the
+// in-stream quality mark and its waiting state; the log line is written
+// either way, which is what the harness reads. Same rule as V-Sync: only
+// when there is no saved choice (SER_CONNWARNINGS is "connwarnings").
+static void omnuvApplyFirstRunWarnings(QSettings& settings)
+{
+    if (settings.contains(QStringLiteral("connwarnings"))) return;
+    settings.setValue(QStringLiteral("connwarnings"), false);
+    qInfo().noquote() << "omnuv: first run: connection quality warnings off";
+}
+
 void omnuvApplyFirstRunResolution()
 {
     QSettings settings;
     omnuvApplyFirstRunVsync(settings);
+    omnuvApplyFirstRunWarnings(settings);
     if (settings.contains(QStringLiteral("width")) || settings.contains(QStringLiteral("height"))) return;
     QScreen* screen = QGuiApplication::primaryScreen();
     if (screen == nullptr) return;
