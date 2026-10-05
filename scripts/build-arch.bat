@@ -142,8 +142,16 @@ for /f "usebackq delims=" %%i in (`%VSWHERE% -latest -property installationPath`
 if !ERRORLEVEL! NEQ 0 goto Error
 
 rem Find VC redistributable DLLs
-for /f "usebackq delims=" %%i in (`%VSWHERE% -latest -find VC\Redist\MSVC\*\%ARCH%\Microsoft.VC*.CRT`) do set VC_REDIST_DLL_PATH=%%i
+rem Omnuv: -products * (5 October 2026). Without it vswhere skips a Build
+rem Tools install, which is all the Windows rig has, the path stayed empty, and
+rem the copy below read "\*.dll" -- the root of the drive -- and packaged the
+rem two Application Verifier DLLs an SDK installer had left there.
+for /f "usebackq delims=" %%i in (`%VSWHERE% -latest -products * -find VC\Redist\MSVC\*\%ARCH%\Microsoft.VC*.CRT`) do set VC_REDIST_DLL_PATH=%%i
 if !ERRORLEVEL! NEQ 0 goto Error
+if not defined VC_REDIST_DLL_PATH (
+    echo Unable to find the Visual C++ runtime DLLs for %ARCH%
+    goto Error
+)
 
 echo Cleaning output directories
 rmdir /s /q %DEPLOY_FOLDER%
@@ -331,24 +339,31 @@ copy %TUNNEL_FOLDER%\WINTUN-LICENSE.txt %DEPLOY_FOLDER%
 if !ERRORLEVEL! NEQ 0 goto Error
 
 echo Building portable package
-rem This must be done after WiX harvesting and signing, since the VCRT dlls are MS signed
-rem and should not be harvested for inclusion in the full installer
-copy "%VC_REDIST_DLL_PATH%\*.dll" %DEPLOY_FOLDER%
+rem Omnuv: in a folder of its own (5 October 2026). The VCRT dlls and
+rem portable.dat used to go into DEPLOY_FOLDER, which the MSI harvests whole,
+rem so an MSI built again from it shipped portable.dat: a client started from
+rem its shortcut ran portable, with its settings under Program Files where a
+rem user cannot write. DEPLOY_FOLDER now holds only what the installer takes.
+set PORTABLE_FOLDER=%BUILD_ROOT%\portable-%ARCH%-%BUILD_CONFIG%
+rmdir /s /q %PORTABLE_FOLDER%
+xcopy /e /i /q /y %DEPLOY_FOLDER% %PORTABLE_FOLDER%
+if !ERRORLEVEL! NEQ 0 goto Error
+copy "%VC_REDIST_DLL_PATH%\*.dll" %PORTABLE_FOLDER%
 if !ERRORLEVEL! NEQ 0 goto Error
 
 rem Since we don't publish Windows installers for CI builds, let's use the user profile
 rem location of the regular non-portable version by default. We'll place a file in the
 rem the package to allow the user to rename if they want portable behavior.
 if defined CI_VERSION (
-    echo. > %DEPLOY_FOLDER%\portable.dat.inactive
+    echo. > %PORTABLE_FOLDER%\portable.dat.inactive
     if !ERRORLEVEL! NEQ 0 goto Error
 ) else (
     rem This file tells the client that it's a portable installation
-    echo. > %DEPLOY_FOLDER%\portable.dat
+    echo. > %PORTABLE_FOLDER%\portable.dat
     if !ERRORLEVEL! NEQ 0 goto Error
 )
 
-7z a %INSTALLER_FOLDER%\OmnuvPortable-%ARCH%-%VERSION%.zip %DEPLOY_FOLDER%\*
+7z a %INSTALLER_FOLDER%\OmnuvPortable-%ARCH%-%VERSION%.zip %PORTABLE_FOLDER%\*
 if !ERRORLEVEL! NEQ 0 goto Error
 
 echo Build successful for Omnuv Client v%VERSION% %ARCH% binaries!
