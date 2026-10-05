@@ -594,11 +594,50 @@ Dialog {
             }
         }
 
+        // ---- 6b · Quality warnings ------------------------------------------
+        //
+        // Upstream's `connectionWarnings`, off on a first run since 5 October
+        // 2026 (firstrun.cpp): the mark and the waiting state over a stream.
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.topMargin: Theme.spacing
+            spacing: Theme.spacing
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 0
+
+                Label {
+                    text: qsTr("Connection quality warnings")
+                    font.family: Theme.textFamily
+                    font.pixelSize: Theme.bodySize
+                    font.weight: Theme.strongWeight
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    text: qsTr("Shows a mark over the stream when frames are lost or arrive late.")
+                    font.family: Theme.textFamily
+                    font.pixelSize: Theme.captionSize
+                    opacity: 0.6
+                    wrapMode: Text.WordWrap
+                }
+            }
+
+            Switch {
+                Accessible.role: Accessible.CheckBox
+                objectName: "connectionWarnings"
+                Accessible.name: qsTr("Connection quality warnings")
+                checked: StreamingPreferences.connectionWarnings
+                onToggled: StreamingPreferences.connectionWarnings = checked
+            }
+        }
+
         // ---- 7 · Direct connection -----------------------------------------
         //
         // Not a stream preference, and not stored in upstream's: the
-        // network service keeps it, for this device's identity, off until
-        // the owner turns it on (tunnel/portmap.go, 4 October 2026). It is
+        // network service keeps it, for this device's identity, on unless
+        // the owner turns it off (tunnel/portmap.go, 5 October 2026). It is
         // here because the relay it avoids is felt in the stream. Hidden
         // when the service cannot be asked, rather than shown doing nothing.
         RowLayout {

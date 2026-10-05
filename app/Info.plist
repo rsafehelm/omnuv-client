@@ -14,6 +14,17 @@
 	<string>omnuv</string>
 	<key>CFBundleIdentifier</key>
 	<string>dev.omnuv.OmnuvClient</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>Omnuv</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>omnuv</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>CFBundlePackageType</key>

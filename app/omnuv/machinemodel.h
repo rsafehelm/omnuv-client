@@ -29,6 +29,10 @@ struct Machine
     // A web recipe's page port on the machine's private name (Core's
     // `web_port`, 2 October 2026): Play opens a browser there instead.
     int webPort = 0;
+    // Core's `web_url`: the page over HTTPS on the machine's private name,
+    // present once the machine holds its project's certificate (0236). Open
+    // prefers it to `http://host:webPort/`. Only an https:// address is kept.
+    QString webUrl;
     // **What the machine is for, as the card draws it** (the operator, 3
     // October 2026: "a stylized logo representing the workload"). One of
     // chat, web, game, windows, gpu, linux; derived in `workloadOf()` from
@@ -183,6 +187,7 @@ public:
         StatusRole,
         StreamAppRole,
         WebPortRole,
+        WebUrlRole,
         WorkloadRole,
         HasGpuRole,
         StreamedRole,
@@ -282,6 +287,7 @@ public:
     Q_INVOKABLE bool streamedAt(int row) const;
     Q_INVOKABLE QString streamAppAt(int row) const;
     Q_INVOKABLE int webPortAt(int row) const;
+    Q_INVOKABLE QString webUrlAt(int row) const;
 
     // How many machines are in each of the two states the tray icon cares
     // about, counted from `health()` so that nothing here is a second reading

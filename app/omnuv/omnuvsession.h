@@ -296,6 +296,7 @@ public:
     // than into an error — a person with no terminal installed is not stuck,
     // they just have to paste one line.
     Q_INVOKABLE bool openTerminal(const QString& host, const QString& user);
+    static bool launchTerminal(const QString& target, const QString& alias);
 
     // Which row of the streaming client's own host list is the machine at this
     // address, or -1.

@@ -282,6 +282,7 @@ SOURCES += \
     omnuv/streamquality.cpp \
     omnuv/tray.cpp \
     omnuv/firstrun.cpp \
+    omnuv/deeplink.cpp \
     omnuv/tunnel.cpp
 
 HEADERS += \
@@ -301,6 +302,7 @@ HEADERS += \
     omnuv/streamquality.h \
     omnuv/tray.h \
     omnuv/firstrun.h \
+    omnuv/deeplink.h \
     omnuv/traystate.h \
     omnuv/tunnel.h
 

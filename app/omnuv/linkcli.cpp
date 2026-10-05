@@ -35,6 +35,7 @@ struct Found
     bool ok = false;
     QString id, name, host, app, project, projectId;
     int webPort = 0;
+    QString webUrl;
 };
 
 // **Every machine `target` names, in each of the account's projects in
@@ -68,6 +69,7 @@ void scan(OmnuvSession* session, const QString& target, std::function<void(const
             f.host = machines->hostAt(row);
             f.app = machines->streamAppAt(row);
             f.webPort = machines->webPortAt(row);
+            f.webUrl = machines->webUrlAt(row);
             f.project = session->projectName();
             f.projectId = project;
             hits->append(f);
@@ -124,7 +126,8 @@ bool OmnuvLinkCli::validInstanceId(const QString& id)
 
 OmnuvLinkCli::OpenVerdict OmnuvLinkCli::openVerdict(bool signedIn, bool found, bool onNetwork,
                                                     const QString& name, const QString& host,
-                                                    int webPort, const QString& project)
+                                                    int webPort, const QString& project,
+                                                    const QString& webUrl)
 {
     OpenVerdict v;
     if (!signedIn) {
@@ -135,7 +138,7 @@ OmnuvLinkCli::OpenVerdict OmnuvLinkCli::openVerdict(bool signedIn, bool found, b
         v.line = QStringLiteral("state=refused  reason=no instance of yours has that id");
         return v;
     }
-    if (webPort <= 0 || host.isEmpty()) {
+    if (webUrl.isEmpty() && (webPort <= 0 || host.isEmpty())) {
         v.line = QStringLiteral("state=refused  reason=%1 has no page to open yet").arg(name);
         return v;
     }
@@ -149,7 +152,9 @@ OmnuvLinkCli::OpenVerdict OmnuvLinkCli::openVerdict(bool signedIn, bool found, b
         return v;
     }
     v.code = Opened;
-    v.url = QUrl(QStringLiteral("http://%1:%2/").arg(host).arg(webPort));
+    // Core's HTTPS address once the machine holds its certificate (0236),
+    // else the page's own port, as before.
+    v.url = !webUrl.isEmpty() ? QUrl(webUrl) : QUrl(QStringLiteral("http://%1:%2/").arg(host).arg(webPort));
     v.line = QStringLiteral("state=opened  url=%1").arg(v.url.toString());
     return v;
 }
@@ -177,7 +182,7 @@ void OmnuvLinkCli::startOpen(const QStringList& args, QObject* parent)
             session->tunnel()->readMembership();
             onNetwork = session->onProjectNetwork();
         }
-        const auto v = openVerdict(true, f.ok, onNetwork, f.name, f.host, f.webPort, f.project);
+        const auto v = openVerdict(true, f.ok, onNetwork, f.name, f.host, f.webPort, f.project, f.webUrl);
         if (v.code == Opened && !QDesktopServices::openUrl(v.url)) {
             emitLine(QStringLiteral("state=refused  reason=no browser could be opened; open %1 yourself")
                          .arg(v.url.toString()));

@@ -162,8 +162,12 @@
         <RegistryValue Type="string" Value="URL:Omnuv" />
         <RegistryValue Type="string" Name="URL Protocol" Value="" />
         <RegistryValue Type="string" Key="DefaultIcon" Value="[#OmnuvClientExe],0" />
+        <!-- The client itself (the operator, 5 October 2026: a link started
+             PowerShell). It checks the link and runs the action
+             (app/omnuv/deeplink.cpp); omnuv-connect.ps1 stays for the
+             command line. -->
         <RegistryValue Type="string" Key="shell\open\command"
-                       Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -ExecutionPolicy Bypass -File &quot;[#OmnuvConnectPs1]&quot; handle &quot;%1&quot;" />
+                       Value="&quot;[#OmnuvClientExe]&quot; &quot;%1&quot;" />
       </RegistryKey>
     </Component>
 

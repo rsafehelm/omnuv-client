@@ -411,7 +411,9 @@ Item {
     // does not resolve, and the page would fail somewhere a person cannot see
     // why. Nothing is published on the internet for it.
     function openWeb(row) {
-        var url = "http://" + Omnuv.machines.hostAt(row) + ":" + Omnuv.machines.webPortAt(row) + "/"
+        // Core's HTTPS address once the machine holds its certificate (0236).
+        var url = Omnuv.machines.webUrlAt(row) !== "" ? Omnuv.machines.webUrlAt(row)
+            : "http://" + Omnuv.machines.hostAt(row) + ":" + Omnuv.machines.webPortAt(row) + "/"
         // The same check `omnuv://open` makes: on this project's network, not
         // merely on some network.
         if (!Omnuv.onProjectNetwork()) {
@@ -1511,7 +1513,7 @@ Item {
                     gap: machineList.gap
                     now: machineList.now
 
-                    onPrimaryActivated: Omnuv.machines.webPortAt(row) > 0 ? root.openWeb(row) : root.connectTo(row)
+                    onPrimaryActivated: Omnuv.machines.webPortAt(row) > 0 || Omnuv.machines.webUrlAt(row) !== "" ? root.openWeb(row) : root.connectTo(row)
                     onTerminalRequested: root.openTerminalFor(row)
                     onChooseAppRequested: root.connectTo(row, true)
                     onSettingsRequested: streamSettings.open()

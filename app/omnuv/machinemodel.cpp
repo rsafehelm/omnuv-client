@@ -3,6 +3,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QRegularExpression>
+#include <QUrl>
 
 // One RFC 3339 timestamp from Core, as a moment.
 //
@@ -92,6 +93,7 @@ QVariant MachineModel::data(const QModelIndex& index, int role) const
     case StatusRole:    return m.status;
     case StreamAppRole: return m.streamApp;
     case WebPortRole:   return m.webPort;
+    case WebUrlRole:    return m.webUrl;
     case WorkloadRole:  return m.workload;
     case HasGpuRole:    return m.hasGpu;
     case StreamedRole:  return m.streamed();
@@ -144,6 +146,7 @@ QHash<int, QByteArray> MachineModel::roleNames() const
         { StatusRole,    "status" },
         { StreamAppRole, "streamApp" },
         { WebPortRole,   "webPort" },
+        { WebUrlRole,    "webUrl" },
         { WorkloadRole,  "workload" },
         { HasGpuRole,    "hasGpu" },
         { StreamedRole,  "streamed" },
@@ -257,6 +260,11 @@ void MachineModel::replace(const QJsonArray& machines)
         m.status = o["status"].toString();
         m.streamApp = o["stream_app"].toString();
         m.webPort = o["web_port"].toInt();
+        {
+            const QUrl web(o["web_url"].toString());
+            if (web.isValid() && web.scheme() == QLatin1String("https") && !web.host().isEmpty())
+                m.webUrl = web.toString();
+        }
         m.defaultUser = o["default_user"].toString();
         m.shortHost = o["private_name"].toString();
         m.host = o["private_host"].toString().isEmpty() ? m.shortHost : o["private_host"].toString();
@@ -485,6 +493,11 @@ QString MachineModel::userAt(int row) const
 int MachineModel::webPortAt(int row) const
 {
     return (row >= 0 && row < m_machines.count()) ? m_machines.at(row).webPort : 0;
+}
+
+QString MachineModel::webUrlAt(int row) const
+{
+    return (row >= 0 && row < m_machines.count()) ? m_machines.at(row).webUrl : QString();
 }
 
 bool MachineModel::isInstanceId(const QString& s)
