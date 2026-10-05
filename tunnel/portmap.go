@@ -53,21 +53,27 @@ func consentPath(dir string) string { return filepath.Join(dir, "portmap-consent
 
 func (t *tunnel) leaseRecordPath() string { return filepath.Join(t.base(), "portmap-lease.json") }
 
-// Whether the owner allowed a mapping for this identity. Anything else —
-// no file, an unreadable one, another identity's — is no.
+// Whether a mapping is allowed for this identity. **On unless its owner
+// said no** (the operator, 5 October 2026: a fresh Windows install streamed
+// through the relay while the MacBook beside it, which had a mapping, went
+// direct). Only this identity's own record says no; no file, an unreadable
+// one, another identity's, or a new identity not yet known all mean the
+// default, on.
+const portmapDefault = true
+
 func readConsent(dir, identity string) bool {
 	if identity == "" {
-		return false
+		return portmapDefault
 	}
 	raw, err := os.ReadFile(consentPath(dir))
 	if err != nil {
-		return false
+		return portmapDefault
 	}
 	var c portmapConsent
-	if json.Unmarshal(raw, &c) != nil {
-		return false
+	if json.Unmarshal(raw, &c) != nil || c.Identity != hashText(identity) {
+		return portmapDefault
 	}
-	return c.Allowed && c.Identity == hashText(identity)
+	return c.Allowed
 }
 
 // The switch NetBird reads, set before every start. Explicit both ways, so
@@ -93,9 +99,17 @@ func (t *tunnel) portmapObs() *portmapObserver {
 
 // Caller holds operations. Before a start: the switch is decided for this
 // identity, and only then may NetBird read it. A start with a setup key is a
-// new identity, which has not been allowed anything.
+// new identity, whose owner has not said anything: the default.
 func (t *tunnel) preparePortmapLocked(dir, identity string, keyed bool) {
-	allowed := !keyed && readConsent(dir, identity)
+	allowed := portmapDefault
+	if !keyed {
+		allowed = readConsent(dir, identity)
+	}
+	// A marketplace machine (machine mode) never asks a router: it sits on a
+	// provider's network, not its owner's, whatever the default.
+	if t.machine {
+		allowed = false
+	}
 	setNATMapper(allowed)
 	t.portmapObs().begin()
 	t.mu.Lock()
@@ -183,7 +197,7 @@ func (t *tunnel) portmapView() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	view := portmapView{Allowed: readConsent(dir, identity), portmapState: obs.snapshot(), Leftover: leftover}
+	view := portmapView{Allowed: readConsent(dir, identity) && !t.machine, portmapState: obs.snapshot(), Leftover: leftover}
 	if state == stateRunning || state == stateStarting {
 		view.Mapper = onOff(on)
 	}

@@ -132,24 +132,51 @@ func noReleases(t *testing.T) {
 	t.Cleanup(func() { releaseNATPMP, releaseUPnP = nat, upnp })
 }
 
-// **Off unless the owner said yes** — the mutation of the default (no
-// Setenv, or "false") fails here.
-func TestTheRouterIsNotAskedUnlessTheOwnerAllowedIt(t *testing.T) {
+// **On unless the owner said no** (5 October 2026) — the old default (no
+// file means off) fails here.
+func TestTheRouterIsAskedUnlessTheOwnerSaidNo(t *testing.T) {
 	noReleases(t)
 	f := newMapperFixture(t, "UPNP (IG2-IP1)")
 	enroll(t, f.tn)
+	if got := f.lastSwitch(t); got != "false" {
+		t.Fatalf("a new enrolment started NetBird with %s=%q; want false (mapper on)", natMapperEnv, got)
+	}
+	view := viewPortmap(t, f.tn)
+	if !view.Allowed || view.Mapper != "on" {
+		t.Fatalf("default view %+v; want allowed, mapper on", view)
+	}
+
+	// And a plain resume, the daemon's own start at boot, is on too.
+	if err := f.tn.stop(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.tn.start("", ""); err != nil {
+		t.Fatal(err)
+	}
+	finish(t, f.tn)
+	if got := f.lastSwitch(t); got != "false" {
+		t.Fatalf("a resume with no recorded choice started NetBird with %q", got)
+	}
+}
+
+func TestTheOwnersNoIsKeptAndANewIdentityStartsOn(t *testing.T) {
+	noReleases(t)
+	f := newMapperFixture(t, "UPNP (IG2-IP1)")
+	enroll(t, f.tn)
+	allow(t, f.tn, false)
 	if got := f.lastSwitch(t); got != "true" {
-		t.Fatalf("a new enrolment started NetBird with %s=%q; want true", natMapperEnv, got)
+		t.Fatalf("refused, but NetBird started with %s=%q", natMapperEnv, got)
 	}
 	view := viewPortmap(t, f.tn)
 	if view.Allowed || view.Mapper != "off" || view.State != portmapDisabled {
-		t.Fatalf("default view %+v; want not allowed, mapper off, NetBird saying disabled", view)
+		t.Fatalf("view %+v; want not allowed, off, disabled", view)
 	}
-	if _, err := os.Stat(f.tn.leaseRecordPath()); !os.IsNotExist(err) {
-		t.Fatalf("a lease is recorded with the mapper off: %v", err)
+	if _, err := os.Stat(f.tn.leaseRecordPath()); err == nil {
+		if rec, _ := readLeaseRecord(f.tn.leaseRecordPath()); rec != nil {
+			t.Fatalf("a lease is still recorded after the owner said no: %+v", rec)
+		}
 	}
-
-	// And a plain resume, the daemon's own start at boot, is off too.
+	// A resume keeps the owner's no.
 	if err := f.tn.stop(); err != nil {
 		t.Fatal(err)
 	}
@@ -158,42 +185,20 @@ func TestTheRouterIsNotAskedUnlessTheOwnerAllowedIt(t *testing.T) {
 	}
 	finish(t, f.tn)
 	if got := f.lastSwitch(t); got != "true" {
-		t.Fatalf("a resume with no consent started NetBird with %q", got)
-	}
-}
-
-func TestTheOwnersYesMapsThePortAndANewIdentityInheritsNothing(t *testing.T) {
-	noReleases(t)
-	f := newMapperFixture(t, "UPNP (IG2-IP1)")
-	enroll(t, f.tn)
-	allow(t, f.tn, true)
-	if got := f.lastSwitch(t); got != "false" {
-		t.Fatalf("allowed, but NetBird started with %s=%q", natMapperEnv, got)
-	}
-	view := viewPortmap(t, f.tn)
-	if !view.Allowed || view.Mapper != "on" || view.State != portmapMapped {
-		t.Fatalf("view %+v; want allowed, on, mapped", view)
-	}
-	if view.Gateway != "UPNP (IG2-IP1)" || view.InternalPort != 51820 || view.ExternalPort != 40123 ||
-		view.ExternalIP != "203.0.113.7" || view.Protocol != "udp" || view.LeaseSeconds != 7200 || view.RenewDue == nil {
-		t.Fatalf("mapping reported as %+v", view)
-	}
-	rec, err := readLeaseRecord(f.tn.leaseRecordPath())
-	if err != nil || rec == nil || rec.ExternalPort != 40123 || rec.InternalPort != 51820 {
-		t.Fatalf("lease record %+v, %v", rec, err)
+		t.Fatalf("a resume after the owner said no started NetBird with %q", got)
 	}
 
-	// A new key is a new identity: off again, whatever the old one allowed.
+	// A new key is a new identity: the default again, whatever the old one said.
 	request := enrolRequest{scope(), "https://netbird.lab.omnuv.com", "another-key", viewOf(t, f.tn).Revision}
 	if got := answer(f.tn, "enrol-v1 "+payload(request)); got != "ok" {
 		t.Fatal(got)
 	}
 	finish(t, f.tn)
-	if got := f.lastSwitch(t); got != "true" {
-		t.Fatalf("a re-enrolled identity started with %q", got)
+	if got := f.lastSwitch(t); got != "false" {
+		t.Fatalf("a re-enrolled identity started with %q; want the default, on", got)
 	}
-	if view := viewPortmap(t, f.tn); view.Allowed {
-		t.Fatalf("the new identity inherited the old one's consent: %+v", view)
+	if view := viewPortmap(t, f.tn); !view.Allowed {
+		t.Fatalf("the new identity inherited the old one's no: %+v", view)
 	}
 }
 
@@ -305,6 +310,7 @@ func TestALeftoverFromACrashIsRemovedAtTheNextStart(t *testing.T) {
 
 	f := newMapperFixture(t, "UPNP (IG1-IP1)")
 	enroll(t, f.tn)
+	allow(t, f.tn, false) // the mapper off, so only the record knows the port
 	crash := leaseRecord{Gateway: "UPNP (IG1-IP1)", Protocol: "udp", InternalPort: 51820, ExternalPort: 55555, Permanent: true, Created: time.Now().UTC()}
 	if err := writeLeaseRecord(f.tn.leaseRecordPath(), crash); err != nil {
 		t.Fatal(err)
