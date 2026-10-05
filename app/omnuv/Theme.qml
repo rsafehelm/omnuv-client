@@ -447,5 +447,6 @@ QtObject {
         readonly property string completed: "\uE930"     // Completed
         readonly property string sync: "\uE895"          // Sync
         readonly property string ring: "\uEA3A"          // CircleRing
+        readonly property string copy: "\uE8C8"          // Copy
     }
 }
