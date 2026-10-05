@@ -168,6 +168,11 @@ ItemDelegate {
     // web app. The long name-by-id (`host`) is what the app connects to.
     readonly property string address: model.shortHost !== ""
         ? model.shortHost + (web && model.webPort > 0 ? ":" + model.webPort : "") : ""
+    // The site's name for it (`<machine id>.<project id>.omnuv.net`, Core's
+    // `private_host`), shown above the short one (the operator, 5 October
+    // 2026). Empty when Core sent none, so the card never shows one name twice.
+    readonly property string siteAddress: model.host !== "" && model.host !== model.shortHost
+        ? model.host + (web && model.webPort > 0 ? ":" + model.webPort : "") : ""
 
     // ---- Primary and secondary, section 2's table ------------------------
     // Needs attention leads with what to do: the console, where it is known.
@@ -454,23 +459,32 @@ ItemDelegate {
                         wrapMode: Text.WordWrap
                     }
 
-                    // Once it runs: where it answers, with Copy address.
-                    RowLayout {
-                        Layout.fillWidth: true
-                        visible: card.usable && card.address !== ""
-                        spacing: 8
-                        Label {
+                    // Once it runs: where it answers, each name with its own
+                    // copy icon. The site's name first, then the short one.
+                    Repeater {
+                        model: card.usable && card.address !== ""
+                            ? (card.siteAddress !== "" ? [card.siteAddress, card.address] : [card.address]) : []
+                        delegate: RowLayout {
+                            required property string modelData
                             Layout.fillWidth: true
-                            text: card.web ? qsTr("%1 · port %2").arg(model.name).arg(model.webPort) : card.address
-                            font.family: card.web ? Theme.textFamily : Theme.monoFamily
-                            font.pixelSize: 13
-                            elide: Label.ElideMiddle
-                        }
-                        OmnuvButton {
-                            flat: true
-                            text: qsTr("Copy address")
-                            Accessible.name: qsTr("Copy the address of %1").arg(model.name)
-                            onClicked: { Omnuv.copyText(card.address); copied.show() }
+                            spacing: 4
+                            Label {
+                                Layout.fillWidth: true
+                                text: modelData
+                                font.family: Theme.monoFamily
+                                font.pixelSize: 13
+                                elide: Label.ElideMiddle
+                            }
+                            ToolButton {
+                                objectName: "copyAddress"
+                                text: Theme.iconsInstalled ? Theme.icon.copy : qsTr("Copy")
+                                font.family: Theme.iconsInstalled ? Theme.iconFamily : Theme.textFamily
+                                font.pixelSize: 13
+                                Accessible.name: qsTr("Copy %1").arg(modelData)
+                                ToolTip.visible: hovered
+                                ToolTip.text: qsTr("Copy address")
+                                onClicked: { Omnuv.copyText(modelData); copied.show() }
+                            }
                         }
                     }
 
