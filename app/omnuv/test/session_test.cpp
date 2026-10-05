@@ -3,6 +3,7 @@
 #include "../linkcli.h"
 #include "../settingsmove.h"
 #include "../firstrun.h"
+#include "../deeplink.h"
 #include "../pairing.h"
 #include "../signin.h"
 #include "../../backend/nvpairingmanager.h"
@@ -1422,6 +1423,46 @@ private slots:
         QSettings none(dir.filePath("none.ini"), QSettings::IniFormat), fresh(dir.filePath("fresh.ini"), QSettings::IniFormat);
         QVERIFY(!omnuvMoveSettingsOnce(none, fresh));
         QVERIFY(fresh.allKeys().isEmpty());
+    }
+
+    // omnuv:// read by the client itself (5 October 2026), the cases the
+    // scripts' handle_test held them to: what each link becomes, and each
+    // refusal in its words.
+    void aLinkIsTheClientsOwnArgumentsOrIsRefused() {
+        const QString id("6f1d2c3b-4a59-4e8f-9a0b-1c2d3e4f5a6b");
+        auto args=[](const QString& url){ const auto l=omnuvParseDeepLink(url); return l.kind==OmnuvDeepLink::Arguments ? l.arguments.join('|') : QString("refused: ")+l.why; };
+        QCOMPARE(args("omnuv://stream?instance="+id), QString("stream-instance|")+id);
+        QCOMPARE(args("omnuv://open?instance="+id), QString("open-instance|")+id);
+        QCOMPARE(args("omnuv://open/?instance="+id), QString("open-instance|")+id);
+        QCOMPARE(args("OMNUV://Open?instance="+id), QString("open-instance|")+id);
+        QCOMPARE(args("omnuv://stream?host=gpu-1-ab12cd34.internal&app=Desktop"), QString("stream|gpu-1-ab12cd34.internal|Desktop"));
+        QCOMPARE(args("omnuv://stream?host=rig.internal"), QString("stream|rig.internal"));
+        QCOMPARE(args("omnuv://stream?host=rig.internal&app=Steam%20Big%20Picture"), QString("stream|rig.internal|Steam Big Picture"));
+        QCOMPARE(args("omnuv://stream?host=rig.internal&app=Steam+Big+Picture"), QString("stream|rig.internal|Steam Big Picture"));
+        const auto ssh=omnuvParseDeepLink("omnuv://ssh?instance="+id+"&host=web-1.internal&user=omnuv");
+        QCOMPARE(int(ssh.kind),int(OmnuvDeepLink::Ssh));
+        QCOMPARE(ssh.host+"|"+ssh.user+"|"+ssh.instance, QString("web-1.internal|omnuv|")+id);
+        QCOMPARE(int(omnuvParseDeepLink("omnuv://join").kind),int(OmnuvDeepLink::Enrol));
+        const QList<QPair<QString,QString>> refusals{
+            {"omnuv://ssh?host=web-1.internal&user=omnuv","names no instance"},
+            {"omnuv://ssh?instance="+id+"-x&host=web-1.internal","will not open"},
+            {"omnuv://ssh?instance="+id+"&host=-oProxyCommand=calc","will not open"},
+            {"omnuv://ssh?instance="+id+"&host=x%26calc","will not open"},
+            {"omnuv://ssh?instance="+id+"&host=web.internal&user=-oProxy","will not open"},
+            {"omnuv://stream?host=rig.internal&app=-x","will not open"},
+            {"omnuv://stream?host=rig.internal&app=a%22b","will not open"},
+            {"omnuv://stream","no machine"},
+            {"omnuv://join?key=ABCDEF","no longer carry"},
+            {"omnuv://open?instance=../../etc","will not open"},
+            {"omnuv://stream?instance=-oProxy","will not open"},
+            {"omnuv://open","no instance"},
+            {"omnuv://wipe?host=x","unknown link"},
+            {"https://evil.example/omnuv://open","not an omnuv link"}};
+        for (const auto& r : refusals) {
+            const auto l=omnuvParseDeepLink(r.first);
+            QVERIFY2(l.kind==OmnuvDeepLink::Refused && l.why.contains(r.second), qPrintable(r.first+" -> "+l.why));
+        }
+        QVERIFY(omnuvIsDeepLink("omnuv://open") && omnuvIsDeepLink("Omnuv:x") && !omnuvIsDeepLink("stream"));
     }
 
     // 5 October 2026: Core's web_url reaches the model only as https.

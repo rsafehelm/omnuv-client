@@ -1070,6 +1070,14 @@ bool OmnuvSession::openTerminal(const QString& host, const QString& user)
         return false;
     }
 
+    return launchTerminal(target, alias);
+}
+
+// The terminal itself, for `openTerminal` and for an omnuv://ssh link, which
+// carries the machine's id for its host key (deeplink.cpp). `target` and
+// `alias` have passed the same checks on either path.
+bool OmnuvSession::launchTerminal(const QString& target, const QString& alias)
+{
 #if defined(Q_OS_WIN)
     // Windows has had OpenSSH since 2018, and `start` gives it its own window.
     // **A failure stays on screen.** `start ssh <target>` closed the window

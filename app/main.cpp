@@ -53,6 +53,10 @@
 #include "omnuv/appearance.h"
 #include "omnuv/devqml.h"
 #include "omnuv/settingsmove.h"
+#include "omnuv/deeplink.h"
+#include "omnuv/omnuvsession.h"
+#include <QMessageBox>
+#include <QProcess>
 #include "path.h"
 #include "utils.h"
 #include "gui/computermodel.h"
@@ -845,8 +849,42 @@ int main(int argc, char *argv[])
     }
 #endif
 
+    // Omnuv: an omnuv:// link, which the scheme hands over as the one
+    // argument (app/omnuv/deeplink.h; the operator, 5 October 2026: a link
+    // from the console started PowerShell). It becomes the client's own
+    // arguments, or a terminal, or is refused in a window.
+    QStringList omnuvArguments = app.arguments();
+    const bool omnuvFromLink = omnuvArguments.size() == 2 && omnuvIsDeepLink(omnuvArguments.at(1));
+    if (omnuvFromLink) {
+        const OmnuvDeepLink link = omnuvParseDeepLink(omnuvArguments.at(1));
+        qInfo().noquote() << "omnuv: link:" << omnuvArguments.at(1).left(200);
+        switch (link.kind) {
+        case OmnuvDeepLink::Refused:
+            qWarning().noquote() << "omnuv: link refused:" << link.why;
+            QMessageBox::warning(nullptr, QStringLiteral("Omnuv"), link.why);
+            return 2;
+        case OmnuvDeepLink::Ssh:
+            return OmnuvSession::launchTerminal(link.user.isEmpty() ? link.host : link.user + QLatin1Char('@') + link.host,
+                                                QStringLiteral("-oHostKeyAlias=omnuv-%1").arg(link.instance)) ? 0 : 1;
+        case OmnuvDeepLink::Enrol:
+            if (QMessageBox::warning(nullptr, QStringLiteral("Omnuv"),
+                    QObject::tr("A link asks to join this device to the private network of the account signed in to Omnuv.\n\n"
+                                "Only continue if you started this from your Omnuv console."),
+                    QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) {
+                return 1;
+            }
+            omnuvArguments = {omnuvArguments.at(0), QStringLiteral("enrol")};
+            break;
+        case OmnuvDeepLink::Arguments:
+            omnuvArguments = QStringList{omnuvArguments.at(0)} + link.arguments;
+            break;
+        }
+    }
+
+    omnuvForwardDeepLinks(&app);
+
     GlobalCommandLineParser parser;
-    GlobalCommandLineParser::ParseResult commandLineParserResult = parser.parse(app.arguments());
+    GlobalCommandLineParser::ParseResult commandLineParserResult = parser.parse(omnuvArguments);
     switch (commandLineParserResult) {
     case GlobalCommandLineParser::ListRequested:
         // Don't log to the console since it will jumble the command output
@@ -1080,13 +1118,13 @@ int main(int argc, char *argv[])
             if (commandLineParserResult == GlobalCommandLineParser::StreamInstanceRequested) {
                 // Omnuv: an instance by its id; Core says where it answers.
                 QString why;
-                if (!OmnuvLinkCli::resolveStream(app.arguments(), &host, &appName, &why)) {
+                if (!OmnuvLinkCli::resolveStream(omnuvArguments, &host, &appName, &why)) {
                     fprintf(stderr, "%s\n", qPrintable(why));
                     return 1;
                 }
             } else {
                 StreamCommandLineParser streamParser;
-                streamParser.parse(app.arguments(), preferences);
+                streamParser.parse(omnuvArguments, preferences);
                 host    = streamParser.getHost();
                 appName = streamParser.getAppName();
                 // Omnuv: a host naming one of this account's instances becomes
@@ -1108,7 +1146,7 @@ int main(int argc, char *argv[])
         {
             initialView = "qrc:/gui/CliQuitStreamSegue.qml";
             QuitCommandLineParser quitParser;
-            quitParser.parse(app.arguments());
+            quitParser.parse(omnuvArguments);
             auto launcher = new CliQuitStream::Launcher(quitParser.getHost(), &app);
             engine.rootContext()->setContextProperty("launcher", launcher);
             break;
@@ -1117,7 +1155,7 @@ int main(int argc, char *argv[])
         {
             initialView = "qrc:/gui/CliPair.qml";
             PairCommandLineParser pairParser;
-            pairParser.parse(app.arguments());
+            pairParser.parse(omnuvArguments);
             auto launcher = new CliPair::Launcher(pairParser.getHost(), pairParser.getPredefinedPin(), &app);
             engine.rootContext()->setContextProperty("launcher", launcher);
             break;
@@ -1125,7 +1163,7 @@ int main(int argc, char *argv[])
     case GlobalCommandLineParser::ListRequested:
         {
             ListCommandLineParser listParser;
-            listParser.parse(app.arguments());
+            listParser.parse(omnuvArguments);
             auto launcher = new CliListApps::Launcher(listParser.getHost(), listParser, &app);
             launcher->execute(new ComputerManager(StreamingPreferences::get()));
             hasGUI = false;
@@ -1135,7 +1173,7 @@ int main(int argc, char *argv[])
         {
             // Omnuv: no window, like `list`. stdout is this action's product,
             // so nothing else may write to it — see app/omnuv/signin.cpp.
-            OmnuvSignIn::start(app.arguments(), &app);
+            OmnuvSignIn::start(omnuvArguments, &app);
             hasGUI = false;
             break;
         }
@@ -1143,7 +1181,7 @@ int main(int argc, char *argv[])
         {
             // Omnuv: the same, for the private network. The tunnel is inside
             // this binary now, so this is the only thing that can join.
-            OmnuvEnrol::start(app.arguments(), &app);
+            OmnuvEnrol::start(omnuvArguments, &app);
             hasGUI = false;
             break;
         }
@@ -1152,14 +1190,14 @@ int main(int argc, char *argv[])
             // Omnuv: pairing with no window and no PIN for anybody to read.
             // Upstream's `pair` sets `initialView` because its view is how a
             // person is shown the number; there is nobody to show.
-            OmnuvPairCli::start(app.arguments(), &app);
+            OmnuvPairCli::start(omnuvArguments, &app);
             hasGUI = false;
             break;
         }
     case GlobalCommandLineParser::OpenInstanceRequested:
         {
             // Omnuv: no window; the page opens in the system browser.
-            OmnuvLinkCli::startOpen(app.arguments(), &app);
+            OmnuvLinkCli::startOpen(omnuvArguments, &app);
             hasGUI = false;
             break;
         }
@@ -1176,6 +1214,12 @@ int main(int argc, char *argv[])
     }
 
     int err = app.exec();
+
+    // Omnuv: a link to a page this device cannot reach yet (off the project's
+    // network) opens the app, where Join this device is, as the script did.
+    if (omnuvFromLink && commandLineParserResult == GlobalCommandLineParser::OpenInstanceRequested && err == OmnuvLinkCli::OffNetwork) {
+        QProcess::startDetached(QCoreApplication::applicationFilePath(), {});
+    }
 
     // Give worker tasks time to properly exit. Fixes PendingQuitTask
     // sometimes freezing and blocking process exit.
