@@ -1808,8 +1808,27 @@ private slots:
         auto other=scope; other["account_id"]="account-b"; QVERIFY(reopened.reserve(other,&b)); QVERIFY(a!=b);
         QFile blocker(dir.path()+"/not-a-directory"); QVERIFY(blocker.open(QIODevice::WriteOnly)); blocker.close();
         OmnuvEnrollmentJournal broken(false,blocker.fileName()+"/settings.ini"); QVERIFY(!broken.reserve(scope,&b));
+        QVERIFY2(broken.error().contains("not-a-directory") && broken.error().contains("cannot be created"), qPrintable(broken.error()));
         QFile corrupt(dir.path()+"/corrupt.ini"); QVERIFY(corrupt.open(QIODevice::WriteOnly)); corrupt.write("[omnuv]\nenrollments=broken-json\n"); corrupt.close();
         OmnuvEnrollmentJournal damaged(false,corrupt.fileName()); QVERIFY(!damaged.reserve(scope,&b));
+        QVERIFY2(damaged.error().contains("corrupt.ini") && damaged.error().contains("damaged"), qPrintable(damaged.error()));
+        // A settings file nobody can open, root included: a directory in its place.
+        QVERIFY(QDir(dir.path()).mkpath("a-directory.ini"));
+        OmnuvEnrollmentJournal unopenable(false,dir.path()+"/a-directory.ini"); QVERIFY(!unopenable.reserve(scope,&b));
+        QVERIFY2(unopenable.error().contains("a-directory.ini") && unopenable.error().contains("cannot be read"), qPrintable(unopenable.error()));
+        QVERIFY(reopened.reserve(scope,&b)); QVERIFY2(reopened.error().isEmpty(), qPrintable(reopened.error()));
+    }
+    // 5 October 2026: one sentence for every failure hid an installer's
+    // portable.dat for a week, so the reason names what failed, and a held
+    // lock names the process holding it.
+    void aReservationPastAHeldLockNamesTheHolder() {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString path = dir.path()+"/saved.ini";
+        const QJsonObject scope{{"core_url","https://core.example.test"},{"account_id","a"},{"project_id","p"},{"network_id","n"}};
+        QLockFile held(path+".journal-lock"); QVERIFY(held.tryLock(0));
+        OmnuvEnrollmentJournal journal(false,path); QJsonObject record;
+        QVERIFY(!journal.reserve(scope,&record));
+        QVERIFY2(journal.error().contains(QStringLiteral("process %1").arg(QCoreApplication::applicationPid())), qPrintable(journal.error()));
     }
     // 1350: a reservation made while another holder has the journal's lock
     // waits for it, rather than failing at once as "could not be saved".

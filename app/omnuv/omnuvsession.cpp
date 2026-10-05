@@ -1356,7 +1356,8 @@ void OmnuvSession::fetchDeviceKey()
         }
         QJsonObject record;
         if (!m_enrollmentJournal.reserve(target, &record)) {
-            m_tunnel->giveUp(tr("The enrollment attempt could not be saved. No device was created.")); return;
+            qWarning().noquote() << "omnuv: enrollment journal:" << m_enrollmentJournal.error();
+            m_tunnel->giveUp(tr("The enrollment attempt could not be saved: %1. No device was created.").arg(m_enrollmentJournal.error())); return;
         }
         const auto membership = record.value("membership").toObject();
         const auto attempt = membership.value("device_id").toString();
