@@ -34,6 +34,7 @@
         <file>logos/tux.svg</file>
         <file>card-shadow.png</file>
         <file>estate.js</file>
+        <file>framerates.js</file>
         <file>omnuv.svg</file>
     </qresource>
 </RCC>

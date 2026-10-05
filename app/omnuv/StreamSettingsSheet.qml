@@ -65,6 +65,7 @@
 // closes. Nothing is stored in Omnuv's own settings: a second copy of a
 // preference is a second answer, and the stream reads upstream's.
 
+import "framerates.js" as FrameRates
 import QtQuick 2.9
 import QtQuick.Controls 2.2
 import QtQuick.Layouts 1.3
@@ -321,7 +322,7 @@ Dialog {
                 // So the list leads with the divisors of this display's rate,
                 // and an uneven one says so and turns Smooth motion on.
                 function label(rate) {
-                    return sheet.evenOn(rate) || sheet.displayRate <= 0
+                    return sheet.evenOn(rate) || sheet.displayRate <= 0 || !StreamingPreferences.enableVsync
                         ? qsTr("%1 FPS").arg(rate)
                         : qsTr("%1 FPS \u00B7 uneven on this display").arg(rate)
                 }
@@ -340,35 +341,21 @@ Dialog {
                 model: ListModel {}
 
                 Component.onCompleted: {
-                    // This device's displays decide what is on offer above 60,
-                    // exactly as upstream's list does — `SystemProperties
-                    // .getRefreshRate(i)` per display until it answers 0, which
-                    // is how upstream detects the end of the list
-                    // (`SettingsView.qml:594-604`). A rate nothing here can
-                    // present is a rate nobody should be able to pick.
+                    // Each display's rate, read as upstream reads it —
+                    // `SystemProperties.getRefreshRate(i)` until it answers 0
+                    // (`SettingsView.qml:594-604`) — joins the usual 30 to 480.
                     SystemProperties.refreshDisplays()
                     sheet.displayRate = SystemProperties.getRefreshRate(0)
-                    var rates = [30, 60]
-                    for (var d = 0; ; d++) {
+                    // The list itself is framerates.js, tested under node.
+                    var shown = [SystemProperties.getRefreshRate(0)]
+                    for (var d = 1; ; d++) {
                         var rate = SystemProperties.getRefreshRate(d)
                         if (rate === 0) {
                             break
                         }
-                        rates.push(rate)
+                        shown.push(rate)
                     }
-                    // Every divisor of this display's rate from 60 up: on a
-                    // 480 Hz screen, 60 80 96 120 160 240 480.
-                    for (var k = 1; sheet.displayRate > 0 && sheet.displayRate / k >= 60; k++) {
-                        if (sheet.displayRate % k === 0) {
-                            rates.push(sheet.displayRate / k)
-                        }
-                    }
-                    var seen = {}
-                    rates = rates.filter(function(r) { return seen[r] ? false : (seen[r] = true) })
-                    rates.sort(function(a, b) {
-                        var ea = sheet.evenOn(a) ? 0 : 1, eb = sheet.evenOn(b) ? 0 : 1
-                        return ea !== eb ? ea - eb : a - b
-                    })
+                    var rates = FrameRates.offered(shown, sheet.displayRate, StreamingPreferences.enableVsync)
                     for (var i = 0; i < rates.length; i++) {
                         model.append({ "text": label(rates[i]), "fps": "" + rates[i] })
                     }

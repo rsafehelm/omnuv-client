@@ -1045,6 +1045,20 @@ fi
 echo "the estate's words hold, and the test fails when they do not"
 )
 
+# Stream settings' frame rates (5 October 2026): the usual 30 to 480 on any
+# display. The mutant is the list it replaced, divisors of the display's rate.
+step "Stream settings' frame rates, run"
+(
+set -euo pipefail
+node app/omnuv/test/framerates_test.js
+sed 's|^var USUAL = .*|var USUAL = [30, 60]|' app/omnuv/framerates.js > "$tmp"/framerates.js
+if FRAMERATES_JS="$tmp"/framerates.js node app/omnuv/test/framerates_test.js >/dev/null 2>&1; then
+  echo "The frame-rate test passes against the old list; it is not checking anything."
+  exit 1
+fi
+echo "the frame rates hold, and the test fails when they do not"
+)
+
 # **The shipped fonts are the pinned ones** (3 October 2026). Each file's
 # sha256 is in app/omnuv/fonts/README.md, beside where it came from; a file
 # replaced without the README moving fails here, and so does one the
