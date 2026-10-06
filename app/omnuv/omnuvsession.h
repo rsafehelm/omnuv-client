@@ -378,6 +378,16 @@ public:
     // Registered once per device and Core, and again on every Play (the same
     // certificate again changes nothing at Core).
     void registerStreamCertificate(bool force = false);
+    // **This device, by id.** The membership's, when the device joined
+    // signed in; otherwise the one a join with a setup key learned from
+    // Core's key-info before spending the key (TODO 5c, 5f): a key join
+    // records no membership. Empty when neither is known.
+    QString thisDeviceId() const;
+    // The Core this process talks to before any session settles it: the
+    // run's override, the saved address, OMNUV_CORE_URL, else production.
+    static QString configuredCoreUrl();
+    // Where a key join keeps the device id it learned, per Core.
+    static QString keyDeviceSetting(const QString& coreUrl);
     // Asks Core for the machine's streaming identity and, when Sunshine
     // already admits this device, pins its certificate on the saved host.
     // Answers with streamIdentityAnswered(address, adopted); not adopted means

@@ -1,11 +1,19 @@
 #include "enrolcli.h"
 #include "omnuvsession.h"
 #include "tunnel.h"
+#include "credentials.h"
 
 #include <QCommandLineParser>
 #include <QCoreApplication>
 #include <QTimer>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QSettings>
+#include <QUuid>
 
+#include <functional>
 #include <memory>
 #include <stdio.h>
 
@@ -297,7 +305,38 @@ void OmnuvEnrol::start(const QStringList& args, QObject* parent)
         } else { *requested = true; tunnel->join(); }
     }
     else {
-        tunnel->enrol(url, key);
+        // **The device's id, from Core, before the key is spent** (TODO 5c,
+        // 5f). A join with a key records no membership, so the client would
+        // never know which device it is, and pairing by certificate asks by
+        // that id. Core's key-info answers it for the key that was minted for
+        // it; kept per Core. Bounded, and never a reason not to join.
+        const QString core = OmnuvSession::configuredCoreUrl();
+        auto spend = std::make_shared<std::function<void()>>([tunnel, url, key]() {
+            tunnel->enrol(url, key);
+            tunnel->watch(true);
+        });
+        if (!OmnuvCredentials::secureCore(core)) {
+            (*spend)();
+            return;
+        }
+        auto* net = new QNetworkAccessManager(tunnel);
+        QNetworkRequest request(QUrl(core + QStringLiteral("/v1/devices/key-info")));
+        request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+        request.setTransferTimeout(10000);
+        auto* reply = net->post(request, QJsonDocument(QJsonObject{{"key", key}}).toJson(QJsonDocument::Compact));
+        QObject::connect(reply, &QNetworkReply::finished, tunnel, [reply, core, spend]() {
+            reply->deleteLater();
+            const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            const auto id = QJsonDocument::fromJson(reply->readAll()).object().value("device_id").toString();
+            if (code == 200 && !QUuid::fromString(id).isNull()) {
+                QSettings().setValue(OmnuvSession::keyDeviceSetting(core), id);
+                emitLine(QStringLiteral("state=device  id=%1").arg(id));
+            } else {
+                emitLine(QStringLiteral("state=device  unknown=%1").arg(code));
+            }
+            (*spend)();
+        });
+        return;
     }
     // Polled, because the library's start is asynchronous and reports through
     // its state rather than through a return value.

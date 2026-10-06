@@ -2277,6 +2277,21 @@ private slots:
         server.answer(server.find("/v1/devices/dev-1/stream-certificate",at+1),503,"{}");
         QTRY_VERIFY(s.m_streamCertificateFor.isEmpty());
     }
+    // A key join learns its device id from Core and keeps it per Core; the
+    // membership's id wins when there is one, and a fixture reads nothing saved.
+    void thisDeviceIsItsMembershipsOrTheKeyJoinsPerCore() {
+        QCOMPARE(OmnuvSession::keyDeviceSetting("https://api.omnuv.com"), OmnuvSession::keyDeviceSetting("https://api.omnuv.com/"));
+        QVERIFY(OmnuvSession::keyDeviceSetting("https://api.omnuv.com") != OmnuvSession::keyDeviceSetting("https://other.example.test"));
+        OmnuvSession::setCoreUrlOverride("https://override.example.test/");
+        QCOMPARE(OmnuvSession::configuredCoreUrl(), QString("https://override.example.test"));
+        OmnuvSession::setCoreUrlOverride(QString());
+        HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
+        QSettings().setValue(OmnuvSession::keyDeviceSetting(s.m_coreUrl), "key-device");
+        QCOMPARE(s.thisDeviceId(), QString());   // a fixture reads nothing saved
+        s.m_tunnel->m_membership=QJsonObject{{"device_id","member-device"}};
+        QCOMPARE(s.thisDeviceId(), QString("member-device"));
+        QSettings().remove(OmnuvSession::keyDeviceSetting(s.m_coreUrl));
+    }
     void withoutAHostTheCertificateRouteAnswersAtOnce() {
         HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
         s.machines()->replace({machine("a","a.internal")}); auto target=s.connectionTarget(0);

@@ -1572,9 +1572,31 @@ void OmnuvSession::collectStreamLogin(const QVariantMap& target, const QString& 
     });
 }
 
+QString OmnuvSession::configuredCoreUrl()
+{
+    if (!coreUrlOverride().isEmpty()) return coreUrlOverride();
+    QString url = QSettings().value(QStringLiteral("omnuv/coreUrl")).toString();
+    if (url.isEmpty()) url = QString::fromLocal8Bit(qgetenv("OMNUV_CORE_URL"));
+    if (url.isEmpty()) url = productionCoreUrl();
+    while (url.endsWith(QLatin1Char('/'))) url.chop(1);
+    return url;
+}
+
+QString OmnuvSession::keyDeviceSetting(const QString& coreUrl)
+{
+    return QStringLiteral("omnuv/keyDevice/") + OmnuvCredentials::origin(coreUrl);
+}
+
+QString OmnuvSession::thisDeviceId() const
+{
+    const auto member = m_tunnel->membership().value("device_id").toString();
+    if (!member.isEmpty()) return member;
+    return m_fixture ? QString() : QSettings().value(keyDeviceSetting(m_coreUrl)).toString();
+}
+
 void OmnuvSession::registerStreamCertificate(bool force)
 {
-    const auto device = m_tunnel->membership().value("device_id").toString();
+    const auto device = thisDeviceId();
     if (!signedIn() || device.isEmpty() || (!m_fixture && !OmnuvCredentials::secureCore(m_coreUrl))) return;
     const auto key = m_coreUrl + QLatin1Char(' ') + device;
     if (!force && m_streamCertificateFor == key) return;
@@ -1635,7 +1657,7 @@ void OmnuvSession::adoptStreamIdentity(QObject* computerManager, const QVariantM
         registerStreamCertificate(true);
         askStreamIdentity(qobject_cast<ComputerManager*>(computers)->getComputers().at(now), computers, target, kAdmitTries);
     };
-    if (!m_tunnel->membership().value("device_id").toString().isEmpty()) { begin(); return; }
+    if (!thisDeviceId().isEmpty()) { begin(); return; }
     // **The device id is the tunnel service's, read when it answers** (run
     // 121f28f1, 6 October 2026: `pair-machine` asked before its first reading
     // and paired by PIN without asking Core anything). Waited for, bounded;
@@ -1643,7 +1665,7 @@ void OmnuvSession::adoptStreamIdentity(QObject* computerManager, const QVariantM
     auto* waiting = new QObject(m_adoptScope);
     auto started = std::make_shared<bool>(false);
     connect(m_tunnel, &OmnuvTunnel::changed, waiting, [this, waiting, begin, started]() {
-        if (*started || m_tunnel->membership().value("device_id").toString().isEmpty()) return;
+        if (*started || thisDeviceId().isEmpty()) return;
         *started = true;
         waiting->deleteLater();
         begin();
@@ -1661,7 +1683,7 @@ void OmnuvSession::askStreamIdentity(NvComputer* computer, QObject* computerMana
 {
     const auto host = target.value("host").toString();
     if (!m_adoptScope || targetRow(target) < 0) { delete m_adoptScope; emit streamIdentityAnswered(host, false); return; }
-    const auto device = m_tunnel->membership().value("device_id").toString();
+    const auto device = thisDeviceId();
     auto reply = m_net.get(request(QStringLiteral("/v1/instances/%1/stream-identity?device=%2")
         .arg(target.value("id").toString(), device), true));
     connect(m_adoptScope, &QObject::destroyed, reply, [reply]() { reply->disconnect(); reply->abort(); reply->deleteLater(); });
