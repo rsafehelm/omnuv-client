@@ -111,6 +111,15 @@ void OmnuvEnrol::start(const QStringList& args, QObject* parent)
         QStringLiteral("key-stdin"),
         QStringLiteral("Read the one-time key from standard input instead of the command line."));
     parser.addOption(keyStdinOption);
+    // **A move, confirmed on the command line** (6 October 2026). A device
+    // that already holds an identity — a join by key leaves one and no
+    // membership — is asked to confirm a move before a signed-in join, as the
+    // window asks with a dialog. `--move` is that confirmation, given in
+    // advance; without it the join stops and says so, as before.
+    QCommandLineOption moveOption(
+        QStringLiteral("move"),
+        QStringLiteral("Confirm moving this device from the network it holds to this account's."));
+    parser.addOption(moveOption);
 
     if (!parser.parse(args)) {
         fputs(qPrintable(parser.errorText() + QLatin1Char('\n')), stderr);
@@ -221,11 +230,14 @@ void OmnuvEnrol::start(const QStringList& args, QObject* parent)
     // give-up is that it is still busy. So a run that has been busy and is now
     // Unknown and idle has been given up on, whatever words came with it.
     auto wasBusy = std::make_shared<bool>(false);
-    QObject::connect(tunnel, &OmnuvTunnel::changed, tunnel, [tunnel, wasBusy]() {
+    const bool move = parser.isSet(moveOption) && session != nullptr;
+    QObject::connect(tunnel, &OmnuvTunnel::changed, tunnel, [tunnel, wasBusy, session, move]() {
         if (tunnel->busy()) {
             *wasBusy = true;
             return;
         }
+        // The move's prompt stops the join; `--move` answers it below.
+        if (move && !session->networkMovePrompt().isEmpty()) return;
         if (*wasBusy && tunnel->reading() == omnuv::Reading::Unknown) {
             verdict(QStringLiteral("state=failed  reason=%1").arg(tunnel->state()), 1);
         }
@@ -234,6 +246,16 @@ void OmnuvEnrol::start(const QStringList& args, QObject* parent)
     QTimer::singleShot(kDeadlineMs, tunnel, []() {
         verdict(QStringLiteral("state=failed  reason=the join did not finish in two minutes"), 1);
     });
+
+    if (move) {
+        auto moved = std::make_shared<bool>(false);
+        QObject::connect(session, &OmnuvSession::enrollmentChanged, tunnel, [session, moved]() {
+            if (*moved || session->networkMovePrompt().isEmpty()) return;
+            *moved = true;
+            emitLine(QStringLiteral("state=moving  reason=--move confirmed the move"));
+            session->confirmNetworkMove();
+        });
+    }
 
     emitLine(key.isEmpty() ? QStringLiteral("state=joining  mode=resume")
                            : QStringLiteral("state=joining  mode=enrol"));
