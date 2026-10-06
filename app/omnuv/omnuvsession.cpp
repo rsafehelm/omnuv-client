@@ -8,6 +8,7 @@
 #include <QUuid>
 #include <QMap>
 #include <algorithm>
+#include <memory>
 
 #include "backend/computermanager.h"
 #include "backend/nvcomputer.h"
@@ -70,6 +71,8 @@ static const int kLoginIntervalMs = 5 * 1000;
 // and Sunshine's restart once nobody streams.
 static const int kAdmitTries = 30;
 static const int kAdmitIntervalMs = 3 * 1000;
+// How long the identity question waits for the tunnel service's first reading.
+static const int kMembershipWaitMs = 10 * 1000;
 
 namespace {
 bool nonemptyString(const QJsonObject& object, const char* key)
@@ -1618,14 +1621,38 @@ void OmnuvSession::adoptStreamIdentity(QObject* computerManager, const QVariantM
     const auto host = target.value("host").toString();
     auto manager = qobject_cast<ComputerManager*>(computerManager);
     const int row = hostRowFor(computerManager, host);
-    if (manager == nullptr || row < 0 || targetRow(target) < 0
-        || m_tunnel->membership().value("device_id").toString().isEmpty()) {
+    if (manager == nullptr || row < 0 || targetRow(target) < 0) {
         emit streamIdentityAnswered(host, false);
         return;
     }
     m_adoptScope = new QObject(this);
-    registerStreamCertificate(true);
-    askStreamIdentity(manager->getComputers().at(row), computerManager, target, kAdmitTries);
+    QPointer<QObject> computers(computerManager);
+    auto begin = [this, computers, target, host]() {
+        const int now = computers ? hostRowFor(computers, host) : -1;
+        if (now < 0) { delete m_adoptScope; emit streamIdentityAnswered(host, false); return; }
+        registerStreamCertificate(true);
+        askStreamIdentity(qobject_cast<ComputerManager*>(computers)->getComputers().at(now), computers, target, kAdmitTries);
+    };
+    if (!m_tunnel->membership().value("device_id").toString().isEmpty()) { begin(); return; }
+    // **The device id is the tunnel service's, read when it answers** (run
+    // 121f28f1, 6 October 2026: `pair-machine` asked before its first reading
+    // and paired by PIN without asking Core anything). Waited for, bounded;
+    // the wait has a scope of its own, so it ends when the question starts.
+    auto* waiting = new QObject(m_adoptScope);
+    auto started = std::make_shared<bool>(false);
+    connect(m_tunnel, &OmnuvTunnel::changed, waiting, [this, waiting, begin, started]() {
+        if (*started || m_tunnel->membership().value("device_id").toString().isEmpty()) return;
+        *started = true;
+        waiting->deleteLater();
+        begin();
+    });
+    QTimer::singleShot(kMembershipWaitMs, waiting, [this, host, started]() {
+        if (*started) return;
+        qInfo().noquote() << "omnuv: pairing by certificate: this device has no network membership; pairing by PIN";
+        delete m_adoptScope;
+        emit streamIdentityAnswered(host, false);
+    });
+    m_tunnel->check();
 }
 
 void OmnuvSession::askStreamIdentity(NvComputer* computer, QObject* computerManager, const QVariantMap& target, int triesLeft)
