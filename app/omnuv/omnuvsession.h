@@ -35,6 +35,8 @@
 #include "enrollmentjournal.h"
 
 class OmnuvPairing;
+class NvComputer;
+class QJsonObject;
 
 class OmnuvSession : public QObject
 {
@@ -364,6 +366,28 @@ public:
     Q_INVOKABLE void finishPairing(bool delivered = false);
     Q_INVOKABLE void watchPairing(QObject* manager);
 
+    // **Pairing by certificate** (omnuv's docs/plans/pairing-by-certificate.md,
+    // phase 4). GameStream pairing only trades two certificates, and Core
+    // already holds an authenticated channel to both ends, so they travel
+    // through it: this device's certificate is registered with Core, Core sends
+    // it to every streaming machine of the project, and the machine's own
+    // converger writes it into Sunshine's paired list. Play then asks Core for
+    // the machine's certificate and saves the host as paired. No PIN, no
+    // login. Only public certificates move; each private key stays put.
+    //
+    // Registered once per device and Core, and again on every Play (the same
+    // certificate again changes nothing at Core).
+    void registerStreamCertificate(bool force = false);
+    // Asks Core for the machine's streaming identity and, when Sunshine
+    // already admits this device, pins its certificate on the saved host.
+    // Answers with streamIdentityAnswered(address, adopted); not adopted means
+    // pair as before (an older Core, agent or image answers 404).
+    Q_INVOKABLE void adoptStreamIdentity(QObject* computerManager, const QVariantMap& target);
+    enum class Adoption { Adopted, Wait, No };
+    // The decision alone, for the test: what Core answered, against the saved
+    // host it would be pinned on.
+    static Adoption adoptIdentity(NvComputer* computer, int status, const QJsonObject& answer);
+
 
 
 signals:
@@ -403,6 +427,10 @@ signals:
     // — a status, an API message — and never shows on its own.
     void pairingFailed(const QString& why, const QString& detail);
 
+    // The certificate route's answer for the host at `address`: adopted, or
+    // not, and the view pairs as before.
+    void streamIdentityAnswered(const QString& address, bool adopted);
+
 private:
     friend class OmnuvSessionTest;
     void invalidateContext();
@@ -411,6 +439,11 @@ private:
     // hostRowFor must not find again in the meantime.
     QSet<QString> m_staleHosts;
     quint64 m_identityRequest = 0;
+    // Pairing by certificate: the device and Core last registered with, and
+    // the scope of the one identity question in flight.
+    QString m_streamCertificateFor;
+    QPointer<QObject> m_adoptScope;
+    void askStreamIdentity(NvComputer* computer, QObject* computerManager, const QVariantMap& target, int triesLeft);
     quint64 m_machineRequest = 0;
     quint64 m_authAttempt = 0;
     bool m_pollPending = false;

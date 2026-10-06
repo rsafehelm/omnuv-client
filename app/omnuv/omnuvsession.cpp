@@ -11,6 +11,7 @@
 
 #include "backend/computermanager.h"
 #include "backend/nvcomputer.h"
+#include "backend/identitymanager.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -64,6 +65,11 @@ static const int kRefreshHiddenMs = 60 * 1000;
 // returns it, and a `waiting` read has no credential to spend.
 static const int kLoginTries = 12;
 static const int kLoginIntervalMs = 5 * 1000;
+// How long Play waits for a machine to admit a device Core already allows:
+// the agent's pass and the machine's converger (each about a minute at most),
+// and Sunshine's restart once nobody streams.
+static const int kAdmitTries = 30;
+static const int kAdmitIntervalMs = 3 * 1000;
 
 namespace {
 bool nonemptyString(const QJsonObject& object, const char* key)
@@ -949,6 +955,8 @@ void OmnuvSession::refresh(bool everything)
         return;
     }
 
+    registerStreamCertificate();
+
     // The estate follows the same tick, and only while somebody can see it:
     // the tray reads machines and nothing else. Before the project check,
     // because the organization's own reads need no project.
@@ -1461,6 +1469,7 @@ int OmnuvSession::targetRow(const QVariantMap& target) const
 
 void OmnuvSession::finishPairing(bool delivered)
 {
+    delete m_adoptScope;
     m_pairing->cancel();
     auto scope = m_pairScope;
     m_pairScope = nullptr;
@@ -1555,6 +1564,102 @@ void OmnuvSession::collectStreamLogin(const QVariantMap& target, const QString& 
         m_pairing->deliver(target.value("host").toString(), pin, QSysInfo::machineHostName(),
                           m_tunnel->address(), o["user"].toString(), o["password"].toString(),
                           m_machines->privateIpAt(targetRow(target)));
+    });
+}
+
+void OmnuvSession::registerStreamCertificate(bool force)
+{
+    const auto device = m_tunnel->membership().value("device_id").toString();
+    if (!signedIn() || device.isEmpty() || (!m_fixture && !OmnuvCredentials::secureCore(m_coreUrl))) return;
+    const auto key = m_coreUrl + QLatin1Char(' ') + device;
+    if (!force && m_streamCertificateFor == key) return;
+    m_streamCertificateFor = key;
+    const auto certificate = QString::fromLatin1(IdentityManager::get()->getCertificate());
+    auto reply = m_net.put(request(QStringLiteral("/v1/devices/%1/stream-certificate").arg(device), true),
+        QJsonDocument(QJsonObject{{"certificate", certificate}}).toJson());
+    connect(reply, &QNetworkReply::finished, this, [this, reply, key]() {
+        reply->deleteLater();
+        const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (code == 200) {
+            qInfo().noquote() << "omnuv: this device's streaming certificate is registered:"
+                              << QJsonDocument::fromJson(reply->readAll()).object().value("fingerprint").toString().left(16);
+            return;
+        }
+        // 404 is an older Core, or one with the switch off: pairing by PIN
+        // goes on as before. Anything else is asked again on a later tick.
+        qInfo().noquote() << "omnuv: the streaming certificate was not registered:" << code << reply->errorString();
+        if (code != 404 && m_streamCertificateFor == key) m_streamCertificateFor.clear();
+    });
+}
+
+OmnuvSession::Adoption OmnuvSession::adoptIdentity(NvComputer* computer, int status, const QJsonObject& answer)
+{
+    if (computer == nullptr || status != 200) return Adoption::No;
+    const auto unique = answer.value("unique_id").toString();
+    const QSslCertificate certificate(answer.value("certificate").toString().toLatin1(), QSsl::Pem);
+    {
+        QReadLocker lock(&computer->lock);
+        // The host that answered at this address must be the Sunshine Core
+        // describes: a certificate is never pinned on another machine's entry.
+        if (unique.isEmpty() || computer->uuid.compare(unique, Qt::CaseInsensitive) != 0) return Adoption::No;
+    }
+    if (certificate.isNull()) return Adoption::No;
+    if (!answer.value("admitted").toBool()) {
+        return answer.value("allowed").toBool() ? Adoption::Wait : Adoption::No;
+    }
+    QWriteLocker lock(&computer->lock);
+    computer->serverCert = certificate;
+    return Adoption::Adopted;
+}
+
+void OmnuvSession::adoptStreamIdentity(QObject* computerManager, const QVariantMap& target)
+{
+    delete m_adoptScope;
+    const auto host = target.value("host").toString();
+    auto manager = qobject_cast<ComputerManager*>(computerManager);
+    const int row = hostRowFor(computerManager, host);
+    if (manager == nullptr || row < 0 || targetRow(target) < 0
+        || m_tunnel->membership().value("device_id").toString().isEmpty()) {
+        emit streamIdentityAnswered(host, false);
+        return;
+    }
+    m_adoptScope = new QObject(this);
+    registerStreamCertificate(true);
+    askStreamIdentity(manager->getComputers().at(row), computerManager, target, kAdmitTries);
+}
+
+void OmnuvSession::askStreamIdentity(NvComputer* computer, QObject* computerManager, const QVariantMap& target, int triesLeft)
+{
+    const auto host = target.value("host").toString();
+    if (!m_adoptScope || targetRow(target) < 0) { delete m_adoptScope; emit streamIdentityAnswered(host, false); return; }
+    const auto device = m_tunnel->membership().value("device_id").toString();
+    auto reply = m_net.get(request(QStringLiteral("/v1/instances/%1/stream-identity?device=%2")
+        .arg(target.value("id").toString(), device), true));
+    connect(m_adoptScope, &QObject::destroyed, reply, [reply]() { reply->disconnect(); reply->abort(); reply->deleteLater(); });
+    QPointer<QObject> manager(computerManager);
+    connect(reply, &QNetworkReply::finished, m_adoptScope, [this, reply, computer, manager, target, host, triesLeft]() {
+        reply->deleteLater();
+        const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        // The computer is the manager's; it is asked for again by address so
+        // an entry deleted meanwhile is never touched.
+        const int row = manager ? hostRowFor(manager, host) : -1;
+        auto computers = manager ? qobject_cast<ComputerManager*>(manager)->getComputers() : QVector<NvComputer*>();
+        NvComputer* current = row >= 0 && computers.at(row) == computer ? computer : nullptr;
+        const auto verdict = adoptIdentity(current, code, QJsonDocument::fromJson(reply->readAll()).object());
+        qInfo().noquote() << "omnuv: pairing by certificate:" << host << "answered" << code
+                          << (verdict == Adoption::Adopted ? "adopted" : verdict == Adoption::Wait ? "waiting" : "not here")
+                          << "tries left" << (triesLeft - 1);
+        if (verdict == Adoption::Wait && triesLeft > 1) {
+            QTimer::singleShot(kAdmitIntervalMs, m_adoptScope, [this, computer, manager, target, triesLeft]() {
+                askStreamIdentity(computer, manager, target, triesLeft - 1);
+            });
+            return;
+        }
+        delete m_adoptScope;
+        if (verdict == Adoption::Adopted) {
+            qobject_cast<ComputerManager*>(manager)->clientSideAttributeUpdated(current);
+        }
+        emit streamIdentityAnswered(host, verdict == Adoption::Adopted);
     });
 }
 

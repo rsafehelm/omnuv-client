@@ -8,6 +8,7 @@
 #include "../signin.h"
 #include "../../backend/nvpairingmanager.h"
 #include "../../backend/nvcomputer.h"
+#include "../../backend/identitymanager.h"
 #include <QElapsedTimer>
 #include <unistd.h>
 #include <sys/un.h>
@@ -2231,6 +2232,61 @@ private slots:
         a["private_name"]="changed.internal"; s.machines()->replace({b,a}); QCOMPARE(s.targetRow(target),-1);
         a["private_name"]="a.internal"; s.machines()->replace({a,b}); QCOMPARE(s.targetRow(target),0);
         s.signOut(); s.m_token="different-account"; QCOMPARE(s.targetRow(target),-1);
+    }
+    // Pairing by certificate (phase 4): Core's answer is pinned only on the
+    // host that is the Sunshine Core describes, only once it admits this
+    // device, and only as one parseable certificate.
+    void aStreamIdentityIsAdoptedOnlyWhereItBelongs() {
+        const auto pem=QString::fromLatin1(IdentityManager::get()->getCertificate());
+        QVERIFY(pem.contains("BEGIN CERTIFICATE"));
+        auto answer=[&](const char* unique,bool admitted,bool allowed,const QString& certificate) {
+            return QJsonObject{{"unique_id",unique},{"certificate",certificate},{"admitted",admitted},{"allowed",allowed}};
+        };
+        using A=OmnuvSession::Adoption;
+        NvComputer computer{}; computer.uuid="E014F010-AAAA";
+        QCOMPARE(OmnuvSession::adoptIdentity(&computer,200,answer("e014f010-aaaa",false,true,pem)),A::Wait);
+        QVERIFY(computer.serverCert.isNull());
+        QCOMPARE(OmnuvSession::adoptIdentity(&computer,200,answer("E014F010-AAAA",false,false,pem)),A::No);
+        QCOMPARE(OmnuvSession::adoptIdentity(&computer,200,answer("another-sunshine",true,true,pem)),A::No);
+        QCOMPARE(OmnuvSession::adoptIdentity(&computer,200,answer("E014F010-AAAA",true,true,"not a certificate")),A::No);
+        QCOMPARE(OmnuvSession::adoptIdentity(&computer,404,answer("E014F010-AAAA",true,true,pem)),A::No);
+        QCOMPARE(OmnuvSession::adoptIdentity(nullptr,200,answer("E014F010-AAAA",true,true,pem)),A::No);
+        QVERIFY(computer.serverCert.isNull());
+        QCOMPARE(OmnuvSession::adoptIdentity(&computer,200,answer("e014f010-aaaa",true,true,pem)),A::Adopted);
+        QCOMPARE(computer.serverCert.toPem(),QSslCertificate(pem.toLatin1(),QSsl::Pem).toPem());
+    }
+    void theDeviceCertificateIsRegisteredOncePerDevice() {
+        HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
+        // No membership, no device: nothing is asked.
+        s.registerStreamCertificate(); QTest::qWait(50);
+        QCOMPARE(server.count("/v1/devices/dev-1/stream-certificate"),0);
+        s.m_tunnel->m_membership=QJsonObject{{"device_id","dev-1"},{"network_id","n"}};
+        s.registerStreamCertificate();
+        QTRY_COMPARE(server.count("/v1/devices/dev-1/stream-certificate"),1);
+        const int at=server.find("/v1/devices/dev-1/stream-certificate");
+        QCOMPARE(server.calls[at].method,QByteArray("PUT"));
+        QCOMPARE(QJsonDocument::fromJson(server.calls[at].body).object().value("certificate").toString(),
+                 QString::fromLatin1(IdentityManager::get()->getCertificate()));
+        server.answer(at,200,R"({"device_id":"dev-1","fingerprint":"ab"})");
+        s.registerStreamCertificate(); QTest::qWait(80);
+        QCOMPARE(server.count("/v1/devices/dev-1/stream-certificate"),1);
+        // Play registers again, whatever was registered.
+        s.registerStreamCertificate(true);
+        QTRY_COMPARE(server.count("/v1/devices/dev-1/stream-certificate"),2);
+        // A failure other than 404 is asked again on a later tick.
+        server.answer(server.find("/v1/devices/dev-1/stream-certificate",at+1),503,"{}");
+        QTRY_VERIFY(s.m_streamCertificateFor.isEmpty());
+    }
+    void withoutAHostTheCertificateRouteAnswersAtOnce() {
+        HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
+        s.machines()->replace({machine("a","a.internal")}); auto target=s.connectionTarget(0);
+        s.m_tunnel->m_membership=QJsonObject{{"device_id","dev-1"}};
+        QSignalSpy answered(&s,&OmnuvSession::streamIdentityAnswered);
+        s.adoptStreamIdentity(nullptr,target);
+        QCOMPARE(answered.count(),1);
+        QCOMPARE(answered.first().at(0).toString(),QString("a.internal"));
+        QCOMPARE(answered.first().at(1).toBool(),false);
+        QTest::qWait(50); QCOMPARE(server.count("/v1/instances/a/stream-identity?device=dev-1"),0);
     }
     void cancelledDeploymentLookupCannotCollectCredentials() {
         HeldServer server; qputenv("OMNUV_FIXTURE_URL",server.url()); OmnuvSession s; prepare(s);
