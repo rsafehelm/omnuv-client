@@ -47,6 +47,10 @@ Item {
     property bool delivering: false
     property bool chooseApp: false
     property string justPaired: ""
+    // Pairing by certificate: the host whose identity is being asked of Core,
+    // and the one already asked, which then pairs by PIN if it must.
+    property string adopting: ""
+    property string certificateAsked: ""
     property var launchApps: null
     property ComputerModel hosts: createHosts()
 
@@ -149,6 +153,8 @@ Item {
         activeTarget = null
         chooseApp = false
         pairing.close()
+        adopting = ""
+        certificateAsked = ""
         Omnuv.finishPairing()
         // Keep slots until the cancelled pairing worker or pending add reports
         // completion, so its callback cannot finish a newer attempt.
@@ -247,7 +253,15 @@ Item {
         var alreadyPaired = target.host === justPaired
         justPaired = ""
         if (!item.hostPaired && !alreadyPaired) {
-            if (delivering) return
+            if (delivering || adopting === target.host) return
+            // Core's certificates first: no PIN and no login when the
+            // machine already admits this device. Asked once per Play.
+            if (certificateAsked !== target.host) {
+                adopting = target.host
+                Omnuv.adoptStreamIdentity(ComputerManager, target)
+                return
+            }
+            certificateAsked = ""
             var pin = hosts.generatePinString()
             pairing.machine = Omnuv.machines.nameAt(row)
             pairing.host = target.host
@@ -494,6 +508,15 @@ Item {
             else networkMove.close()
         }
         function onHostPairingFinished(address, error) { root.pairingFinished(address, error) }
+        function onStreamIdentityAnswered(address, adopted) {
+            if (root.adopting !== address) return
+            root.adopting = ""
+            var target = root.activeTarget
+            if (!target || target.host !== address || !root.validTarget(target)) return
+            if (adopted) root.justPaired = address
+            else root.certificateAsked = address
+            root.openHost(target)
+        }
         function onDeployFinished(ok, text) { if (!ok) message.show(text) }
         function onDeleteFinished(ok, text) {
             if (ok) root.noteRemoving(deleteMachine.targetId, deleteMachine.targetName, deleteMachine.targetApp)
