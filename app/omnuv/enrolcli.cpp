@@ -248,12 +248,21 @@ void OmnuvEnrol::start(const QStringList& args, QObject* parent)
     });
 
     if (move) {
-        auto moved = std::make_shared<bool>(false);
-        QObject::connect(session, &OmnuvSession::enrollmentChanged, tunnel, [session, moved]() {
-            if (*moved || session->networkMovePrompt().isEmpty()) return;
-            *moved = true;
-            emitLine(QStringLiteral("state=moving  reason=--move confirmed the move"));
-            session->confirmNetworkMove();
+        // **Confirmed again when asked again, three times at most.** The
+        // session asks anew when the identity's revision changed after the
+        // last confirmation (the window's dialog does the same), and a
+        // service just stopped by the run's own leave moves on between two
+        // readings (run a2057d1c, 6 October 2026).
+        auto moves = std::make_shared<int>(0);
+        QObject::connect(session, &OmnuvSession::enrollmentChanged, tunnel, [session, moves]() {
+            const QString prompt = session->networkMovePrompt();
+            if (prompt.isEmpty()) return;
+            if (++*moves > 3) {
+                verdict(QStringLiteral("state=failed  reason=the move was asked for a fourth time: %1").arg(prompt), 1);
+                return;
+            }
+            emitLine(QStringLiteral("state=moving  confirmation=%1").arg(*moves));
+            QMetaObject::invokeMethod(session, [session]() { session->confirmNetworkMove(); }, Qt::QueuedConnection);
         });
     }
 

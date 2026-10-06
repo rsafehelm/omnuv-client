@@ -1362,6 +1362,8 @@ void OmnuvSession::fetchDeviceKey()
         const auto revision = m_tunnel->membershipRevision();
         if ((m_tunnel->hasIdentity() || !current.isEmpty()) && !previouslyRevoked
             && m_authorizedMoveRevision != revision) {
+            qInfo().noquote() << "omnuv: network move asked" << (m_authorizedMoveRevision.isEmpty()
+                ? QStringLiteral("for the first time") : QStringLiteral("again: the identity changed after its confirmation"));
             m_networkMoveRevision = revision; m_networkMoveContext = m_context;
             m_networkMovePrompt = tr("Move this device to %1 at %2? This disconnects its current network. Before confirming, revoke the old device in its original console. Current membership: %3. The current identity is kept if you cancel.")
                 .arg(projectName(), m_coreUrl, current.isEmpty() ? tr("unverified; its original account must identify it")
