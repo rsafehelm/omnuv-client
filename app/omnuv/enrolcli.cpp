@@ -254,7 +254,7 @@ void OmnuvEnrol::start(const QStringList& args, QObject* parent)
         // service just stopped by the run's own leave moves on between two
         // readings (run a2057d1c, 6 October 2026).
         auto moves = std::make_shared<int>(0);
-        QObject::connect(session, &OmnuvSession::enrollmentChanged, tunnel, [session, moves]() {
+        QObject::connect(session, &OmnuvSession::enrollmentChanged, tunnel, [session, moves, wasBusy]() {
             const QString prompt = session->networkMovePrompt();
             if (prompt.isEmpty()) return;
             if (++*moves > 3) {
@@ -262,6 +262,11 @@ void OmnuvEnrol::start(const QStringList& args, QObject* parent)
                 return;
             }
             emitLine(QStringLiteral("state=moving  confirmation=%1").arg(*moves));
+            // The join that follows clears the last error before it is busy
+            // again, and that clearing is a change: read as the end of a busy
+            // join, it printed the old sentence as this run's verdict (run
+            // b0d82c89). The watcher waits for the new join to be busy first.
+            *wasBusy = false;
             QMetaObject::invokeMethod(session, [session]() { session->confirmNetworkMove(); }, Qt::QueuedConnection);
         });
     }
