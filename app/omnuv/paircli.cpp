@@ -4,6 +4,7 @@
 #include "omnuvsession.h"
 
 #include "backend/computermanager.h"
+#include "backend/nvhttp.h"
 #include "cli/pair.h"
 #include "streaming/streamutils.h"
 
@@ -58,6 +59,10 @@ void verdict(const QString& line, int code)
 // and for the same reason: a hung run must end with a sentence rather than
 // leave a harness waiting.
 const int kDeadlineMs = 120 * 1000;
+// **Pairing by certificate goes first** (phase 4 of omnuv's
+// docs/plans/pairing-by-certificate.md), and may wait up to 90 s for the
+// machine to admit this device; the PIN keeps its own two minutes after it.
+const int kCertificateMs = 100 * 1000;
 
 } // namespace
 
@@ -218,7 +223,7 @@ void OmnuvPairCli::start(const QStringList& args, QObject* parent)
                      });
 
     QObject::connect(launcher, &CliPair::Launcher::success, launcher,
-                     []() { verdict(QStringLiteral("state=paired"), 0); });
+                     []() { verdict(QStringLiteral("state=paired  by=pin"), 0); });
 
     QObject::connect(launcher, &CliPair::Launcher::failed, launcher,
                      [](const QString& text) {
@@ -232,13 +237,72 @@ void OmnuvPairCli::start(const QStringList& args, QObject* parent)
     // count and whether anything ever matched are the two facts that separate
     // a machine missing from the project, a fetch that never landed, and a
     // host that would not answer.
-    QTimer::singleShot(kDeadlineMs, launcher, [session, host, delivered]() {
-        verdict(QStringLiteral("state=failed  reason=the pairing did not finish in two minutes"
-                               "  machines=%1  matched=%2  host=%3")
-                    .arg(session->machines()->rowCount())
-                    .arg(*delivered ? QStringLiteral("yes") : QStringLiteral("no"), host),
-                1);
-    });
+    auto byPin = [launcher, computers, session, host, delivered]() {
+        QTimer::singleShot(kDeadlineMs, launcher, [session, host, delivered]() {
+            verdict(QStringLiteral("state=failed  reason=the pairing did not finish in two minutes"
+                                   "  machines=%1  matched=%2  host=%3")
+                        .arg(session->machines()->rowCount())
+                        .arg(*delivered ? QStringLiteral("yes") : QStringLiteral("no"), host),
+                    1);
+        });
+        launcher->execute(computers);
+    };
 
-    launcher->execute(computers);
+    // **The certificate first.** The host is added, the machine found in the
+    // session's list, and Core asked for its streaming identity; when the
+    // machine admits this device, its certificate is pinned and the machine
+    // itself is asked, over HTTPS with this device's certificate, whether it
+    // counts this device as paired. Only its "1" is a pairing. Anything else
+    // goes on to the PIN, which is what an older Core, agent or image gets.
+    auto asked = std::make_shared<bool>(false);
+    auto fallen = std::make_shared<bool>(false);
+    auto fallBack = [byPin, fallen](const QString& why) {
+        if (*fallen || done) return;
+        *fallen = true;
+        emitLine(QStringLiteral("state=certificate-unavailable  reason=%1").arg(why));
+        byPin();
+    };
+    auto ask = std::make_shared<std::function<void()>>();
+    *ask = [session, computers, machineId, host, asked, fallen]() {
+        if (*asked || *fallen || session->hostRowFor(computers, host) < 0) return;
+        MachineModel* machines = session->machines();
+        for (int i = 0; i < machines->rowCount(); ++i) {
+            if (machines->idAt(i) == machineId) {
+                *asked = true;
+                session->adoptStreamIdentity(computers, session->connectionTarget(i));
+                return;
+            }
+        }
+    };
+    QObject::connect(computers, &ComputerManager::computerAddCompleted, session,
+                     [ask, fallBack](const QVariant& success, const QVariant&) {
+                         if (!success.toBool()) { fallBack(QStringLiteral("the machine did not answer")); return; }
+                         (*ask)();
+                     });
+    QObject::connect(session->machines(), &MachineModel::countChanged, session, [ask]() { (*ask)(); });
+    QObject::connect(session, &OmnuvSession::streamIdentityAnswered, session,
+                     [session, computers, host, fallBack, fallen](const QString& address, bool adopted) {
+                         if (*fallen || address != host) return;
+                         if (!adopted) { fallBack(QStringLiteral("the machine does not admit this device by certificate")); return; }
+                         const int row = session->hostRowFor(computers, host);
+                         NvComputer* computer = row >= 0 ? computers->getComputers().at(row) : nullptr;
+                         QString status;
+                         if (computer != nullptr) {
+                             try {
+                                 NvHTTP http(computer);
+                                 status = NvHTTP::getXmlString(http.getServerInfo(NvHTTP::NvLogLevel::NVLL_ERROR), QStringLiteral("PairStatus"));
+                             } catch (...) {
+                                 status = QStringLiteral("unanswered");
+                             }
+                         }
+                         if (status != QStringLiteral("1")) {
+                             fallBack(QStringLiteral("the machine answered PairStatus=%1").arg(status.isEmpty() ? QStringLiteral("none") : status));
+                             return;
+                         }
+                         verdict(QStringLiteral("state=paired  by=certificate"), 0);
+                     });
+    QTimer::singleShot(kCertificateMs, launcher, [fallBack]() {
+        fallBack(QStringLiteral("no answer in %1 s").arg(kCertificateMs / 1000));
+    });
+    computers->addNewHostManually(host);
 }
