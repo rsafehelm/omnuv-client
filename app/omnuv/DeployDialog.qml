@@ -162,6 +162,7 @@ Dialog {
     function choose(d) {
         if (!d.available) return
         if (chosen === null || chosen.id !== d.id) fill(d)
+        else if (d.serves_models) Omnuv.loadLlmOptions()
         key = Omnuv.newIdempotencyKey()
         refusedField = ""
         refusedText = ""
@@ -198,6 +199,9 @@ Dialog {
     onAboutToShow: {
         if (chosen === null) step = 1
         Omnuv.loadDeployables()
+        // Which cards are free moves with every deployment: read it again at
+        // each opening, as the web form does, never kept from the last one.
+        if (chosen !== null && chosen.serves_models) Omnuv.loadLlmOptions()
     }
     // Focus starts on the chosen tile, else the first that can be had.
     onOpened: Qt.callLater(focusTile)
