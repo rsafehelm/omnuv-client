@@ -30,6 +30,7 @@
 #include <QReadWriteLock>
 #include <QSettings>
 #include <QRegularExpression>
+#include <QLocale>
 #include <QStandardPaths>
 #include <QUrl>
 #include <QUrlQuery>
@@ -2184,6 +2185,164 @@ void OmnuvSession::loadDeployables()
             });
         }
         joined();
+    });
+}
+
+namespace {
+// The web's llm.ts, word for word: what a form says of a layout.
+QString gibOf(double mib) { return QString::number(mib / 1024.0, 'f', 1); }
+
+QString contextWords(qint64 tokens)
+{
+    if (tokens <= 0) return QString();
+    const qint64 step = tokens >= 10000 ? 1000 : 100;
+    const QLocale british(QLocale::English, QLocale::UnitedKingdom);
+    return QObject::tr("about %1 tokens of context").arg(british.toString((tokens / step) * step));
+}
+
+QString whyNotWords(const QJsonObject& w)
+{
+    const QLocale british(QLocale::English, QLocale::UnitedKingdom);
+    const auto code = w.value("code").toString();
+    if (code == QLatin1String("weights_too_large"))
+        return QObject::tr("Does not fit: it needs %1 GiB on each card, and a card offers %2 GiB.")
+            .arg(gibOf(w.value("needed_mib").toDouble()), gibOf(w.value("usable_mib").toDouble()));
+    if (code == QLatin1String("context_too_short"))
+        return QObject::tr("Loads, with room for only %1 tokens of context; %2 is the least offered.")
+            .arg(british.toString(w.value("max_context").toInteger()), british.toString(w.value("min_context").toInteger()));
+    if (code == QLatin1String("heads_not_divisible"))
+        return QObject::tr("This model cannot be divided evenly over that many cards in one machine.");
+    if (code == QLatin1String("uneven_machines")) return QObject::tr("Each machine must hold the same number of cards.");
+    if (code == QLatin1String("link_gate"))
+        return QObject::tr("Fits, and is not offered yet: these cards are on different providers, and a model is split across providers only where they reach each other directly.");
+    if (code == QLatin1String("cross_provider_not_open"))
+        return QObject::tr("Fits, and is not offered here yet: these cards are on different providers, and a model is not split across providers on this site yet.");
+    if (code == QLatin1String("not_cached"))
+        return QObject::tr("Fits, and is not offered here yet: no provider with these cards holds this model.");
+    if (code == QLatin1String("no_free_card")) return QObject::tr("Fits, and these cards are in use now.");
+    if (code == QLatin1String("no_cards")) return QObject::tr("No cards.");
+    // A reason this client does not know is said as Core named it, never
+    // dropped: the choice is greyed out and must say something.
+    return QObject::tr("Not offered (%1).").arg(code);
+}
+
+QString layoutLabel(const QStringList& cards, int machines, int providers)
+{
+    QStringList seen;
+    QMap<QString, int> counts;
+    for (const auto& c : cards) {
+        if (!counts.contains(c)) seen.append(c);
+        counts[c] += 1;
+    }
+    QStringList parts;
+    for (const auto& model : seen) {
+        const int n = counts.value(model);
+        parts.append(cards.size() == 1 || n > 1 ? QStringLiteral("%1 × %2").arg(n).arg(model) : model);
+    }
+    const auto joined = parts.join(QStringLiteral(" + "));
+    if (providers > 1)
+        return QObject::tr("%1 on %2 providers").arg(joined, providers == 2 ? QObject::tr("two") : QString::number(providers));
+    if (machines > 1) return QObject::tr("%1 in %2 machines").arg(joined).arg(machines);
+    return cards.size() > 1 ? QObject::tr("%1 in one machine").arg(joined) : joined;
+}
+}
+
+QString OmnuvSession::crossProviderWords()
+{
+    return tr("This splits the model across two providers. Each provider holding a part of it can read what passes through that part, "
+              "and the parts talk over the internet: a long prompt takes longer to start (about 7 s for 2,000 tokens, measured) "
+              "and answers come at about 20 tokens a second.");
+}
+
+QVariantList OmnuvSession::shapeLlmOptions(const QByteArray& answer)
+{
+    QVariantList models;
+    for (const auto& mv : QJsonDocument::fromJson(answer).object().value("models").toArray()) {
+        const auto m = mv.toObject();
+        QVariantList layouts;
+        bool anyOffered = false;
+        for (const auto& lv : m.value("layouts").toArray()) {
+            const auto l = lv.toObject();
+            QStringList cards;
+            for (const auto& c : l.value("cards").toArray()) cards.append(c.toString());
+            const int machines = l.value("machines").toInt(1);
+            const int providers = l.value("providers").toInt(1);
+            const bool offered = l.value("offered").toBool();
+            const bool fits = l.value("fits").toBool();
+            // asRequest: one machine of one kind of card is `gpu`, as every
+            // other deploy says its cards; anything else is the layout itself.
+            QVariantMap ask;
+            if (!cards.isEmpty()) {
+                const bool alike = std::all_of(cards.begin(), cards.end(), [&](const QString& c) { return c == cards.first(); });
+                if (machines == 1 && providers == 1 && alike)
+                    ask["gpu"] = QVariantMap{{"model", cards.first()}, {"count", int(cards.size())}};
+                else {
+                    ask["llm_layout"] = QVariantMap{{"cards", cards}, {"machines", machines}};
+                    if (providers > 1) ask["spread"] = QStringLiteral("allow");
+                }
+            }
+            const auto optInSaid = l.value("opt_in");
+            const bool optIn = optInSaid.toString() == QLatin1String("cross_provider")
+                || ((optInSaid.isNull() || optInSaid.isUndefined()) && providers > 1);
+            QString words;
+            if (!offered) words = whyNotWords(l.value("why_not").toObject());
+            else {
+                words = contextWords(l.value("max_context").toInteger());
+                if (optIn) words = tr("%1 · split across providers, which you are asked to agree to").arg(words);
+            }
+            anyOffered = anyOffered || offered;
+            layouts.append(QVariantMap{
+                {"key", QStringLiteral("%1/%2/%3").arg(cards.join('+')).arg(machines).arg(providers)},
+                {"label", layoutLabel(cards, machines, providers)},
+                {"words", words},
+                {"offered", offered},
+                {"fits", fits},
+                {"choosable", offered && !ask.isEmpty()},
+                {"split", machines > 1},
+                {"opt_in", optIn},
+                {"machines", machines},
+                {"cards", cards},
+                {"request", ask},
+            });
+        }
+        // ordered: offered, then fits, then the rest; fewer cards, then fewer providers.
+        std::stable_sort(layouts.begin(), layouts.end(), [](const QVariant& a, const QVariant& b) {
+            const auto x = a.toMap(), y = b.toMap();
+            auto rank = [](const QVariantMap& l) { return l.value("offered").toBool() ? 0 : l.value("fits").toBool() ? 1 : 2; };
+            if (rank(x) != rank(y)) return rank(x) < rank(y);
+            const auto cx = x.value("cards").toStringList().size(), cy = y.value("cards").toStringList().size();
+            if (cx != cy) return cx < cy;
+            return x.value("key").toString().section('/', 2).toInt() < y.value("key").toString().section('/', 2).toInt();
+        });
+        models.append(QVariantMap{
+            {"id", m.value("id").toString()},
+            {"display_name", m.value("display_name").toString()},
+            {"weights_gb", m.value("weights_gb").toDouble()},
+            {"none_offered", !anyOffered},
+            {"layouts", layouts},
+        });
+    }
+    return models;
+}
+
+void OmnuvSession::loadLlmOptions()
+{
+    if (!signedIn()) return;
+    const auto context = m_context;
+    auto reply = m_net.get(request(QStringLiteral("/v1/llm/options"), true));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, context]() {
+        reply->deleteLater();
+        if (context != m_context) return;
+        const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const auto bytes = reply->readAll();
+        if (reply->error() == QNetworkReply::NoError) {
+            m_llmModels = shapeLlmOptions(bytes);
+            m_llmProblem.clear();
+            m_llmRead = true;
+        } else {
+            m_llmProblem = code == 0 ? tr("Could not reach Omnuv.") : refusalOf(reply, bytes);
+        }
+        emit llmOptionsChanged();
     });
 }
 

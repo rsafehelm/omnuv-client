@@ -61,6 +61,13 @@ class OmnuvSession : public QObject
     Q_PROPERTY(QVariantList saleGpus READ saleGpus NOTIFY deployablesChanged)
     // Why the catalogue could not be read, in words, or "".
     Q_PROPERTY(QString deployablesProblem READ deployablesProblem NOTIFY deployablesChanged)
+    // An app that serves a model its buyer chooses (`serves_models`): Core's
+    // `GET /v1/llm/options`, each model with its layouts in the order the
+    // form lists them, each layout said as the web says it (llm.ts). Empty
+    // until `loadLlmOptions()` answers; `llmProblem` when it could not.
+    Q_PROPERTY(QVariantList llmModels READ llmModels NOTIFY llmOptionsChanged)
+    Q_PROPERTY(bool llmRead READ llmRead NOTIFY llmOptionsChanged)
+    Q_PROPERTY(QString llmProblem READ llmProblem NOTIFY llmOptionsChanged)
     // The buyer console's address, Core's `console_url` in `/v1/me`, or ""
     // from an older Core: Console ↗ is offered only when it is known, because
     // turning the API's address into the console's is the client inventing a
@@ -261,6 +268,25 @@ public:
     QVariantList saleGpus() const { return m_saleGpus; }
     QString deployablesProblem() const { return m_deployablesProblem; }
 
+    // Read which model fits which cards (`GET /v1/llm/options`).
+    Q_INVOKABLE void loadLlmOptions();
+    QVariantList llmModels() const { return m_llmModels; }
+    bool llmRead() const { return m_llmRead; }
+    QString llmProblem() const { return m_llmProblem; }
+    // Core's answer made into what the form draws, the web's llm.ts 1:1:
+    // models in Core's order, each {id, display_name, weights_gb,
+    // none_offered, layouts}; layouts offered first, then those that fit,
+    // then the rest, fewer cards first, each {key, label, words, offered,
+    // fits, choosable, split, opt_in, machines, cards, request}. `request`
+    // is what `POST /v1/deploy` carries for it: `gpu` for one machine of one
+    // kind of card, else `llm_layout`, with `spread: "allow"` across
+    // providers. Nothing is decided here: a layout is choosable when Core
+    // offers it.
+    static QVariantList shapeLlmOptions(const QByteArray& answer);
+    // What a person agrees to when a model is split across providers, the
+    // web's CROSS_PROVIDER_WORDS.
+    Q_INVOKABLE static QString crossProviderWords();
+
     // Why `name` would be refused for `count` instances, in Core's words
     // (`instances::valid_machine_name`: 1-48 characters, ASCII letters,
     // digits and hyphens, no hyphen at either end), or "". A batch is named
@@ -420,6 +446,7 @@ signals:
     void deployFinished(bool ok, const QString& message);
     void deleteFinished(bool ok, const QString& message);
     void deployablesChanged();
+    void llmOptionsChanged();
     void actionFinished(bool ok, const QString& message);
     // Core's refusal of a deploy: its sentence, the code a client branches on
     // and the field it is about ("" when it names none).
@@ -490,6 +517,9 @@ private:
     QVariantList m_deployables;
     QVariantList m_saleGpus;
     QString m_deployablesProblem;
+    QVariantList m_llmModels;
+    bool m_llmRead = false;
+    QString m_llmProblem;
     bool m_ordering = false;
     void setOrdering(bool ordering);
     void removeAt(const QString& path, const QString& name, bool unprotect = false);

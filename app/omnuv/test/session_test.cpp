@@ -1282,6 +1282,57 @@ private slots:
         QVERIFY(OmnuvSession::nameProblem(QString(47,'x'),2).endsWith("-1: name must be 1-48 characters"));
     }
 
+    // **A model and its cards, said as the web says them** (llm.ts), from
+    // Core's `/v1/llm/options` as production answered it on 14 October 2026
+    // (qwen3.8-27b-fp8, all three cards free), plus a layout across providers
+    // that is greyed out by its gate. Offered first, fewer cards first; one
+    // machine of alike cards asks `gpu`, anything else `llm_layout`, with
+    // `spread` only across providers; a split is several machines.
+    void aModelsLayoutsAreSaidAndAskedAsTheWebDoes() {
+        const QByteArray answer = R"({"model_set":"2026-10-c","models":[{"id":"qwen3.8-27b-fp8","display_name":"Qwen 3.8 27B","weights_gb":30.9,"layouts":[
+            {"cards":["RTX 3090"],"machines":1,"providers":1,"fits":false,"offered":false,"why_not":{"code":"weights_too_large","needed_mib":32087,"usable_mib":23347},"max_context":0},
+            {"cards":["RTX 3090","RTX 3090"],"machines":1,"providers":1,"fits":true,"offered":true,"why_not":null,"max_context":102442},
+            {"cards":["RTX 3090","RTX 3090"],"machines":2,"providers":1,"fits":true,"offered":true,"why_not":null,"max_context":32431},
+            {"cards":["RTX 3090","RTX 4090"],"machines":2,"providers":2,"fits":true,"offered":true,"why_not":null,"max_context":32298,"opt_in":"cross_provider"},
+            {"cards":["RTX 4090","RTX 4090"],"machines":2,"providers":2,"fits":true,"offered":false,"why_not":{"code":"cross_provider_not_open"},"max_context":32298}]},
+            {"id":"none","display_name":"Nothing","weights_gb":1,"layouts":[{"cards":["RTX 3090"],"machines":1,"providers":1,"fits":true,"offered":false,"why_not":{"code":"no_free_card"},"max_context":4000}]}]})";
+        const auto models = OmnuvSession::shapeLlmOptions(answer);
+        QCOMPARE(models.size(), 2);
+        const auto m = models[0].toMap();
+        QCOMPARE(m.value("id").toString(), QString("qwen3.8-27b-fp8"));
+        QVERIFY(!m.value("none_offered").toBool());
+        QVERIFY(models[1].toMap().value("none_offered").toBool());
+        const auto ls = m.value("layouts").toList();
+        QStringList keys, labels, words;
+        for (const auto& v : ls) {
+            keys << v.toMap().value("key").toString();
+            labels << v.toMap().value("label").toString();
+            words << v.toMap().value("words").toString();
+        }
+        QCOMPARE(keys, QStringList({"RTX 3090+RTX 3090/1/1", "RTX 3090+RTX 3090/2/1", "RTX 3090+RTX 4090/2/2",
+                                    "RTX 4090+RTX 4090/2/2", "RTX 3090/1/1"}));
+        QCOMPARE(labels, QStringList({"2 × RTX 3090 in one machine", "2 × RTX 3090 in 2 machines",
+                                      "RTX 3090 + RTX 4090 on two providers", "2 × RTX 4090 on two providers", "1 × RTX 3090"}));
+        QCOMPARE(words[0], QString("about 102,000 tokens of context"));
+        QCOMPARE(words[1], QString("about 32,000 tokens of context"));
+        QCOMPARE(words[2], QString("about 32,000 tokens of context · split across providers, which you are asked to agree to"));
+        QVERIFY(words[3].startsWith("Fits, and is not offered here yet: these cards are on different providers"));
+        QCOMPARE(words[4], QString("Does not fit: it needs 31.3 GiB on each card, and a card offers 22.8 GiB."));
+
+        const auto one = ls[0].toMap(), pair = ls[1].toMap(), across = ls[2].toMap(), shut = ls[3].toMap();
+        QCOMPARE(one.value("request").toMap().value("gpu").toMap(), QVariantMap({{"model", "RTX 3090"}, {"count", 2}}));
+        QVERIFY(!one.value("split").toBool());
+        QVERIFY(pair.value("split").toBool() && !pair.value("opt_in").toBool());
+        QCOMPARE(pair.value("request").toMap().value("llm_layout").toMap().value("machines").toInt(), 2);
+        QVERIFY(!pair.value("request").toMap().contains("spread"));
+        QVERIFY(across.value("opt_in").toBool() && across.value("choosable").toBool());
+        QCOMPARE(across.value("request").toMap().value("spread").toString(), QString("allow"));
+        QVERIFY(!shut.value("choosable").toBool());
+        // An older Core says no opt_in: across providers still asks for one.
+        QVERIFY(shut.value("opt_in").toBool());
+        QVERIFY(OmnuvSession::crossProviderWords().startsWith("This splits the model across two providers."));
+    }
+
     // The card's word and its app, as Core sends them (section 7): `app`'s
     // word, its step and its deployment; Core's mark over the image's guess;
     // Ready is as usable as Running, and Installing is under way, not a fault.

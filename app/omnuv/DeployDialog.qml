@@ -54,6 +54,48 @@ Dialog {
     property string refusedField: ""
     property string refusedText: ""
 
+    // **An app that serves a model its buyer chooses** (`serves_models`, the
+    // web's DeployDialog): a model and a layout of cards from Core's
+    // `/v1/llm/options`, in place of one card and how many. One deploy of a
+    // layout of several machines is the whole model.
+    property string llmModel: ""
+    property string llmLayout: ""
+    property bool agreed: false
+    readonly property bool servesModels: chosen !== null && chosen.serves_models === true
+    readonly property var modelRow: Omnuv.llmModels.filter(function (m) { return m.id === llmModel })[0] || null
+    readonly property var layoutRow: modelRow ? (modelRow.layouts.filter(function (l) { return l.key === llmLayout && l.choosable })[0] || null) : null
+    readonly property bool split: servesModels && layoutRow !== null && layoutRow.split
+    readonly property bool optIn: servesModels && layoutRow !== null && layoutRow.opt_in
+    readonly property int machines: servesModels && layoutRow !== null ? layoutRow.machines : 1
+    // The tick is the person's, and is taken back whenever the choice changes.
+    onLlmModelChanged: agreed = false
+    onLlmLayoutChanged: agreed = false
+    onSplitChanged: if (split) countBox.value = 1
+    function pickModel(id) {
+        llmModel = id
+        var m = Omnuv.llmModels.filter(function (x) { return x.id === id })[0]
+        var l = m ? m.layouts.filter(function (x) { return x.choosable })[0] : undefined
+        llmLayout = l ? l.key : ""
+    }
+    // The answer read again: a choice that can no longer be had gives way to
+    // the first that can; a model picked by hand is kept while it has one.
+    function settleLlm() {
+        if (!servesModels || !Omnuv.llmRead || layoutRow !== null) return
+        var kept = modelRow ? modelRow.layouts.filter(function (l) { return l.choosable })[0] : undefined
+        if (kept) { llmLayout = kept.key; return }
+        if (modelRow) return
+        for (var i = 0; i < Omnuv.llmModels.length; ++i) {
+            var first = Omnuv.llmModels[i].layouts.filter(function (l) { return l.choosable })[0]
+            if (first) { llmModel = Omnuv.llmModels[i].id; llmLayout = first.key; return }
+        }
+        llmModel = Omnuv.llmModels.length > 0 ? Omnuv.llmModels[0].id : ""
+        llmLayout = ""
+    }
+    Connections {
+        target: Omnuv
+        function onLlmOptionsChanged() { flow.settleLlm() }
+    }
+
     readonly property var items: Omnuv.deployables
     readonly property var apps: items.filter(function (d) { return d.group === "apps" })
     readonly property var plain: items.filter(function (d) { return d.group !== "apps" })
@@ -62,21 +104,31 @@ Dialog {
         if (chosen === null || sizeId === "custom") return ""
         var size = (chosen.sizes || []).filter(function (z) { return z.id === sizeId })[0]
         if (!size || size.price_per_hour === undefined) return ""
-        var card = "0"
-        if (gpuModel !== "") {
-            var own = (chosen.gpus || []).filter(function (g) { return g.model === gpuModel })[0]
-            var sale = Omnuv.saleGpus.filter(function (g) { return g.model === gpuModel })[0]
-            card = own ? own.price_per_hour : (sale ? sale.price : undefined)
-            if (card === undefined) return ""
-        }
         var units = function (x) { return Math.round(Number(x) * 10000) }
-        var total = (units(size.price_per_hour) + units(card)) * countBox.value
+        // Every card asked for, by its model: the layout's, or the one picked.
+        var cards = servesModels ? (layoutRow !== null ? layoutRow.cards : []) : (gpuModel !== "" ? [gpuModel] : [])
+        var cardsPrice = 0
+        for (var i = 0; i < cards.length; ++i) {
+            var own = (chosen.gpus || []).filter(function (g) { return g.model === cards[i] })[0]
+            var sale = Omnuv.saleGpus.filter(function (g) { return g.model === cards[i] })[0]
+            var card = own ? own.price_per_hour : (sale ? sale.price : undefined)
+            if (card === undefined) return ""
+            cardsPrice += units(card)
+        }
+        // Each machine of a split model is a machine of the app's size.
+        var total = (units(size.price_per_hour) * machines + cardsPrice) * countBox.value
         return "€" + (total / 10000).toFixed(4) + "/h"
     }
-    readonly property bool gpuMissing: chosen !== null && chosen.gpu === "required" && gpuModel === ""
+    readonly property bool gpuMissing: chosen !== null && chosen.gpu === "required"
+        && (servesModels ? layoutRow === null : gpuModel === "")
     readonly property string blockedBecause: nameField.text.trim() === "" ? qsTr("Give it a name.")
         : nameProblem !== "" ? nameProblem
-        : gpuMissing ? qsTr("No GPU this needs is free right now.")
+        : gpuMissing ? (servesModels
+            ? (Omnuv.llmProblem !== "" ? qsTr("Could not check which models fit which cards.")
+               : !Omnuv.llmRead ? qsTr("Reading which models fit which cards.")
+               : qsTr("Choose a model and cards that are offered."))
+            : qsTr("No GPU this needs is free right now."))
+        : optIn && !agreed ? qsTr("Agree to the split across providers, or choose other cards.")
         : ""
 
     function at(field) { return refusedField === field ? refusedText : "" }
@@ -98,7 +150,13 @@ Dialog {
         // An app that may use a card gets the cheapest free one; a plain
         // instance starts without, and the buyer adds one.
         var free = Omnuv.saleGpus.filter(function (g) { return g.free > 0 })
-        gpuModel = (d.gpu === "required" || (d.gpu === "optional" && d.kind === "recipe")) && free.length > 0 ? free[0].model : ""
+        gpuModel = !d.serves_models && (d.gpu === "required" || (d.gpu === "optional" && d.kind === "recipe")) && free.length > 0 ? free[0].model : ""
+        llmModel = ""
+        llmLayout = ""
+        if (d.serves_models) {
+            Omnuv.loadLlmOptions()
+            settleLlm()
+        }
     }
     // Goes to step 2: Enter, a double click, Next, or a deep link.
     function choose(d) {
@@ -125,7 +183,11 @@ Dialog {
         }
         if (sizeId === "custom") body.custom = { vcpus: customVcpus, memory_gib: customMemory, disk_gib: customDisk }
         else body.size = sizeId
-        if (gpuModel !== "") body.gpu = { model: gpuModel, count: 1 }
+        if (servesModels) {
+            var ask = layoutRow.request
+            for (var k in ask) body[k] = ask[k]
+            body.llm_model = llmModel
+        } else if (gpuModel !== "") body.gpu = { model: gpuModel, count: 1 }
         if (chosen.olderCore) body.olderCore = true
         sending = true
         refusedField = ""
@@ -396,7 +458,7 @@ Dialog {
                     Layout.preferredWidth: 40
                     Layout.preferredHeight: 40
                     workload: flow.chosen ? flow.chosen.mark : "linux"
-                    hasGpu: flow.gpuModel !== ""
+                    hasGpu: flow.gpuModel !== "" || flow.layoutRow !== null
                     Accessible.ignored: true
                 }
                 Label {
@@ -486,11 +548,136 @@ Dialog {
                 }
             }
 
+            // ---- A model, and the cards it is served from ------------------
             ColumnLayout {
                 Layout.fillWidth: true
                 Layout.leftMargin: 24
                 Layout.rightMargin: 24
-                visible: flow.chosen !== null && flow.chosen.gpu !== "none"
+                visible: flow.servesModels
+                spacing: 4
+                Label { text: qsTr("Model"); font.weight: Theme.strongWeight }
+                ButtonGroup { id: modelGroup }
+                Repeater {
+                    model: Omnuv.llmModels
+                    RadioButton {
+                        required property var modelData
+                        objectName: "llmModel-" + modelData.id
+                        ButtonGroup.group: modelGroup
+                        checked: flow.llmModel === modelData.id
+                        opacity: modelData.none_offered ? 0.55 : 1
+                        text: modelData.display_name + "   " + qsTr("%1 GB").arg(modelData.weights_gb)
+                              + (modelData.none_offered ? qsTr(" · nothing can serve it right now") : "")
+                        onClicked: flow.pickModel(modelData.id)
+                    }
+                }
+                Label {
+                    visible: Omnuv.llmRead && Omnuv.llmModels.length === 0
+                    text: qsTr("No model is listed right now.")
+                    opacity: 0.7
+                }
+                Label {
+                    visible: !Omnuv.llmRead && Omnuv.llmProblem === ""
+                    text: qsTr("Reading which models fit which cards…")
+                    opacity: 0.7
+                }
+                RowLayout {
+                    visible: Omnuv.llmProblem !== ""
+                    spacing: 8
+                    Label {
+                        Layout.fillWidth: true
+                        text: qsTr("Could not check which models fit which cards. %1").arg(Omnuv.llmProblem)
+                        color: Theme.fillCaution
+                        wrapMode: Text.WordWrap
+                    }
+                    OmnuvButton { text: qsTr("Try again"); onClicked: Omnuv.loadLlmOptions() }
+                }
+                Label {
+                    visible: flow.at("llm_model") !== ""
+                    text: flow.at("llm_model")
+                    color: Theme.fillCaution
+                    font.pixelSize: 12
+                }
+            }
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.leftMargin: 24
+                Layout.rightMargin: 24
+                visible: flow.servesModels && flow.modelRow !== null
+                spacing: 4
+                Label { text: qsTr("Cards"); font.weight: Theme.strongWeight }
+                ButtonGroup { id: layoutGroup }
+                Repeater {
+                    model: flow.modelRow ? flow.modelRow.layouts : []
+                    RadioButton {
+                        id: layoutChoice
+                        required property var modelData
+                        objectName: "llmLayout-" + modelData.key
+                        Layout.fillWidth: true
+                        ButtonGroup.group: layoutGroup
+                        // The text places the style's indicator at the start
+                        // (with none it is centred); contentItem draws it.
+                        text: modelData.label
+                        enabled: modelData.choosable
+                        checked: flow.llmLayout === modelData.key
+                        Accessible.name: modelData.label
+                        Accessible.description: modelData.words
+                        onClicked: flow.llmLayout = modelData.key
+                        contentItem: ColumnLayout {
+                            spacing: 0
+                            Label {
+                                Layout.fillWidth: true
+                                leftPadding: layoutChoice.indicator.width + layoutChoice.spacing
+                                text: layoutChoice.modelData.label
+                                font.weight: Theme.strongWeight
+                                opacity: layoutChoice.enabled ? 1 : 0.55
+                                wrapMode: Text.WordWrap
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                leftPadding: layoutChoice.indicator.width + layoutChoice.spacing
+                                text: layoutChoice.modelData.words
+                                visible: text !== ""
+                                font.pixelSize: 12
+                                opacity: layoutChoice.enabled ? 0.7 : 0.5
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+                    }
+                }
+                Label {
+                    visible: flow.modelRow !== null && flow.modelRow.layouts.length === 0
+                    text: qsTr("No cards are listed for this model right now.")
+                    opacity: 0.7
+                }
+                CheckBox {
+                    id: agreeBox
+                    objectName: "llmAgree"
+                    Layout.fillWidth: true
+                    visible: flow.optIn
+                    text: qsTr("I agree to split it across providers.")
+                    checked: flow.agreed
+                    onToggled: flow.agreed = checked
+                    Accessible.name: qsTr("I agree to split it across providers.")
+                    contentItem: Label {
+                        leftPadding: agreeBox.indicator.width + agreeBox.spacing
+                        text: Omnuv.crossProviderWords() + " " + qsTr("I agree to split it across providers.")
+                        wrapMode: Text.WordWrap
+                    }
+                }
+                Label {
+                    visible: flow.at("gpu") !== "" || flow.at("llm_layout") !== "" || flow.at("spread") !== ""
+                    text: flow.at("gpu") || flow.at("llm_layout") || flow.at("spread")
+                    color: Theme.fillCaution
+                    font.pixelSize: 12
+                    wrapMode: Text.WordWrap
+                }
+            }
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.leftMargin: 24
+                Layout.rightMargin: 24
+                visible: flow.chosen !== null && flow.chosen.gpu !== "none" && !flow.servesModels
                 spacing: 4
                 Label { text: qsTr("GPU"); font.weight: Theme.strongWeight }
                 ButtonGroup { id: gpuGroup }
@@ -538,10 +725,20 @@ Dialog {
                     from: 1
                     to: 8
                     editable: true
+                    enabled: !flow.split
                     Accessible.name: qsTr("How many")
                 }
                 Label {
-                    visible: countBox.value > 1 && flow.nameProblem === "" && nameField.text.trim() !== ""
+                    objectName: "deploySplitNote"
+                    visible: flow.split
+                    Layout.fillWidth: true
+                    text: qsTr("One deploy is the whole model: its %1 machines, held together or not at all.").arg(flow.machines)
+                    font.pixelSize: 12
+                    opacity: 0.7
+                    wrapMode: Text.WordWrap
+                }
+                Label {
+                    visible: !flow.split && countBox.value > 1 && flow.nameProblem === "" && nameField.text.trim() !== ""
                     text: qsTr("Named %1-1 to %1-%2.").arg(nameField.text.trim()).arg(countBox.value)
                     font.pixelSize: 12
                     opacity: 0.7
@@ -598,7 +795,8 @@ Dialog {
                 Layout.fillWidth: true
                 Layout.leftMargin: 24
                 Layout.rightMargin: 24
-                visible: flow.refusedText !== "" && ["name", "size", "custom", "gpu", "count", "item"].indexOf(flow.refusedField) < 0
+                visible: flow.refusedText !== "" && ["name", "size", "custom", "gpu", "count", "item"]
+                    .concat(flow.servesModels ? ["llm_model", "llm_layout", "spread"] : []).indexOf(flow.refusedField) < 0
                 text: flow.refusedText
                 color: Theme.fillCaution
                 wrapMode: Text.WordWrap
